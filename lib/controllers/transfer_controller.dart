@@ -61,6 +61,22 @@ class TransferController {
       socket.write(header);
       await socket.flush();
 
+      // 3.5 Wait for Authorization
+      onUpdate(TransferModel(status: "Waiting for Receiver to Accept..."));
+
+      // Read a single line/response from the receiver
+      String authResponse = "";
+      try {
+        final authData = await socket.first;
+        authResponse = utf8.decode(authData).trim();
+      } catch (e) {
+        throw "Receiver disconnected before answering.";
+      }
+
+      if (authResponse != "ACCEPTED") {
+        throw "Transfer Rejected by Receiver.";
+      }
+
       // 4. ضخ البيانات (Streaming on the fly)
       int sentBytes = 0;
       DateTime lastUpdate = DateTime.now();
@@ -116,6 +132,7 @@ class TransferController {
   Future<void> startReceiver({
     required String saveDirectory,
     required Function(TransferModel) onUpdate,
+    required Future<bool> Function(String senderIp, int fileCount, double totalSizeMB) onRequestAuth,
     required VoidCallback onDone,
   }) async {
     try {
@@ -149,6 +166,24 @@ class TransferController {
               metadata = jsonDecode(jsonStr);
 
               offset = newlineIndex + 1;
+
+              // --- Authorization Step ---
+              List<dynamic> files = metadata!["files"];
+              int totalBytes = files.fold(0, (sum, f) => sum + (f["size"] as int));
+              double totalSizeMB = totalBytes / 1024 / 1024;
+
+              bool isAccepted = await onRequestAuth(client.remoteAddress.address, files.length, totalSizeMB);
+
+              if (!isAccepted) {
+                client.write("REJECTED\n");
+                await client.flush();
+                client.destroy();
+                onUpdate(TransferModel(status: "Transfer Rejected"));
+                return; // exit the loop for this client
+              } else {
+                client.write("ACCEPTED\n");
+                await client.flush();
+              }
             } else {
               headerBuffer.addAll(chunk);
               continue;
@@ -156,6 +191,7 @@ class TransferController {
           }
 
           // 2. معالجة وتوزيع الداتا الخام على الملفات
+          if (metadata == null) continue; // safety check
           List<dynamic> files = metadata!["files"];
           try {
             while (offset < chunk.length && currentFileIndex < files.length) {

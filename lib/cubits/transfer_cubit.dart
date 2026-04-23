@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../controllers/transfer_controller.dart';
 import '../models/transfer_model.dart';
@@ -25,7 +26,9 @@ class TransferCubit extends Cubit<TransferState> {
     ));
   }
 
-  Future<void> startReceiver() async {
+  Future<void> startReceiver({
+    required BuildContext context,
+  }) async {
     if (state.receiveFolder == null) return;
 
     emit(state.copyWith(isReceiving: true, isTransferring: true));
@@ -34,6 +37,30 @@ class TransferCubit extends Cubit<TransferState> {
       saveDirectory: state.receiveFolder!,
       onUpdate: (model) {
         if (!isClosed) emit(state.copyWith(model: model));
+      },
+      onRequestAuth: (senderIp, count, size) async {
+        return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            title: Text("Incoming Transfer",
+                style: TextStyle(color: Colors.white)),
+            backgroundColor: Color(0xFF1E1E36),
+            content: Text(
+                "Sender: $senderIp\nFiles: $count\nTotal Size: ${size.toStringAsFixed(2)} MB\n\nDo you want to accept?",
+                style: TextStyle(color: Colors.white70)),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text("Reject", style: TextStyle(color: Colors.redAccent)),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text("Accept"),
+              )
+            ],
+          ),
+        ) ?? false;
       },
       onDone: () {
         // Keep receiver active unless user stops it

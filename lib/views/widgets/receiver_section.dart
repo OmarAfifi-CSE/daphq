@@ -55,7 +55,7 @@ class ReceiverSection extends StatelessWidget {
                           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Please select a receive folder first!")));
                           return;
                         }
-                        context.read<TransferCubit>().startReceiver();
+                        context.read<TransferCubit>().startReceiver(context: context);
                       }
                     },
                     icon: Icon(state.isReceiving ? Icons.stop : Icons.wifi_tethering, color: Colors.white),
