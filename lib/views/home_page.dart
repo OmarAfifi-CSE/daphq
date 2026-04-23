@@ -1,7 +1,5 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:path_provider/path_provider.dart';
 import '../controllers/transfer_controller.dart';
 import '../models/transfer_model.dart';
 
@@ -13,10 +11,22 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   final TransferController _controller = TransferController();
   TransferModel _model = TransferModel();
-  String selectedDest = "A-Variety";
-  final TextEditingController _ipController = TextEditingController(text: "192.168.137.203");
+
+  bool _isTransferring = false;
+  bool _isReceiving = false;
+  String? _receiveFolder;
+
+  final TextEditingController _ipController = TextEditingController(text: "192.168.137.1");
 
   void _updateUI(TransferModel m) => setState(() => _model = m);
+
+  void _setTransferState(bool active) {
+    if (mounted) {
+      setState(() {
+        _isTransferring = active;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -27,12 +37,41 @@ class _HomePageState extends State<HomePage> {
         padding: EdgeInsets.all(20),
         child: Column(
           children: [
+            _buildInstructionsCard(),
+            SizedBox(height: 20),
             _buildStatusDisplay(),
             SizedBox(height: 30),
-            if (Platform.isWindows) _buildPcInterface(),
-            if (Platform.isAndroid) _buildMobileInterface(),
+            _buildUnifiedInterface(), // Cross-platform UI
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildInstructionsCard() {
+    return Container(
+      padding: EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: Colors.blue.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.blue.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.info_outline, color: Colors.blueAccent),
+              SizedBox(width: 10),
+              Text("How to use & Maximize Speed", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+            ],
+          ),
+          SizedBox(height: 10),
+          Text("1. For maximum speed, open a Mobile Hotspot from your Laptop/PC and set the network band to 5GHz.", style: TextStyle(color: Colors.white70, fontSize: 13)),
+          Text("2. Connect your Mobile to this 5GHz Hotspot.", style: TextStyle(color: Colors.white70, fontSize: 13)),
+          Text("3. Default IP for PC Hotspot is usually 192.168.137.1 (already set below).", style: TextStyle(color: Colors.white70, fontSize: 13)),
+          Text("4. Select a Destination Folder before starting the Receiver.", style: TextStyle(color: Colors.white70, fontSize: 13)),
+        ],
       ),
     );
   }
@@ -76,48 +115,130 @@ class _HomePageState extends State<HomePage> {
     Text(val, style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
   ]);
 
-  Widget _buildPcInterface() {
-    return Column(children: [
-      TextField(controller: _ipController, style: TextStyle(color: Colors.white),
-          decoration: InputDecoration(labelText: "Receiver IP", labelStyle: TextStyle(color: Colors.white38))),
-      SizedBox(height: 20),
-      Text("Target Folder on Mobile:", style: TextStyle(color: Colors.white70)),
-      DropdownButton<String>(
-        value: selectedDest, isExpanded: true, dropdownColor: Color(0xFF12122A), style: TextStyle(color: Colors.white),
-        items: ["A-Subjects", "A-Variety", "Downloads"].map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-        onChanged: (v) => setState(() => selectedDest = v!),
-      ),
-      SizedBox(height: 25),
-      Row(
-        children: [
-          Expanded(child: _btn(Icons.file_copy, "File", () => _pick(false))),
-          SizedBox(width: 15),
-          Expanded(child: _btn(Icons.folder, "Folder", () => _pick(true))),
-        ],
-      ),
-    ]);
-  }
+  Widget _buildUnifiedInterface() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Receiver Section
+        Text("Receiver Mode", style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+        SizedBox(height: 10),
+        Container(
+          padding: EdgeInsets.all(15),
+          decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(15)),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _receiveFolder == null ? "No receive folder selected" : "Save to: $_receiveFolder",
+                      style: TextStyle(color: _receiveFolder == null ? Colors.redAccent : Colors.greenAccent),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.folder_open, color: Colors.white),
+                    onPressed: _isTransferring ? null : () async {
+                      String? path = await FilePicker.getDirectoryPath();
+                      if (path != null) {
+                        setState(() => _receiveFolder = path);
+                      }
+                    },
+                  )
+                ],
+              ),
+              SizedBox(height: 15),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _isReceiving ? Colors.red : Colors.green,
+                  minimumSize: Size(double.infinity, 50),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                ),
+                onPressed: _isTransferring && !_isReceiving ? null : () {
+                  if (_isReceiving) {
+                    _controller.stopReceiver();
+                    setState(() {
+                      _isReceiving = false;
+                      _isTransferring = false;
+                      _model.status = "Receiver Stopped";
+                    });
+                  } else {
+                    if (_receiveFolder == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Please select a receive folder first!")));
+                      return;
+                    }
+                    setState(() {
+                      _isReceiving = true;
+                      _isTransferring = true;
+                    });
+                    _controller.startReceiver(
+                      saveDirectory: _receiveFolder!,
+                      onUpdate: _updateUI,
+                      onDone: () {
+                        // Keep receiver running for multiple files, or user stops manually
+                        // If you want it to close after one transfer, modify the logic.
+                      },
+                    );
+                  }
+                },
+                icon: Icon(_isReceiving ? Icons.stop : Icons.wifi_tethering, color: Colors.white),
+                label: Text(_isReceiving ? "Stop Receiver" : "Start Receiver Server", style: TextStyle(color: Colors.white, fontSize: 16)),
+              ),
+            ],
+          ),
+        ),
 
-  Widget _btn(IconData i, String t, VoidCallback fn) => ElevatedButton.icon(
-    onPressed: fn, icon: Icon(i), label: Text(t),
-    style: ElevatedButton.styleFrom(minimumSize: Size(0, 55), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))),
-  );
+        SizedBox(height: 30),
 
-  Widget _buildMobileInterface() {
-    return ElevatedButton.icon(
-      style: ElevatedButton.styleFrom(backgroundColor: Colors.green, minimumSize: Size(double.infinity, 60),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20))),
-      onPressed: () async {
-        Directory? dir = await getExternalStorageDirectory();
-        String root = dir!.path.split("/Android")[0];
-        _controller.startReceiver(sdcardPath: root, onUpdate: _updateUI);
-      },
-      icon: Icon(Icons.wifi_tethering),
-      label: Text("Start Receiver Server", style: TextStyle(fontSize: 18)),
+        // Sender Section
+        Text("Sender Mode", style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+        SizedBox(height: 10),
+        Container(
+          padding: EdgeInsets.all(15),
+          decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(15)),
+          child: Column(
+            children: [
+              TextField(
+                controller: _ipController,
+                style: TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: "Receiver IP",
+                  labelStyle: TextStyle(color: Colors.white38),
+                  enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                ),
+                enabled: !_isTransferring,
+              ),
+              SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(child: _btn(Icons.file_copy, "Send File", () => _pick(false))),
+                  SizedBox(width: 15),
+                  Expanded(child: _btn(Icons.folder, "Send Folder", () => _pick(true))),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
+  Widget _btn(IconData i, String t, VoidCallback fn) => ElevatedButton.icon(
+    onPressed: _isTransferring ? null : fn,
+    icon: Icon(i, color: Colors.white),
+    label: Text(t, style: TextStyle(color: Colors.white)),
+    style: ElevatedButton.styleFrom(
+      backgroundColor: Colors.blueAccent,
+      minimumSize: Size(0, 50),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+      disabledBackgroundColor: Colors.white12,
+    ),
+  );
+
   Future<void> _pick(bool isFolder) async {
+    if (_isTransferring) return;
+
     String? path;
     if (isFolder) {
       path = await FilePicker.getDirectoryPath();
@@ -127,7 +248,20 @@ class _HomePageState extends State<HomePage> {
     }
 
     if (path != null) {
-      _controller.sendData(path: path, targetIp: _ipController.text, targetFolder: selectedDest, isFolder: isFolder, onUpdate: _updateUI);
+      if (_ipController.text.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Please enter target IP!")));
+        return;
+      }
+
+      _setTransferState(true);
+
+      _controller.sendData(
+        path: path,
+        targetIp: _ipController.text.trim(),
+        isFolder: isFolder,
+        onUpdate: _updateUI,
+        onDone: () => _setTransferState(false),
+      );
     }
   }
 }

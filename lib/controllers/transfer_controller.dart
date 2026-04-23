@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:ui';
 import 'package:path/path.dart' as p;
 import '../models/transfer_model.dart';
 
@@ -11,9 +12,9 @@ class TransferController {
   Future<void> sendData({
     required String path,
     required String targetIp,
-    required String targetFolder,
     required bool isFolder,
     required Function(TransferModel) onUpdate,
+    required VoidCallback onDone,
   }) async {
     Stopwatch stopwatch = Stopwatch()..start();
     try {
@@ -52,7 +53,6 @@ class TransferController {
 
       // 3. إرسال خريطة الملفات (JSON Header)
       Map<String, dynamic> metadata = {
-        "targetFolder": targetFolder,
         "files": fileList.map((e) => {"path": e["path"], "size": e["size"]}).toList()
       };
 
@@ -100,28 +100,30 @@ class TransferController {
         totalTime: (stopwatch.elapsedMilliseconds / 1000).toStringAsFixed(1),
         fileName: isFolder ? p.basename(path) : fileList.first["path"],
       ));
+      onDone();
 
     } catch (e) {
       onUpdate(TransferModel(status: "Error: $e"));
+      onDone();
     }
   }
 
   // --- RECEIVER (Mobile): The New Direct-Stream Protocol ---
   Future<void> startReceiver({
-    required String sdcardPath,
+    required String saveDirectory,
     required Function(TransferModel) onUpdate,
+    required VoidCallback onDone,
   }) async {
     try {
       if (_server != null) await _server!.close();
       _server = await ServerSocket.bind(InternetAddress.anyIPv4, port, shared: true);
-      onUpdate(TransferModel(status: "Turbo-Receiver Ready..."));
+      onUpdate(TransferModel(status: "Receiver Ready (Port: $port)"));
 
       await for (Socket client in _server!) {
         Stopwatch stopwatch = Stopwatch()..start();
 
         List<int> headerBuffer = [];
         Map<String, dynamic>? metadata;
-        String basePath = "";
 
         int currentFileIndex = 0;
         int bytesReadForCurrentFile = 0;
@@ -142,9 +144,6 @@ class TransferController {
               String jsonStr = utf8.decode(headerBuffer);
               metadata = jsonDecode(jsonStr);
 
-              String targetDir = metadata!["targetFolder"];
-              basePath = p.join(sdcardPath, targetDir == "Downloads" ? "Download" : targetDir);
-
               offset = newlineIndex + 1;
             } else {
               headerBuffer.addAll(chunk);
@@ -160,9 +159,9 @@ class TransferController {
 
             // فتح الملف الجديد إذا لم يكن مفتوحاً
             if (currentSink == null) {
-              String savePath = p.join(basePath, fileMeta["path"]);
+              String savePath = p.join(saveDirectory, fileMeta["path"]);
               File f = File(savePath);
-              f.parent.createSync(recursive: true); // إنشاء الفولدرات الفرعية (زي فولدر أحمد النفيس)
+              f.parent.createSync(recursive: true); // إنشاء الفولدرات الفرعية
               currentSink = f.openWrite();
             }
 
@@ -219,9 +218,16 @@ class TransferController {
           fileName: "All files saved.",
         ));
         client.destroy();
+        onDone();
       }
     } catch (e) {
       onUpdate(TransferModel(status: "Error: $e"));
+      onDone();
     }
+  }
+
+  void stopReceiver() {
+    _server?.close();
+    _server = null;
   }
 }
