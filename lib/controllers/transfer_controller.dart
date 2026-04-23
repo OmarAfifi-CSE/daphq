@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:ui';
 import 'package:path/path.dart' as p;
 import '../models/transfer_model.dart';
+import 'package:flutter/foundation.dart'; // import to detect platform
 
 class TransferController {
   static const int port = 9999;
@@ -67,23 +68,26 @@ class TransferController {
 
       for (var f in fileList) {
         File fileToRead = File(f["absPath"]);
-        await for (var chunk in fileToRead.openRead()) {
-          socket.add(chunk);
-          sentBytes += chunk.length;
-          bytesSinceUpdate += chunk.length;
+        final reader = fileToRead.openRead();
+        try {
+          await for (var chunk in reader) {
+            socket.add(chunk);
+            sentBytes += chunk.length;
+            bytesSinceUpdate += chunk.length;
 
-          if (DateTime.now().difference(lastUpdate).inMilliseconds > 500) {
-            double speed = (bytesSinceUpdate / 1024 / 1024) / 0.5;
-            onUpdate(TransferModel(
-              speed: speed,
-              transferred: sentBytes / 1024 / 1024,
-              fileName: p.basename(f["path"]),
-              status: "Pumping Data...",
-            ));
-            bytesSinceUpdate = 0;
-            lastUpdate = DateTime.now();
+            if (DateTime.now().difference(lastUpdate).inMilliseconds > 500) {
+              double speed = (bytesSinceUpdate / 1024 / 1024) / 0.5;
+              onUpdate(TransferModel(
+                speed: speed,
+                transferred: sentBytes / 1024 / 1024,
+                fileName: p.basename(f["path"]),
+                status: "Pumping Data...",
+              ));
+              bytesSinceUpdate = 0;
+              lastUpdate = DateTime.now();
+            }
           }
-        }
+        } finally {}
       }
 
       await socket.flush();
@@ -153,58 +157,72 @@ class TransferController {
 
           // 2. معالجة وتوزيع الداتا الخام على الملفات
           List<dynamic> files = metadata!["files"];
-          while (offset < chunk.length && currentFileIndex < files.length) {
-            var fileMeta = files[currentFileIndex];
-            int targetSize = fileMeta["size"];
+          try {
+            while (offset < chunk.length && currentFileIndex < files.length) {
+              var fileMeta = files[currentFileIndex];
+              int targetSize = fileMeta["size"];
 
-            // فتح الملف الجديد إذا لم يكن مفتوحاً
-            if (currentSink == null) {
-              String savePath = p.join(saveDirectory, fileMeta["path"]);
-              File f = File(savePath);
-              f.parent.createSync(recursive: true); // إنشاء الفولدرات الفرعية
-              currentSink = f.openWrite();
+              // فتح الملف الجديد إذا لم يكن مفتوحاً
+              if (currentSink == null) {
+                String savePath = p.join(saveDirectory, fileMeta["path"]);
+                File f = File(savePath);
+                f.parent.createSync(recursive: true); // إنشاء الفولدرات الفرعية
+                currentSink = f.openWrite();
+              }
+
+              int remainingInChunk = chunk.length - offset;
+              int bytesNeeded = targetSize - bytesReadForCurrentFile;
+
+              // كتابة البيانات بدقة البايت
+              if (remainingInChunk <= bytesNeeded) {
+                currentSink!.add(chunk.sublist(offset));
+                bytesReadForCurrentFile += remainingInChunk;
+                received += remainingInChunk;
+                bytesSinceUpdate += remainingInChunk;
+                offset += remainingInChunk;
+              } else {
+                currentSink!.add(chunk.sublist(offset, offset + bytesNeeded));
+                bytesReadForCurrentFile += bytesNeeded;
+                received += bytesNeeded;
+                bytesSinceUpdate += bytesNeeded;
+                offset += bytesNeeded;
+              }
+
+              // تحديث السرعة في الواجهة
+              if (DateTime.now().difference(lastTime).inMilliseconds > 500) {
+                double speed = (bytesSinceUpdate / 1024 / 1024) / 0.5;
+                onUpdate(TransferModel(
+                  speed: speed,
+                  transferred: received / 1024 / 1024,
+                  fileName: p.basename(fileMeta["path"]),
+                  status: "Receiving Data...",
+                ));
+                bytesSinceUpdate = 0;
+                lastTime = DateTime.now();
+              }
+
+              // إغلاق الملف عند اكتمال حجمه
+              if (bytesReadForCurrentFile == targetSize) {
+                await currentSink!.flush();
+                await currentSink!.close();
+                currentSink = null;
+                bytesReadForCurrentFile = 0;
+                currentFileIndex++;
+              }
             }
-
-            int remainingInChunk = chunk.length - offset;
-            int bytesNeeded = targetSize - bytesReadForCurrentFile;
-
-            // كتابة البيانات بدقة البايت
-            if (remainingInChunk <= bytesNeeded) {
-              currentSink!.add(chunk.sublist(offset));
-              bytesReadForCurrentFile += remainingInChunk;
-              received += remainingInChunk;
-              bytesSinceUpdate += remainingInChunk;
-              offset += remainingInChunk;
-            } else {
-              currentSink!.add(chunk.sublist(offset, offset + bytesNeeded));
-              bytesReadForCurrentFile += bytesNeeded;
-              received += bytesNeeded;
-              bytesSinceUpdate += bytesNeeded;
-              offset += bytesNeeded;
-            }
-
-            // تحديث السرعة في الواجهة
-            if (DateTime.now().difference(lastTime).inMilliseconds > 500) {
-              double speed = (bytesSinceUpdate / 1024 / 1024) / 0.5;
-              onUpdate(TransferModel(
-                speed: speed,
-                transferred: received / 1024 / 1024,
-                fileName: p.basename(fileMeta["path"]),
-                status: "Receiving Data...",
-              ));
-              bytesSinceUpdate = 0;
-              lastTime = DateTime.now();
-            }
-
-            // إغلاق الملف عند اكتمال حجمه
-            if (bytesReadForCurrentFile == targetSize) {
+          } finally {
+            if (currentSink != null && currentFileIndex >= files.length) { // Cleanup if loop finished
               await currentSink!.flush();
               await currentSink!.close();
-              currentSink = null;
-              bytesReadForCurrentFile = 0;
-              currentFileIndex++;
             }
           }
+        } // end await for chunk
+
+        // Final cleanup for sinking if any streams left open abruptly
+        if (currentSink != null) {
+            await currentSink!.flush();
+            await currentSink!.close();
+            currentSink = null;
         }
 
         stopwatch.stop();

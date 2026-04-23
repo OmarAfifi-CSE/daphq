@@ -1,8 +1,10 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../cubits/transfer_cubit.dart';
 import '../../cubits/transfer_state.dart';
+import 'package:flutter/foundation.dart';
 
 class SenderSection extends StatefulWidget {
   @override
@@ -29,6 +31,8 @@ class _SenderSectionState extends State<SenderSection> {
 
   @override
   Widget build(BuildContext context) {
+    String labelHint = "Receiver IP Address (e.g. 192.168.x.x)";
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -45,7 +49,7 @@ class _SenderSectionState extends State<SenderSection> {
                     controller: _ipController,
                     style: TextStyle(color: Colors.white),
                     decoration: InputDecoration(
-                      labelText: "Receiver IP",
+                      labelText: labelHint,
                       labelStyle: TextStyle(color: Colors.white38),
                       enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
                     ),
