@@ -1,13 +1,32 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import '../controllers/transfer_controller.dart';
 import '../models/transfer_model.dart';
 import 'transfer_state.dart';
+import '../main.dart';
+import 'dart:io';
 
 class TransferCubit extends Cubit<TransferState> {
   final TransferController _controller = TransferController();
 
   TransferCubit() : super(TransferState(model: TransferModel()));
+
+  void _startForegroundService(String title, String text) {
+    if (Platform.isAndroid) {
+      FlutterForegroundTask.startService(
+        notificationTitle: title,
+        notificationText: text,
+        callback: startCallback,
+      );
+    }
+  }
+
+  void _stopForegroundService() {
+    if (Platform.isAndroid) {
+      FlutterForegroundTask.stopService();
+    }
+  }
 
   void setReceiveFolder(String path) {
     emit(state.copyWith(receiveFolder: path));
@@ -19,6 +38,7 @@ class TransferCubit extends Cubit<TransferState> {
 
   void stopReceiver() {
     _controller.stopReceiver();
+    _stopForegroundService();
     emit(state.copyWith(
       isReceiving: false,
       isTransferring: false,
@@ -32,11 +52,18 @@ class TransferCubit extends Cubit<TransferState> {
     if (state.receiveFolder == null) return;
 
     emit(state.copyWith(isReceiving: true, isTransferring: true));
+    _startForegroundService("Turbo Transfer", "Waiting for incoming files...");
 
     _controller.startReceiver(
       saveDirectory: state.receiveFolder!,
       onUpdate: (model) {
         if (!isClosed) emit(state.copyWith(model: model));
+        if (Platform.isAndroid) {
+          FlutterForegroundTask.updateService(
+            notificationTitle: 'Receiving: ${model.fileName}',
+            notificationText: '${model.transferred.toStringAsFixed(2)} MB - ${model.status}',
+          );
+        }
       },
       onRequestAuth: (senderIp, count, size) async {
         return await showDialog<bool>(
@@ -64,6 +91,12 @@ class TransferCubit extends Cubit<TransferState> {
       },
       onDone: () {
         // Keep receiver active unless user stops it
+        if (Platform.isAndroid) {
+          FlutterForegroundTask.updateService(
+            notificationTitle: 'Turbo Transfer',
+            notificationText: 'Receiver idle...',
+          );
+        }
       },
     );
   }
@@ -72,6 +105,7 @@ class TransferCubit extends Cubit<TransferState> {
     if (state.isTransferring || state.targetIp.trim().isEmpty) return;
 
     emit(state.copyWith(isTransferring: true));
+    _startForegroundService("Turbo Transfer", "Sending files...");
 
     _controller.sendData(
       path: path,
@@ -79,9 +113,16 @@ class TransferCubit extends Cubit<TransferState> {
       isFolder: isFolder,
       onUpdate: (model) {
         if (!isClosed) emit(state.copyWith(model: model));
+        if (Platform.isAndroid) {
+          FlutterForegroundTask.updateService(
+            notificationTitle: 'Sending: ${model.fileName}',
+            notificationText: '${model.transferred.toStringAsFixed(2)} MB - ${model.status}',
+          );
+        }
       },
       onDone: () {
         if (!isClosed) emit(state.copyWith(isTransferring: false));
+        _stopForegroundService();
       },
     );
   }
@@ -89,6 +130,7 @@ class TransferCubit extends Cubit<TransferState> {
   @override
   Future<void> close() {
     _controller.stopReceiver();
+    _stopForegroundService();
     return super.close();
   }
 }

@@ -4,14 +4,58 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'views/home_page.dart';
 import 'cubits/transfer_cubit.dart';
+
+@pragma('vm:entry-point')
+void startCallback() {
+  FlutterForegroundTask.setTaskHandler(MyTaskHandler());
+}
+
+class MyTaskHandler extends TaskHandler {
+  @override
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {}
+
+  @override
+  Future<void> onDestroy(DateTime timestamp, bool isForceDestroy) async {}
+
+  @override
+  void onNotificationButtonPressed(String id) {}
+
+  @override
+  void onNotificationPressed() {
+    FlutterForegroundTask.launchApp("/");
+  }
+
+  @override
+  void onRepeatEvent(DateTime timestamp) {}
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   if (Platform.isAndroid) {
     await requestAllPermissions();
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+        channelId: 'transfer_channel',
+        channelName: 'Transfer Service',
+        channelDescription: 'Keeps background transfers alive.',
+        channelImportance: NotificationChannelImportance.LOW,
+        priority: NotificationPriority.LOW,
+      ),
+      iosNotificationOptions: const IOSNotificationOptions(
+        showNotification: true,
+        playSound: false,
+      ),
+      foregroundTaskOptions: ForegroundTaskOptions(
+        eventAction: ForegroundTaskEventAction.once(),
+        autoRunOnBoot: false,
+        allowWakeLock: true,
+        allowWifiLock: true,
+      ),
+    );
   }
 
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
@@ -23,6 +67,7 @@ void main() async {
       backgroundColor: Colors.transparent,
       skipTaskbar: false,
       titleBarStyle: TitleBarStyle.normal,
+      title: 'Turbo Transfer Pro',
     );
     windowManager.waitUntilReadyToShow(windowOptions, () async {
       await windowManager.show();
@@ -38,6 +83,7 @@ Future<void> requestAllPermissions() async {
   Map<Permission, PermissionStatus> statuses = await [
     Permission.storage,
     Permission.requestInstallPackages, // لو هتبعت ملفات APK
+    Permission.notification, // To create foreground service notification
   ].request();
 
   // طلب صلاحية الوصول الكامل للملفات (مهمة لأندرويد 11 وما فوق)
@@ -54,13 +100,15 @@ Future<void> requestAllPermissions() async {
 class TurboTransferApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    // استخدم LayoutBuilder عشان نحدد الـ designSize بناءً على حجم الشاشة
     return LayoutBuilder(
       builder: (context, constraints) {
-        // لو الشاشة عريضة (كمبيوتر/لابتوب)، خلي الـ designSize بنفس حجم الشاشة عشان ميكبرش العناصر
-        Size baseSize = constraints.maxWidth > 600
-            ? Size(constraints.maxWidth, constraints.maxHeight)
-            : const Size(360, 690);
+        Size baseSize;
+        if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+          // Fixed design size for desktop to avoid weird stretching
+          baseSize = const Size(800, 700);
+        } else {
+          baseSize = const Size(360, 690);
+        }
 
         return ScreenUtilInit(
           designSize: baseSize,

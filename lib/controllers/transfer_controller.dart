@@ -57,9 +57,13 @@ class TransferController {
         "files": fileList.map((e) => {"path": e["path"], "size": e["size"]}).toList()
       };
 
-      String header = jsonEncode(metadata) + "\n";
-      socket.write(header);
-      await socket.flush();
+      try {
+        String header = jsonEncode(metadata) + "\n";
+        socket.write(header);
+        await socket.flush();
+      } on SocketException catch (e) {
+        throw "Connection lost before sending data. Please check Wi-Fi.";
+      }
 
       // 3.5 Wait for Authorization
       onUpdate(TransferModel(status: "Waiting for Receiver to Accept..."));
@@ -67,15 +71,24 @@ class TransferController {
       // Read a single line/response from the receiver
       String authResponse = "";
       try {
-        final authData = await socket.first;
+        final authData = await socket.first.timeout(const Duration(minutes: 1), onTimeout: () => throw "Timeout");
         authResponse = utf8.decode(authData).trim();
       } catch (e) {
-        throw "Receiver disconnected before answering.";
+        throw "Receiver disconnected or timeout before answering.";
       }
 
-      if (authResponse != "ACCEPTED") {
+      Map<String, dynamic>? authResObj;
+      try {
+        authResObj = jsonDecode(authResponse);
+      } catch (_) {}
+
+      if (authResObj != null && authResObj["status"] != "ACCEPTED") {
+        throw "Transfer Rejected by Receiver.";
+      } else if (authResObj == null && authResponse != "ACCEPTED") {
         throw "Transfer Rejected by Receiver.";
       }
+
+      Map<String, dynamic> offsets = authResObj?["offsets"] ?? {};
 
       // 4. ضخ البيانات (Streaming on the fly)
       int sentBytes = 0;
@@ -83,11 +96,19 @@ class TransferController {
       int bytesSinceUpdate = 0;
 
       for (var f in fileList) {
+        int offset = (offsets[f["path"]] ?? 0) as int;
         File fileToRead = File(f["absPath"]);
-        final reader = fileToRead.openRead();
+        final reader = fileToRead.openRead(offset);
+
+        sentBytes += offset;
+
         try {
           await for (var chunk in reader) {
-            socket.add(chunk);
+            try {
+              socket.add(chunk);
+            } on SocketException {
+              throw "Network disconnected during transfer.";
+            }
             sentBytes += chunk.length;
             bytesSinceUpdate += chunk.length;
 
@@ -123,7 +144,11 @@ class TransferController {
       onDone();
 
     } catch (e) {
-      onUpdate(TransferModel(status: "Error: $e"));
+      if (e is SocketException) {
+        onUpdate(TransferModel(status: "Network Error: Please ensure Wi-Fi is connected."));
+      } else {
+        onUpdate(TransferModel(status: "Error: $e"));
+      }
       onDone();
     }
   }
@@ -137,7 +162,11 @@ class TransferController {
   }) async {
     try {
       if (_server != null) await _server!.close();
-      _server = await ServerSocket.bind(InternetAddress.anyIPv4, port, shared: true);
+      try {
+        _server = await ServerSocket.bind(InternetAddress.anyIPv4, port, shared: true);
+      } on SocketException catch (e) {
+        throw "Could not bind server. Are you connected to Wi-Fi? (${e.message})";
+      }
       onUpdate(TransferModel(status: "Receiver Ready (Port: $port)"));
 
       await for (Socket client in _server!) {
@@ -175,14 +204,33 @@ class TransferController {
               bool isAccepted = await onRequestAuth(client.remoteAddress.address, files.length, totalSizeMB);
 
               if (!isAccepted) {
-                client.write("REJECTED\n");
-                await client.flush();
+                try {
+                  client.write(jsonEncode({"status": "REJECTED"}) + "\n");
+                  await client.flush();
+                } catch (_) {}
                 client.destroy();
                 onUpdate(TransferModel(status: "Transfer Rejected"));
                 return; // exit the loop for this client
               } else {
-                client.write("ACCEPTED\n");
-                await client.flush();
+                try {
+                  Map<String, int> offsets = {};
+                  for (var fMeta in files) {
+                    File localF = File(p.join(saveDirectory, fMeta["path"]));
+                    if (localF.existsSync()) {
+                      int len = localF.lengthSync();
+                      if (len <= fMeta["size"]) {
+                        offsets[fMeta["path"]] = len;
+                      } else {
+                        localF.deleteSync();
+                      }
+                    }
+                  }
+
+                  client.write(jsonEncode({"status": "ACCEPTED", "offsets": offsets}) + "\n");
+                  await client.flush();
+                } catch (_) {
+                  throw "Sender disconnected before starting.";
+                }
               }
             } else {
               headerBuffer.addAll(chunk);
@@ -203,11 +251,38 @@ class TransferController {
                 String savePath = p.join(saveDirectory, fileMeta["path"]);
                 File f = File(savePath);
                 f.parent.createSync(recursive: true); // إنشاء الفولدرات الفرعية
-                currentSink = f.openWrite();
+
+                int existingLen = f.existsSync() ? f.lengthSync() : 0;
+                if (existingLen > targetSize) {
+                  f.deleteSync();
+                  existingLen = 0;
+                }
+
+                currentSink = f.openWrite(mode: FileMode.append);
+                bytesReadForCurrentFile = existingLen;
+                if (received == 0) {
+                     // Add offsets of current + all previously completely skipped files to received
+                     int totalExisting = 0;
+                     for (int i = 0; i <= currentFileIndex; i++) {
+                         File tmp = File(p.join(saveDirectory, files[i]["path"]));
+                         if (tmp.existsSync()) totalExisting += tmp.lengthSync();
+                     }
+                     received += totalExisting;
+                }
               }
 
               int remainingInChunk = chunk.length - offset;
               int bytesNeeded = targetSize - bytesReadForCurrentFile;
+
+              if (bytesNeeded <= 0) {
+                // Already complete file from previous session
+                await currentSink!.flush();
+                await currentSink!.close();
+                currentSink = null;
+                bytesReadForCurrentFile = 0;
+                currentFileIndex++;
+                continue;
+              }
 
               // كتابة البيانات بدقة البايت
               if (remainingInChunk <= bytesNeeded) {
@@ -271,11 +346,17 @@ class TransferController {
           totalTime: (stopwatch.elapsedMilliseconds / 1000).toStringAsFixed(1),
           fileName: "All files saved.",
         ));
-        client.destroy();
+        try {
+          client.destroy();
+        } catch (_) {}
         onDone();
       }
     } catch (e) {
-      onUpdate(TransferModel(status: "Error: $e"));
+      if (e is SocketException) {
+        onUpdate(TransferModel(status: "Network Error: Please check Wi-Fi connection."));
+      } else {
+        onUpdate(TransferModel(status: "Error: $e"));
+      }
       onDone();
     }
   }
@@ -285,3 +366,4 @@ class TransferController {
     _server = null;
   }
 }
+
