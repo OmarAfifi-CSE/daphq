@@ -51,6 +51,8 @@ class _SenderSectionState extends State<SenderSection> {
                     decoration: InputDecoration(
                       labelText: labelHint,
                       labelStyle: TextStyle(color: Colors.white38),
+                      helperText: "Please update this to the exact Receiver IP",
+                      helperStyle: TextStyle(color: Colors.white60, fontStyle: FontStyle.italic),
                       enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
                     ),
                     enabled: !state.isTransferring,
