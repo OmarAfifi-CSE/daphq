@@ -32,7 +32,13 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Color(0xFF12122A),
-      appBar: AppBar(title: Text("Turbo Transfer Pro"), centerTitle: true, elevation: 0),
+      appBar: AppBar(
+        title: Text("Turbo Transfer Pro", style: TextStyle(color: Colors.white)),
+        centerTitle: true,
+        elevation: 0,
+        backgroundColor: Color(0xFF12122A),
+        iconTheme: IconThemeData(color: Colors.white),
+      ),
       body: SingleChildScrollView(
         padding: EdgeInsets.all(20),
         child: Column(
@@ -63,14 +69,17 @@ class _HomePageState extends State<HomePage> {
             children: [
               Icon(Icons.info_outline, color: Colors.blueAccent),
               SizedBox(width: 10),
-              Text("How to use & Maximize Speed", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+              Text("How to use for Max Speed", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
             ],
           ),
           SizedBox(height: 10),
-          Text("1. For maximum speed, open a Mobile Hotspot from your Laptop/PC and set the network band to 5GHz.", style: TextStyle(color: Colors.white70, fontSize: 13)),
-          Text("2. Connect your Mobile to this 5GHz Hotspot.", style: TextStyle(color: Colors.white70, fontSize: 13)),
-          Text("3. Default IP for PC Hotspot is usually 192.168.137.1 (already set below).", style: TextStyle(color: Colors.white70, fontSize: 13)),
-          Text("4. Select a Destination Folder before starting the Receiver.", style: TextStyle(color: Colors.white70, fontSize: 13)),
+          Text("1. Create a 5GHz Mobile Hotspot from your PC & connect your Mobile to it.", style: TextStyle(color: Colors.white70, fontSize: 13)),
+          SizedBox(height: 5),
+          Text("2. Send to PC: Enter the PC's default IP (192.168.137.1) in the Mobile app.", style: TextStyle(color: Colors.white70, fontSize: 13)),
+          SizedBox(height: 5),
+          Text("3. Send to Mobile: Check PC's Hotspot settings for your Mobile's IP (e.g., 192.168.137.xxx) and enter it in the PC app.", style: TextStyle(color: Colors.white70, fontSize: 13)),
+          SizedBox(height: 5),
+          Text("4. Always pick a Receiver folder before starting the server.", style: TextStyle(color: Colors.white70, fontSize: 13)),
         ],
       ),
     );
