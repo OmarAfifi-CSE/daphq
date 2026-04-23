@@ -1,7 +1,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'views/home_page.dart';
+import 'cubits/transfer_cubit.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -43,7 +45,10 @@ class TurboTransferApp extends StatelessWidget {
         visualDensity: VisualDensity.adaptivePlatformDensity,
         fontFamily: 'Roboto', // تأكد من وجود الخط أو استخدم الخط الافتراضي
       ),
-      home: HomePage(),
+      home: BlocProvider(
+        create: (_) => TransferCubit(),
+        child: HomePage(),
+      ),
     );
   }
 }
