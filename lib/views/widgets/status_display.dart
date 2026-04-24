@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../../cubits/transfer_cubit.dart';
 import '../../cubits/transfer_state.dart';
+import '../../core/app_colors.dart';
+import '../../core/responsive_utils.dart';
 
 class StatusDisplay extends StatelessWidget {
   final bool isDesktop;
@@ -16,12 +17,10 @@ class StatusDisplay extends StatelessWidget {
       builder: (context, state) {
         final model = state.model;
         return Container(
-          padding: isDesktop
-              ? const EdgeInsets.all(25.0)
-              : EdgeInsets.all(25.w),
+          padding: EdgeInsets.all(25.0.rw(isDesktop)),
           decoration: BoxDecoration(
-            color: Colors.white.withAlpha(12),
-            borderRadius: BorderRadius.circular(isDesktop ? 25.0 : 25.r),
+            color: AppColors.cardOverlay,
+            borderRadius: BorderRadius.circular(25.0.rr(isDesktop)),
             border: Border.all(color: Colors.white12),
           ),
           child: Column(
@@ -31,31 +30,31 @@ class StatusDisplay extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.blueAccent,
-                  fontSize: isDesktop ? 18.0 : 18.sp,
+                  fontSize: 18.0.rx(isDesktop),
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              SizedBox(height: isDesktop ? 15.0 : 15.h),
+              SizedBox(height: 15.0.rh(isDesktop)),
               Text(
                 "${model.speed.toStringAsFixed(1)} MB/s",
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: isDesktop ? 50.0 : 50.sp,
+                  fontSize: 50.0.rx(isDesktop),
                   fontWeight: FontWeight.bold,
                 ),
               ),
               if (model.avgSpeed != null)
                 Padding(
-                  padding: EdgeInsets.only(top: isDesktop ? 10.0 : 10.h),
+                  padding: EdgeInsets.only(top: 10.0.rh(isDesktop)),
                   child: Text(
                     "Avg: ${model.avgSpeed} MB/s | Time: ${model.totalTime}s",
                     style: TextStyle(
                       color: Colors.greenAccent,
-                      fontSize: isDesktop ? 16.0 : 16.sp,
+                      fontSize: 16.0.rx(isDesktop),
                     ),
                   ),
                 ),
-              Divider(color: Colors.white10, height: isDesktop ? 40.0 : 40.h),
+              Divider(color: Colors.white10, height: 40.0.rh(isDesktop)),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -66,7 +65,7 @@ class StatusDisplay extends StatelessWidget {
                       isFileName: true,
                     ),
                   ),
-                  SizedBox(width: isDesktop ? 15.0 : 15.w),
+                  SizedBox(width: 15.0.rw(isDesktop)),
                   Expanded(
                     child: _dataTile(
                       "Data Size",
@@ -90,10 +89,10 @@ class StatusDisplay extends StatelessWidget {
             label,
             style: TextStyle(
               color: Colors.white54,
-              fontSize: isDesktop ? 12.0 : 12.sp,
+              fontSize: 12.0.rx(isDesktop),
             ),
           ),
-          SizedBox(height: isDesktop ? 5.0 : 5.h),
+          SizedBox(height: 5.0.rh(isDesktop)),
           if (isFileName)
             Tooltip(
               message: val,
@@ -104,7 +103,7 @@ class StatusDisplay extends StatelessWidget {
                 style: TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.bold,
-                  fontSize: isDesktop ? 14.0 : 14.sp,
+                  fontSize: 14.0.rx(isDesktop),
                 ),
               ),
             )
@@ -116,7 +115,7 @@ class StatusDisplay extends StatelessWidget {
               style: TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,
-                fontSize: isDesktop ? 14.0 : 14.sp,
+                fontSize: 14.0.rx(isDesktop),
               ),
             ),
         ],

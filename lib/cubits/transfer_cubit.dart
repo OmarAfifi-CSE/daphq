@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
-import '../controllers/transfer_controller.dart';
+import '../controllers/sender_controller.dart';
+import '../controllers/receiver_controller.dart';
 import '../models/transfer_model.dart';
+import '../views/widgets/auth_dialog.dart';
 import 'transfer_state.dart';
 import '../main.dart';
 import 'dart:io';
 
 class TransferCubit extends Cubit<TransferState> {
-  final TransferController _controller = TransferController();
+  final SenderController _sender = SenderController();
+  final ReceiverController _receiver = ReceiverController();
 
   TransferCubit() : super(TransferState(model: TransferModel()));
 
@@ -37,7 +40,7 @@ class TransferCubit extends Cubit<TransferState> {
   }
 
   void stopReceiver() {
-    _controller.stopReceiving();
+    _receiver.stop();
     _stopForegroundService();
     emit(
       state.copyWith(
@@ -54,7 +57,7 @@ class TransferCubit extends Cubit<TransferState> {
     emit(state.copyWith(isReceiving: true, isTransferring: false));
     _startForegroundService("Turbo Transfer", "Waiting for incoming files...");
 
-    _controller.startReceiver(
+    _receiver.startReceiver(
       saveDirectory: state.receiveFolder!,
       onUpdate: (model) {
         bool isBusy = state.isTransferring;
@@ -69,8 +72,9 @@ class TransferCubit extends Cubit<TransferState> {
           isBusy = true;
         }
 
-        if (!isClosed)
+        if (!isClosed) {
           emit(state.copyWith(model: model, isTransferring: isBusy));
+        }
         if (Platform.isAndroid) {
           FlutterForegroundTask.updateService(
             notificationTitle: 'Receiving: ${model.fileName}',
@@ -79,39 +83,13 @@ class TransferCubit extends Cubit<TransferState> {
           );
         }
       },
-      onRequestAuth: (senderIp, count, size) async {
-        return await showDialog<bool>(
-              context: context,
-              barrierDismissible: false,
-              builder: (context) => AlertDialog(
-                title: Text(
-                  "Incoming Transfer",
-                  style: TextStyle(color: Colors.white),
-                ),
-                backgroundColor: Color(0xFF1E1E36),
-                content: Text(
-                  "Sender: $senderIp\nFiles: $count\nTotal Size: ${size.toStringAsFixed(2)} MB\n\nDo you want to accept?",
-                  style: TextStyle(color: Colors.white70),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    child: Text(
-                      "Reject",
-                      style: TextStyle(color: Colors.redAccent),
-                    ),
-                  ),
-                  ElevatedButton(
-                    onPressed: () => Navigator.pop(context, true),
-                    child: Text("Accept"),
-                  ),
-                ],
-              ),
-            ) ??
-            false;
-      },
+      onRequestAuth: (senderIp, count, size) => showAuthDialog(
+        context: context,
+        senderIp: senderIp,
+        fileCount: count,
+        totalSizeMB: size,
+      ),
       onDone: () {
-        // Keep receiver active unless user stops it
         if (Platform.isAndroid) {
           FlutterForegroundTask.updateService(
             notificationTitle: 'Turbo Transfer',
@@ -128,7 +106,7 @@ class TransferCubit extends Cubit<TransferState> {
     emit(state.copyWith(isTransferring: true));
     _startForegroundService("Turbo Transfer", "Sending files...");
 
-    _controller.sendData(
+    _sender.sendData(
       path: path,
       targetIp: state.targetIp.trim(),
       isFolder: isFolder,
@@ -151,13 +129,13 @@ class TransferCubit extends Cubit<TransferState> {
 
   @override
   Future<void> close() {
-    _controller.stopReceiving();
+    _receiver.stop();
     _stopForegroundService();
     return super.close();
   }
 
   void cancelSending() {
-    _controller.cancelSending();
+    _sender.cancel();
     _stopForegroundService();
     emit(
       state.copyWith(

@@ -1,4 +1,5 @@
 import '../models/transfer_model.dart';
+import '../core/app_constants.dart';
 
 class TransferState {
   final TransferModel model;
@@ -12,8 +13,8 @@ class TransferState {
     this.isTransferring = false,
     this.isReceiving = false,
     this.receiveFolder,
-    String? targetIp, // allow custom or fallback to a general base
-  }) : targetIp = targetIp ?? "192.168.137.1";
+    String? targetIp,
+  }) : targetIp = targetIp ?? AppConstants.defaultTargetIp;
 
   TransferState copyWith({
     TransferModel? model,

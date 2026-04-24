@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:window_manager/window_manager.dart';
+import '../core/app_colors.dart';
 import 'widgets/instructions_card.dart';
 import 'widgets/status_display.dart';
 import 'widgets/receiver_section.dart';
@@ -13,13 +14,13 @@ class HomePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Color(0xFF12122A),
+      backgroundColor: AppColors.background,
       appBar: (Platform.isWindows || Platform.isLinux || Platform.isMacOS)
           ? PreferredSize(
               preferredSize: const Size.fromHeight(kWindowCaptionHeight),
               child: WindowCaption(
                 brightness: Brightness.dark,
-                backgroundColor: Color(0xFF0F172A),
+                backgroundColor: AppColors.appBarBackground,
                 title: Text(
                   'Turbo Transfer Pro',
                   style: TextStyle(color: Colors.white, fontSize: 14),
@@ -33,7 +34,7 @@ class HomePage extends StatelessWidget {
               ),
               centerTitle: true,
               elevation: 0,
-              backgroundColor: Color(0xFF0F172A),
+              backgroundColor: AppColors.appBarBackground,
               iconTheme: IconThemeData(color: Colors.white, size: 24.sp),
             ),
       body: SafeArea(

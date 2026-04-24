@@ -7,6 +7,7 @@ import 'package:window_manager/window_manager.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'views/home_page.dart';
 import 'cubits/transfer_cubit.dart';
+import 'core/app_constants.dart';
 
 @pragma('vm:entry-point')
 void startCallback() {
@@ -61,8 +62,11 @@ void main() async {
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
     await windowManager.ensureInitialized();
     WindowOptions windowOptions = WindowOptions(
-      size: Size(800, 700),
-      minimumSize: Size(450, 600),
+      size: Size(AppConstants.windowWidth, AppConstants.windowHeight),
+      minimumSize: Size(
+        AppConstants.windowMinWidth,
+        AppConstants.windowMinHeight,
+      ),
       center: true,
       backgroundColor: Colors.transparent,
       skipTaskbar: false,
@@ -79,19 +83,17 @@ void main() async {
 }
 
 Future<void> requestAllPermissions() async {
-  // صلاحيات التخزين التقليدية
   Map<Permission, PermissionStatus> statuses = await [
     Permission.storage,
-    Permission.requestInstallPackages, // لو هتبعت ملفات APK
-    Permission.notification, // To create foreground service notification
+    Permission.requestInstallPackages, // Required for sending APK files
+    Permission.notification,
   ].request();
 
-  // طلب صلاحية الوصول الكامل للملفات (مهمة لأندرويد 11 وما فوق)
+  // Full file access (required for Android 11+)
   if (await Permission.manageExternalStorage.isDenied) {
     await Permission.manageExternalStorage.request();
   }
 
-  // التأكد من حالة الصلاحيات في الكونسول
   statuses.forEach((permission, status) {
     print('${permission.toString()}: $status');
   });
@@ -107,7 +109,7 @@ class TurboTransferApp extends StatelessWidget {
         Size baseSize;
         if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
           // Fixed design size for desktop to avoid weird stretching
-          baseSize = const Size(800, 700);
+          baseSize = Size(AppConstants.windowWidth, AppConstants.windowHeight);
         } else {
           baseSize = const Size(360, 690);
         }

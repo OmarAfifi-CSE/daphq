@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../../cubits/transfer_cubit.dart';
 import '../../cubits/transfer_state.dart';
+import '../../core/app_colors.dart';
+import '../../core/responsive_utils.dart';
 
 class ReceiverSection extends StatelessWidget {
   final bool isDesktop;
@@ -19,20 +20,18 @@ class ReceiverSection extends StatelessWidget {
           "Receiver Mode",
           style: TextStyle(
             color: Colors.white,
-            fontSize: isDesktop ? 20.0 : 20.sp,
+            fontSize: 20.0.rx(isDesktop),
             fontWeight: FontWeight.bold,
           ),
         ),
-        SizedBox(height: isDesktop ? 10.0 : 10.h),
+        SizedBox(height: 10.0.rh(isDesktop)),
         BlocBuilder<TransferCubit, TransferState>(
           builder: (context, state) {
             return Container(
-              padding: isDesktop
-                  ? const EdgeInsets.all(15.0)
-                  : EdgeInsets.all(15.w),
+              padding: EdgeInsets.all(15.0.rw(isDesktop)),
               decoration: BoxDecoration(
-                color: Colors.white.withAlpha(12),
-                borderRadius: BorderRadius.circular(isDesktop ? 15.0 : 15.r),
+                color: AppColors.cardOverlay,
+                borderRadius: BorderRadius.circular(15.0.rr(isDesktop)),
               ),
               child: Column(
                 children: [
@@ -51,7 +50,7 @@ class ReceiverSection extends StatelessWidget {
                               color: state.receiveFolder == null
                                   ? Colors.redAccent
                                   : Colors.greenAccent,
-                              fontSize: isDesktop ? 14.0 : 14.sp,
+                              fontSize: 14.0.rx(isDesktop),
                             ),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
@@ -62,7 +61,7 @@ class ReceiverSection extends StatelessWidget {
                         icon: Icon(
                           Icons.folder_open,
                           color: Colors.white,
-                          size: isDesktop ? 24.0 : 24.sp,
+                          size: 24.0.rx(isDesktop),
                         ),
                         onPressed: state.isTransferring
                             ? null
@@ -78,20 +77,15 @@ class ReceiverSection extends StatelessWidget {
                       ),
                     ],
                   ),
-                  SizedBox(height: isDesktop ? 15.0 : 15.h),
+                  SizedBox(height: 15.0.rh(isDesktop)),
                   ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: state.isReceiving
                           ? Colors.red
                           : Colors.green,
-                      minimumSize: Size(
-                        double.infinity,
-                        isDesktop ? 50.0 : 50.h,
-                      ),
+                      minimumSize: Size(double.infinity, 50.0.rh(isDesktop)),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(
-                          isDesktop ? 15.0 : 15.r,
-                        ),
+                        borderRadius: BorderRadius.circular(15.0.rr(isDesktop)),
                       ),
                     ),
                     onPressed: state.isTransferring && !state.isReceiving
@@ -118,7 +112,7 @@ class ReceiverSection extends StatelessWidget {
                     icon: Icon(
                       state.isReceiving ? Icons.stop : Icons.wifi_tethering,
                       color: Colors.white,
-                      size: isDesktop ? 24.0 : 24.sp,
+                      size: 24.0.rx(isDesktop),
                     ),
                     label: Text(
                       state.isReceiving
@@ -126,7 +120,7 @@ class ReceiverSection extends StatelessWidget {
                           : "Start Receiver Server",
                       style: TextStyle(
                         color: Colors.white,
-                        fontSize: isDesktop ? 16.0 : 16.sp,
+                        fontSize: 16.0.rx(isDesktop),
                       ),
                     ),
                   ),
