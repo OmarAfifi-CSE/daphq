@@ -24,6 +24,7 @@ class StatusDisplay extends StatelessWidget {
             children: [
               Text(
                 model.status,
+                textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.blueAccent,
                   fontSize: 18.sp,
@@ -54,13 +55,19 @@ class StatusDisplay extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _dataTile(
-                    "Current File",
-                    model.fileName.isEmpty ? "Ready" : model.fileName,
+                  Expanded(
+                    child: _dataTile(
+                      "Current File",
+                      model.fileName.isEmpty ? "Ready" : model.fileName,
+                      isFileName: true,
+                    ),
                   ),
-                  _dataTile(
-                    "Data Size",
-                    "${model.transferred.toStringAsFixed(1)} MB",
+                  SizedBox(width: 15.w),
+                  Expanded(
+                    child: _dataTile(
+                      "Data Size",
+                      "${model.transferred.toStringAsFixed(1)} MB",
+                    ),
                   ),
                 ],
               ),
@@ -71,21 +78,40 @@ class StatusDisplay extends StatelessWidget {
     );
   }
 
-  Widget _dataTile(String label, String val) => Column(
-    children: [
-      Text(
-        label,
-        style: TextStyle(color: Colors.white54, fontSize: 12.sp),
-      ),
-      SizedBox(height: 5.h),
-      Text(
-        val,
-        style: TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.bold,
-          fontSize: 14.sp,
-        ),
-      ),
-    ],
-  );
+  Widget _dataTile(String label, String val, {bool isFileName = false}) =>
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(color: Colors.white54, fontSize: 12.sp),
+          ),
+          SizedBox(height: 5.h),
+          if (isFileName)
+            Tooltip(
+              message: val,
+              child: Text(
+                val,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14.sp,
+                ),
+              ),
+            )
+          else
+            Text(
+              val,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 14.sp,
+              ),
+            ),
+        ],
+      );
 }

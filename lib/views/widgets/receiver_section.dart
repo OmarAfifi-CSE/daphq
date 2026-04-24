@@ -35,18 +35,23 @@ class ReceiverSection extends StatelessWidget {
                   Row(
                     children: [
                       Expanded(
-                        child: Text(
-                          state.receiveFolder == null
-                              ? "No receive folder selected"
-                              : "Save to: ${state.receiveFolder}",
-                          style: TextStyle(
-                            color: state.receiveFolder == null
-                                ? Colors.redAccent
-                                : Colors.greenAccent,
-                            fontSize: 14.sp,
+                        child: Tooltip(
+                          message:
+                              state.receiveFolder ??
+                              "No receive folder selected",
+                          child: Text(
+                            state.receiveFolder == null
+                                ? "No receive folder selected"
+                                : "Save to: ${state.receiveFolder}",
+                            style: TextStyle(
+                              color: state.receiveFolder == null
+                                  ? Colors.redAccent
+                                  : Colors.greenAccent,
+                              fontSize: 14.sp,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       IconButton(
