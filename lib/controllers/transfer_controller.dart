@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:path/path.dart' as p;
 import '../models/transfer_model.dart';
 import 'package:flutter/foundation.dart'; // import to detect platform
+import 'dart:async';
 
 class TransferController {
   static const int port = 9999;
@@ -180,7 +181,36 @@ class TransferController {
       } else if (e is SocketException) {
         final msg = e.message.toLowerCase();
         final osError = e.osError?.errorCode;
-        if (osError == 104 ||
+
+        if (osError == 111 ||
+            osError == 10061 ||
+            msg.contains("connection refused")) {
+          onUpdate(
+            TransferModel(
+              status:
+                  "Connection refused. Did the receiver click 'Start Receiving'?",
+            ),
+          );
+        } else if (osError == 113 ||
+            osError == 112 ||
+            osError == 10060 ||
+            osError == 10065) {
+          onUpdate(
+            TransferModel(
+              status:
+                  "Device not found. Please double-check the IP address and ensure both devices are on the exact same Wi-Fi/Hotspot.",
+            ),
+          );
+        } else if (osError == 101 ||
+            osError == 10051 ||
+            msg.contains("network is unreachable")) {
+          onUpdate(
+            TransferModel(
+              status:
+                  "No network connection. Please turn on Wi-Fi or connect to the Hotspot.",
+            ),
+          );
+        } else if (osError == 104 ||
             osError == 10054 ||
             osError == 32 ||
             msg.contains("connection reset by peer")) {
@@ -194,6 +224,13 @@ class TransferController {
             ),
           );
         }
+      } else if (e is TimeoutException) {
+        onUpdate(
+          TransferModel(
+            status:
+                "Device not found. Please double-check the IP address and ensure both devices are on the exact same Wi-Fi/Hotspot.",
+          ),
+        );
       } else {
         onUpdate(TransferModel(status: "Error: $e"));
       }
