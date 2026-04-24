@@ -40,6 +40,8 @@ class HomePage extends StatelessWidget {
         child: LayoutBuilder(
           builder: (context, constraints) {
             bool isDesktopWide = constraints.maxWidth > 800;
+            final bool isDesktopOS =
+                Platform.isWindows || Platform.isMacOS || Platform.isLinux;
 
             if (isDesktopWide) {
               return Center(
@@ -55,10 +57,10 @@ class HomePage extends StatelessWidget {
                           child: SingleChildScrollView(
                             physics: const BouncingScrollPhysics(),
                             child: Column(
-                              children: const [
-                                InstructionsCard(isDesktop: true),
-                                SizedBox(height: 20),
-                                StatusDisplay(isDesktop: true),
+                              children: [
+                                InstructionsCard(isDesktop: isDesktopOS),
+                                const SizedBox(height: 20),
+                                StatusDisplay(isDesktop: isDesktopOS),
                               ],
                             ),
                           ),
@@ -69,10 +71,10 @@ class HomePage extends StatelessWidget {
                           child: SingleChildScrollView(
                             physics: const BouncingScrollPhysics(),
                             child: Column(
-                              children: const [
-                                ReceiverSection(isDesktop: true),
-                                SizedBox(height: 30),
-                                SenderSection(isDesktop: true),
+                              children: [
+                                ReceiverSection(isDesktop: isDesktopOS),
+                                const SizedBox(height: 30),
+                                SenderSection(isDesktop: isDesktopOS),
                               ],
                             ),
                           ),
@@ -90,17 +92,19 @@ class HomePage extends StatelessWidget {
                 constraints: const BoxConstraints(maxWidth: 500),
                 child: SingleChildScrollView(
                   physics: const BouncingScrollPhysics(),
-                  padding: EdgeInsets.all(20.w),
+                  padding: isDesktopOS
+                      ? const EdgeInsets.all(20.0)
+                      : EdgeInsets.all(20.w),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const InstructionsCard(isDesktop: false),
-                      SizedBox(height: 20.h),
-                      const StatusDisplay(isDesktop: false),
-                      SizedBox(height: 30.h),
-                      const ReceiverSection(isDesktop: false),
-                      SizedBox(height: 30.h),
-                      const SenderSection(isDesktop: false),
+                      InstructionsCard(isDesktop: isDesktopOS),
+                      SizedBox(height: isDesktopOS ? 20.0 : 20.h),
+                      StatusDisplay(isDesktop: isDesktopOS),
+                      SizedBox(height: isDesktopOS ? 30.0 : 30.h),
+                      ReceiverSection(isDesktop: isDesktopOS),
+                      SizedBox(height: isDesktopOS ? 30.0 : 30.h),
+                      SenderSection(isDesktop: isDesktopOS),
                     ],
                   ),
                 ),
