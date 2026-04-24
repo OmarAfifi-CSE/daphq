@@ -103,6 +103,30 @@ class _SenderSectionState extends State<SenderSection> {
                       ),
                     ],
                   ),
+                  if (state.isTransferring && !state.isReceiving) ...[
+                    SizedBox(height: 15.h),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        minimumSize: Size(double.infinity, 50.h),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(15.r),
+                        ),
+                      ),
+                      onPressed: () {
+                        context.read<TransferCubit>().cancelSending();
+                      },
+                      icon: Icon(
+                        Icons.cancel,
+                        color: Colors.white,
+                        size: 24.sp,
+                      ),
+                      label: Text(
+                        "Cancel Transfer",
+                        style: TextStyle(color: Colors.white, fontSize: 16.sp),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             );

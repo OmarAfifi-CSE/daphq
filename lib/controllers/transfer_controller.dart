@@ -178,11 +178,22 @@ class TransferController {
       if (_isSenderCancelled) {
         onUpdate(TransferModel(status: "Transfer Cancelled"));
       } else if (e is SocketException) {
-        onUpdate(
-          TransferModel(
-            status: "Network Error: Please ensure Wi-Fi is connected.",
-          ),
-        );
+        final msg = e.message.toLowerCase();
+        final osError = e.osError?.errorCode;
+        if (osError == 104 ||
+            osError == 10054 ||
+            osError == 32 ||
+            msg.contains("connection reset by peer")) {
+          onUpdate(
+            TransferModel(status: "Transfer cancelled by the other device."),
+          );
+        } else {
+          onUpdate(
+            TransferModel(
+              status: "Network Error: Please ensure Wi-Fi is connected.",
+            ),
+          );
+        }
       } else {
         onUpdate(TransferModel(status: "Error: $e"));
       }
@@ -441,11 +452,22 @@ class TransferController {
       if (_isReceiverCancelled) {
         onUpdate(TransferModel(status: "Transfer Cancelled"));
       } else if (e is SocketException) {
-        onUpdate(
-          TransferModel(
-            status: "Network Error: Please check Wi-Fi connection.",
-          ),
-        );
+        final msg = e.message.toLowerCase();
+        final osError = e.osError?.errorCode;
+        if (osError == 104 ||
+            osError == 10054 ||
+            osError == 32 ||
+            msg.contains("connection reset by peer")) {
+          onUpdate(
+            TransferModel(status: "Transfer cancelled by the other device."),
+          );
+        } else {
+          onUpdate(
+            TransferModel(
+              status: "Network Error: Please check Wi-Fi connection.",
+            ),
+          );
+        }
       } else {
         onUpdate(TransferModel(status: "Error: $e"));
       }
