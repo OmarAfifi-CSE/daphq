@@ -274,216 +274,264 @@ class TransferController {
 
       await for (Socket client in _server!) {
         _activeReceiverClient = client;
-        Stopwatch stopwatch = Stopwatch()..start();
+        try {
+          Stopwatch stopwatch = Stopwatch()..start();
+          bool isRejected = false;
 
-        List<int> headerBuffer = [];
-        Map<String, dynamic>? metadata;
+          List<int> headerBuffer = [];
+          Map<String, dynamic>? metadata;
 
-        int currentFileIndex = 0;
-        int bytesReadForCurrentFile = 0;
-        IOSink? currentSink;
+          int currentFileIndex = 0;
+          int bytesReadForCurrentFile = 0;
+          IOSink? currentSink;
 
-        int received = 0;
-        int bytesSinceUpdate = 0;
-        DateTime lastTime = DateTime.now();
+          int received = 0;
+          int bytesSinceUpdate = 0;
+          DateTime lastTime = DateTime.now();
 
-        await for (var chunk in client) {
-          int offset = 0;
+          await for (var chunk in client) {
+            int offset = 0;
 
-          // 1. قراءة الهيدر (JSON)
-          if (metadata == null) {
-            int newlineIndex = chunk.indexOf(10); // \n
-            if (newlineIndex != -1) {
-              headerBuffer.addAll(chunk.sublist(0, newlineIndex));
-              String jsonStr = utf8.decode(headerBuffer);
-              metadata = jsonDecode(jsonStr);
+            // 1. قراءة الهيدر (JSON)
+            if (metadata == null) {
+              int newlineIndex = chunk.indexOf(10); // \n
+              if (newlineIndex != -1) {
+                headerBuffer.addAll(chunk.sublist(0, newlineIndex));
+                String jsonStr = utf8.decode(headerBuffer);
+                metadata = jsonDecode(jsonStr);
 
-              offset = newlineIndex + 1;
+                offset = newlineIndex + 1;
 
-              // --- Authorization Step ---
-              List<dynamic> files = metadata!["files"];
-              int totalBytes = files.fold(
-                0,
-                (sum, f) => sum + (f["size"] as int),
-              );
-              double totalSizeMB = totalBytes / 1024 / 1024;
+                // --- Authorization Step ---
+                List<dynamic> files = metadata!["files"];
+                int totalBytes = files.fold(
+                  0,
+                  (sum, f) => sum + (f["size"] as int),
+                );
+                double totalSizeMB = totalBytes / 1024 / 1024;
 
-              bool isAccepted = await onRequestAuth(
-                client.remoteAddress.address,
-                files.length,
-                totalSizeMB,
-              );
+                bool isAccepted = await onRequestAuth(
+                  client.remoteAddress.address,
+                  files.length,
+                  totalSizeMB,
+                );
 
-              if (!isAccepted) {
-                try {
-                  client.write("${jsonEncode({"status": "REJECTED"})}\n");
-                  await client.flush();
-                } catch (_) {}
-                client.destroy();
-                onUpdate(TransferModel(status: "Transfer Rejected"));
-                return; // exit the loop for this client
-              } else {
-                try {
-                  Map<String, int> offsets = {};
-                  for (var fMeta in files) {
-                    File localF = File(p.join(saveDirectory, fMeta["path"]));
-                    if (localF.existsSync()) {
-                      int len = localF.lengthSync();
-                      if (len <= fMeta["size"]) {
-                        offsets[fMeta["path"]] = len;
-                      } else {
-                        localF.deleteSync();
+                if (!isAccepted) {
+                  try {
+                    client.write("${jsonEncode({"status": "REJECTED"})}\n");
+                    await client.flush();
+                  } catch (_) {}
+                  client.destroy();
+                  isRejected = true;
+                  onUpdate(
+                    TransferModel(
+                      status: "Transfer Rejected. Ready & Waiting...",
+                    ),
+                  );
+                  break; // exit chunk loop
+                } else {
+                  try {
+                    Map<String, int> offsets = {};
+                    for (var fMeta in files) {
+                      File localF = File(p.join(saveDirectory, fMeta["path"]));
+                      if (localF.existsSync()) {
+                        int len = localF.lengthSync();
+                        if (len <= fMeta["size"]) {
+                          offsets[fMeta["path"]] = len;
+                        } else {
+                          localF.deleteSync();
+                        }
                       }
                     }
+
+                    client.write(
+                      "${jsonEncode({"status": "ACCEPTED", "offsets": offsets})}\n",
+                    );
+                    await client.flush();
+                  } catch (_) {
+                    throw "Sender disconnected before starting.";
                   }
-
-                  client.write(
-                    "${jsonEncode({"status": "ACCEPTED", "offsets": offsets})}\n",
-                  );
-                  await client.flush();
-                } catch (_) {
-                  throw "Sender disconnected before starting.";
                 }
-              }
-            } else {
-              headerBuffer.addAll(chunk);
-              continue;
-            }
-          } // safety check
-          List<dynamic> files = metadata["files"];
-          try {
-            while (offset < chunk.length && currentFileIndex < files.length) {
-              var fileMeta = files[currentFileIndex];
-              int targetSize = fileMeta["size"];
-
-              // فتح الملف الجديد إذا لم يكن مفتوحاً
-              if (currentSink == null) {
-                String savePath = p.join(saveDirectory, fileMeta["path"]);
-                File f = File(savePath);
-                f.parent.createSync(recursive: true); // إنشاء الفولدرات الفرعية
-
-                int existingLen = f.existsSync() ? f.lengthSync() : 0;
-                if (existingLen > targetSize) {
-                  f.deleteSync();
-                  existingLen = 0;
-                }
-
-                currentSink = f.openWrite(mode: FileMode.append);
-                _activeReceiverSink = currentSink;
-                bytesReadForCurrentFile = existingLen;
-                if (received == 0) {
-                  // Add offsets of current + all previously completely skipped files to received
-                  int totalExisting = 0;
-                  for (int i = 0; i <= currentFileIndex; i++) {
-                    File tmp = File(p.join(saveDirectory, files[i]["path"]));
-                    if (tmp.existsSync()) totalExisting += tmp.lengthSync();
-                  }
-                  received += totalExisting;
-                }
-              }
-
-              int remainingInChunk = chunk.length - offset;
-              int bytesNeeded = targetSize - bytesReadForCurrentFile;
-
-              if (bytesNeeded <= 0) {
-                // Already complete file from previous session
-                await currentSink.flush();
-                await currentSink.close();
-                currentSink = null;
-                bytesReadForCurrentFile = 0;
-                currentFileIndex++;
+              } else {
+                headerBuffer.addAll(chunk);
                 continue;
               }
+            } // safety check
+            List<dynamic> files = metadata["files"];
+            try {
+              while (offset < chunk.length && currentFileIndex < files.length) {
+                var fileMeta = files[currentFileIndex];
+                int targetSize = fileMeta["size"];
 
-              // كتابة البيانات بدقة البايت
-              if (remainingInChunk <= bytesNeeded) {
-                currentSink.add(chunk.sublist(offset));
-                bytesReadForCurrentFile += remainingInChunk;
-                received += remainingInChunk;
-                bytesSinceUpdate += remainingInChunk;
-                offset += remainingInChunk;
-              } else {
-                currentSink.add(chunk.sublist(offset, offset + bytesNeeded));
-                bytesReadForCurrentFile += bytesNeeded;
-                received += bytesNeeded;
-                bytesSinceUpdate += bytesNeeded;
-                offset += bytesNeeded;
+                // فتح الملف الجديد إذا لم يكن مفتوحاً
+                if (currentSink == null) {
+                  String savePath = p.join(saveDirectory, fileMeta["path"]);
+                  File f = File(savePath);
+                  f.parent.createSync(
+                    recursive: true,
+                  ); // إنشاء الفولدرات الفرعية
+
+                  int existingLen = f.existsSync() ? f.lengthSync() : 0;
+                  if (existingLen > targetSize) {
+                    f.deleteSync();
+                    existingLen = 0;
+                  }
+
+                  currentSink = f.openWrite(mode: FileMode.append);
+                  _activeReceiverSink = currentSink;
+                  bytesReadForCurrentFile = existingLen;
+                  if (received == 0) {
+                    // Add offsets of current + all previously completely skipped files to received
+                    int totalExisting = 0;
+                    for (int i = 0; i <= currentFileIndex; i++) {
+                      File tmp = File(p.join(saveDirectory, files[i]["path"]));
+                      if (tmp.existsSync()) totalExisting += tmp.lengthSync();
+                    }
+                    received += totalExisting;
+                  }
+                }
+
+                int remainingInChunk = chunk.length - offset;
+                int bytesNeeded = targetSize - bytesReadForCurrentFile;
+
+                if (bytesNeeded <= 0) {
+                  // Already complete file from previous session
+                  await currentSink.flush();
+                  await currentSink.close();
+                  currentSink = null;
+                  bytesReadForCurrentFile = 0;
+                  currentFileIndex++;
+                  continue;
+                }
+
+                // كتابة البيانات بدقة البايت
+                if (remainingInChunk <= bytesNeeded) {
+                  currentSink.add(chunk.sublist(offset));
+                  bytesReadForCurrentFile += remainingInChunk;
+                  received += remainingInChunk;
+                  bytesSinceUpdate += remainingInChunk;
+                  offset += remainingInChunk;
+                } else {
+                  currentSink.add(chunk.sublist(offset, offset + bytesNeeded));
+                  bytesReadForCurrentFile += bytesNeeded;
+                  received += bytesNeeded;
+                  bytesSinceUpdate += bytesNeeded;
+                  offset += bytesNeeded;
+                }
+
+                // تحديث السرعة في الواجهة
+                if (DateTime.now().difference(lastTime).inMilliseconds > 500) {
+                  double speed = (bytesSinceUpdate / 1024 / 1024) / 0.5;
+                  onUpdate(
+                    TransferModel(
+                      speed: speed,
+                      transferred: received / 1024 / 1024,
+                      fileName: p.basename(fileMeta["path"]),
+                      status: "Receiving Data...",
+                    ),
+                  );
+                  bytesSinceUpdate = 0;
+                  lastTime = DateTime.now();
+                }
+
+                // إغلاق الملف عند اكتمال حجمه
+                if (bytesReadForCurrentFile == targetSize) {
+                  await currentSink.flush();
+                  await currentSink.close();
+                  currentSink = null;
+                  _activeReceiverSink = null;
+                  bytesReadForCurrentFile = 0;
+                  currentFileIndex++;
+                }
               }
-
-              // تحديث السرعة في الواجهة
-              if (DateTime.now().difference(lastTime).inMilliseconds > 500) {
-                double speed = (bytesSinceUpdate / 1024 / 1024) / 0.5;
-                onUpdate(
-                  TransferModel(
-                    speed: speed,
-                    transferred: received / 1024 / 1024,
-                    fileName: p.basename(fileMeta["path"]),
-                    status: "Receiving Data...",
-                  ),
-                );
-                bytesSinceUpdate = 0;
-                lastTime = DateTime.now();
-              }
-
-              // إغلاق الملف عند اكتمال حجمه
-              if (bytesReadForCurrentFile == targetSize) {
+            } finally {
+              if (currentSink != null && currentFileIndex >= files.length) {
+                // Cleanup if loop finished
                 await currentSink.flush();
                 await currentSink.close();
-                currentSink = null;
                 _activeReceiverSink = null;
-                bytesReadForCurrentFile = 0;
-                currentFileIndex++;
               }
             }
-          } finally {
-            if (currentSink != null && currentFileIndex >= files.length) {
-              // Cleanup if loop finished
-              await currentSink.flush();
-              await currentSink.close();
-              _activeReceiverSink = null;
-            }
+          } // end await for chunk
+
+          if (isRejected) {
+            continue; // Skip the rest of processing for this rejected client
           }
-        } // end await for chunk
 
-        if (_isReceiverCancelled) {
-          throw "Transfer Cancelled";
-        }
+          if (_isReceiverCancelled) {
+            throw "Transfer Cancelled";
+          }
 
-        // Final cleanup for sinking if any streams left open abruptly
-        if (currentSink != null) {
-          await currentSink.flush();
-          await currentSink.close();
-          currentSink = null;
+          // Final cleanup for sinking if any streams left open abruptly
+          if (currentSink != null) {
+            await currentSink.flush();
+            await currentSink.close();
+            currentSink = null;
+            _activeReceiverSink = null;
+          }
+
+          // Check for premature drop (sender destroyed socket)
+          int totalExpectedBytes =
+              metadata?["files"]?.fold(
+                0,
+                (sum, f) => sum + (f["size"] as int),
+              ) ??
+              0;
+          if (metadata != null && received < totalExpectedBytes) {
+            throw "Connection dropped prematurely.";
+          }
+
+          stopwatch.stop();
+          double finalMB = received / 1024 / 1024;
+
+          onUpdate(
+            TransferModel(
+              status: "Transfer Complete! Ready & Waiting...",
+              transferred: finalMB,
+              avgSpeed: (finalMB / (stopwatch.elapsedMilliseconds / 1000))
+                  .toStringAsFixed(2),
+              totalTime: (stopwatch.elapsedMilliseconds / 1000).toStringAsFixed(
+                1,
+              ),
+              fileName: "All files saved.",
+            ),
+          );
+        } catch (e) {
+          if (_isReceiverCancelled) {
+            onUpdate(
+              TransferModel(status: "Transfer Cancelled. Ready & Waiting..."),
+            );
+          } else if (e is SocketException) {
+            final msg = e.message.toLowerCase();
+            final osError = e.osError?.errorCode;
+            if (osError == 104 ||
+                osError == 10054 ||
+                osError == 32 ||
+                msg.contains("connection reset by peer")) {
+              onUpdate(
+                TransferModel(
+                  status:
+                      "Transfer cancelled by the other device. Ready & Waiting...",
+                ),
+              );
+            } else {
+              onUpdate(
+                TransferModel(
+                  status:
+                      "Network Error: Please check Wi-Fi connection. Ready & Waiting...",
+                ),
+              );
+            }
+          } else {
+            onUpdate(TransferModel(status: "Error: $e. Ready & Waiting..."));
+          }
+        } finally {
+          try {
+            client.destroy();
+          } catch (_) {}
+          _activeReceiverClient = null;
           _activeReceiverSink = null;
         }
-
-        // Check for premature drop (sender destroyed socket)
-        int totalExpectedBytes =
-            metadata?["files"]?.fold(0, (sum, f) => sum + (f["size"] as int)) ??
-            0;
-        if (metadata != null && received < totalExpectedBytes) {
-          throw "Connection dropped prematurely.";
-        }
-
-        stopwatch.stop();
-        double finalMB = received / 1024 / 1024;
-
-        onUpdate(
-          TransferModel(
-            status: "Transfer Complete!",
-            transferred: finalMB,
-            avgSpeed: (finalMB / (stopwatch.elapsedMilliseconds / 1000))
-                .toStringAsFixed(2),
-            totalTime: (stopwatch.elapsedMilliseconds / 1000).toStringAsFixed(
-              1,
-            ),
-            fileName: "All files saved.",
-          ),
-        );
-        try {
-          client.destroy();
-        } catch (_) {}
-        onDone();
       }
     } catch (e) {
       if (_isReceiverCancelled) {

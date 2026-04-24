@@ -51,13 +51,26 @@ class TransferCubit extends Cubit<TransferState> {
   Future<void> startReceiver({required BuildContext context}) async {
     if (state.receiveFolder == null) return;
 
-    emit(state.copyWith(isReceiving: true, isTransferring: true));
+    emit(state.copyWith(isReceiving: true, isTransferring: false));
     _startForegroundService("Turbo Transfer", "Waiting for incoming files...");
 
     _controller.startReceiver(
       saveDirectory: state.receiveFolder!,
       onUpdate: (model) {
-        if (!isClosed) emit(state.copyWith(model: model));
+        bool isBusy = state.isTransferring;
+        String s = model.status.toLowerCase();
+        if (s.contains("ready & waiting") ||
+            s.contains("complete") ||
+            s.contains("cancelled") ||
+            s.contains("error") ||
+            s.contains("rejected")) {
+          isBusy = false;
+        } else if (s.contains("receiving data") || s.contains("connecting")) {
+          isBusy = true;
+        }
+
+        if (!isClosed)
+          emit(state.copyWith(model: model, isTransferring: isBusy));
         if (Platform.isAndroid) {
           FlutterForegroundTask.updateService(
             notificationTitle: 'Receiving: ${model.fileName}',
