@@ -44,9 +44,9 @@ class HomePage extends StatelessWidget {
             if (isDesktopWide) {
               return Center(
                 child: ConstrainedBox(
-                  constraints: BoxConstraints(maxWidth: 1200),
+                  constraints: const BoxConstraints(maxWidth: 1100),
                   child: Padding(
-                    padding: EdgeInsets.all(20.w),
+                    padding: const EdgeInsets.all(20.0),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -55,30 +55,25 @@ class HomePage extends StatelessWidget {
                           child: SingleChildScrollView(
                             physics: const BouncingScrollPhysics(),
                             child: Column(
-                              children: [
-                                InstructionsCard(),
-                                SizedBox(height: 20.h),
-                                StatusDisplay(),
+                              children: const [
+                                InstructionsCard(isDesktop: true),
+                                SizedBox(height: 20),
+                                StatusDisplay(isDesktop: true),
                               ],
                             ),
                           ),
                         ),
-                        SizedBox(width: 30.w),
+                        const SizedBox(width: 30),
                         Expanded(
                           flex: 1,
                           child: SingleChildScrollView(
                             physics: const BouncingScrollPhysics(),
-                            child: Center(
-                              child: ConstrainedBox(
-                                constraints: BoxConstraints(maxWidth: 500),
-                                child: Column(
-                                  children: [
-                                    ReceiverSection(),
-                                    SizedBox(height: 30.h),
-                                    SenderSection(),
-                                  ],
-                                ),
-                              ),
+                            child: Column(
+                              children: const [
+                                ReceiverSection(isDesktop: true),
+                                SizedBox(height: 30),
+                                SenderSection(isDesktop: true),
+                              ],
                             ),
                           ),
                         ),
@@ -92,20 +87,20 @@ class HomePage extends StatelessWidget {
             // Mobile / Narrow Layout
             return Center(
               child: ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: 500),
+                constraints: const BoxConstraints(maxWidth: 500),
                 child: SingleChildScrollView(
                   physics: const BouncingScrollPhysics(),
                   padding: EdgeInsets.all(20.w),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      InstructionsCard(),
+                      const InstructionsCard(isDesktop: false),
                       SizedBox(height: 20.h),
-                      StatusDisplay(),
+                      const StatusDisplay(isDesktop: false),
                       SizedBox(height: 30.h),
-                      ReceiverSection(),
+                      const ReceiverSection(isDesktop: false),
                       SizedBox(height: 30.h),
-                      SenderSection(),
+                      const SenderSection(isDesktop: false),
                     ],
                   ),
                 ),

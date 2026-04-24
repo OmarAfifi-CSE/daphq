@@ -5,7 +5,9 @@ import '../../cubits/transfer_cubit.dart';
 import '../../cubits/transfer_state.dart';
 
 class StatusDisplay extends StatelessWidget {
-  const StatusDisplay({super.key});
+  final bool isDesktop;
+
+  const StatusDisplay({super.key, this.isDesktop = false});
 
   @override
   Widget build(BuildContext context) {
@@ -14,10 +16,12 @@ class StatusDisplay extends StatelessWidget {
       builder: (context, state) {
         final model = state.model;
         return Container(
-          padding: EdgeInsets.all(25.w),
+          padding: isDesktop
+              ? const EdgeInsets.all(25.0)
+              : EdgeInsets.all(25.w),
           decoration: BoxDecoration(
-            color: Colors.white.withAlpha(12), // withOpacity(0.05)
-            borderRadius: BorderRadius.circular(25.r),
+            color: Colors.white.withAlpha(12),
+            borderRadius: BorderRadius.circular(isDesktop ? 25.0 : 25.r),
             border: Border.all(color: Colors.white12),
           ),
           child: Column(
@@ -27,31 +31,31 @@ class StatusDisplay extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.blueAccent,
-                  fontSize: 18.sp,
+                  fontSize: isDesktop ? 18.0 : 18.sp,
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              SizedBox(height: 15.h),
+              SizedBox(height: isDesktop ? 15.0 : 15.h),
               Text(
                 "${model.speed.toStringAsFixed(1)} MB/s",
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: 50.sp,
+                  fontSize: isDesktop ? 50.0 : 50.sp,
                   fontWeight: FontWeight.bold,
                 ),
               ),
               if (model.avgSpeed != null)
                 Padding(
-                  padding: EdgeInsets.only(top: 10.h),
+                  padding: EdgeInsets.only(top: isDesktop ? 10.0 : 10.h),
                   child: Text(
                     "Avg: ${model.avgSpeed} MB/s | Time: ${model.totalTime}s",
                     style: TextStyle(
                       color: Colors.greenAccent,
-                      fontSize: 16.sp,
+                      fontSize: isDesktop ? 16.0 : 16.sp,
                     ),
                   ),
                 ),
-              Divider(color: Colors.white10, height: 40.h),
+              Divider(color: Colors.white10, height: isDesktop ? 40.0 : 40.h),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -62,7 +66,7 @@ class StatusDisplay extends StatelessWidget {
                       isFileName: true,
                     ),
                   ),
-                  SizedBox(width: 15.w),
+                  SizedBox(width: isDesktop ? 15.0 : 15.w),
                   Expanded(
                     child: _dataTile(
                       "Data Size",
@@ -84,9 +88,12 @@ class StatusDisplay extends StatelessWidget {
         children: [
           Text(
             label,
-            style: TextStyle(color: Colors.white54, fontSize: 12.sp),
+            style: TextStyle(
+              color: Colors.white54,
+              fontSize: isDesktop ? 12.0 : 12.sp,
+            ),
           ),
-          SizedBox(height: 5.h),
+          SizedBox(height: isDesktop ? 5.0 : 5.h),
           if (isFileName)
             Tooltip(
               message: val,
@@ -97,7 +104,7 @@ class StatusDisplay extends StatelessWidget {
                 style: TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.bold,
-                  fontSize: 14.sp,
+                  fontSize: isDesktop ? 14.0 : 14.sp,
                 ),
               ),
             )
@@ -109,7 +116,7 @@ class StatusDisplay extends StatelessWidget {
               style: TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,
-                fontSize: 14.sp,
+                fontSize: isDesktop ? 14.0 : 14.sp,
               ),
             ),
         ],

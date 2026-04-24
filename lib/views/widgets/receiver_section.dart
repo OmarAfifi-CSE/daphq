@@ -6,7 +6,9 @@ import '../../cubits/transfer_cubit.dart';
 import '../../cubits/transfer_state.dart';
 
 class ReceiverSection extends StatelessWidget {
-  const ReceiverSection({super.key});
+  final bool isDesktop;
+
+  const ReceiverSection({super.key, this.isDesktop = false});
 
   @override
   Widget build(BuildContext context) {
@@ -17,18 +19,20 @@ class ReceiverSection extends StatelessWidget {
           "Receiver Mode",
           style: TextStyle(
             color: Colors.white,
-            fontSize: 20.sp,
+            fontSize: isDesktop ? 20.0 : 20.sp,
             fontWeight: FontWeight.bold,
           ),
         ),
-        SizedBox(height: 10.h),
+        SizedBox(height: isDesktop ? 10.0 : 10.h),
         BlocBuilder<TransferCubit, TransferState>(
           builder: (context, state) {
             return Container(
-              padding: EdgeInsets.all(15.w),
+              padding: isDesktop
+                  ? const EdgeInsets.all(15.0)
+                  : EdgeInsets.all(15.w),
               decoration: BoxDecoration(
                 color: Colors.white.withAlpha(12),
-                borderRadius: BorderRadius.circular(15.r),
+                borderRadius: BorderRadius.circular(isDesktop ? 15.0 : 15.r),
               ),
               child: Column(
                 children: [
@@ -47,7 +51,7 @@ class ReceiverSection extends StatelessWidget {
                               color: state.receiveFolder == null
                                   ? Colors.redAccent
                                   : Colors.greenAccent,
-                              fontSize: 14.sp,
+                              fontSize: isDesktop ? 14.0 : 14.sp,
                             ),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
@@ -58,7 +62,7 @@ class ReceiverSection extends StatelessWidget {
                         icon: Icon(
                           Icons.folder_open,
                           color: Colors.white,
-                          size: 24.sp,
+                          size: isDesktop ? 24.0 : 24.sp,
                         ),
                         onPressed: state.isTransferring
                             ? null
@@ -74,15 +78,20 @@ class ReceiverSection extends StatelessWidget {
                       ),
                     ],
                   ),
-                  SizedBox(height: 15.h),
+                  SizedBox(height: isDesktop ? 15.0 : 15.h),
                   ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: state.isReceiving
                           ? Colors.red
                           : Colors.green,
-                      minimumSize: Size(double.infinity, 50.h),
+                      minimumSize: Size(
+                        double.infinity,
+                        isDesktop ? 50.0 : 50.h,
+                      ),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15.r),
+                        borderRadius: BorderRadius.circular(
+                          isDesktop ? 15.0 : 15.r,
+                        ),
                       ),
                     ),
                     onPressed: state.isTransferring && !state.isReceiving
@@ -109,13 +118,16 @@ class ReceiverSection extends StatelessWidget {
                     icon: Icon(
                       state.isReceiving ? Icons.stop : Icons.wifi_tethering,
                       color: Colors.white,
-                      size: 24.sp,
+                      size: isDesktop ? 24.0 : 24.sp,
                     ),
                     label: Text(
                       state.isReceiving
                           ? "Stop Receiver"
                           : "Start Receiver Server",
-                      style: TextStyle(color: Colors.white, fontSize: 16.sp),
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: isDesktop ? 16.0 : 16.sp,
+                      ),
                     ),
                   ),
                 ],

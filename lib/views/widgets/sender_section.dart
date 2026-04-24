@@ -6,7 +6,9 @@ import '../../cubits/transfer_state.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class SenderSection extends StatefulWidget {
-  const SenderSection({super.key});
+  final bool isDesktop;
+
+  const SenderSection({super.key, this.isDesktop = false});
 
   @override
   _SenderSectionState createState() => _SenderSectionState();
@@ -35,6 +37,7 @@ class _SenderSectionState extends State<SenderSection> {
   @override
   Widget build(BuildContext context) {
     String labelHint = "Receiver IP Address (e.g. 192.168.x.x)";
+    final isDesktop = widget.isDesktop;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -43,35 +46,40 @@ class _SenderSectionState extends State<SenderSection> {
           "Sender Mode",
           style: TextStyle(
             color: Colors.white,
-            fontSize: 20.sp,
+            fontSize: isDesktop ? 20.0 : 20.sp,
             fontWeight: FontWeight.bold,
           ),
         ),
-        SizedBox(height: 10.h),
+        SizedBox(height: isDesktop ? 10.0 : 10.h),
         BlocBuilder<TransferCubit, TransferState>(
           builder: (context, state) {
             return Container(
-              padding: EdgeInsets.all(15.w),
+              padding: isDesktop
+                  ? const EdgeInsets.all(15.0)
+                  : EdgeInsets.all(15.w),
               decoration: BoxDecoration(
                 color: Colors.white.withAlpha(12),
-                borderRadius: BorderRadius.circular(15.r),
+                borderRadius: BorderRadius.circular(isDesktop ? 15.0 : 15.r),
               ),
               child: Column(
                 children: [
                   TextField(
                     controller: _ipController,
-                    style: TextStyle(color: Colors.white, fontSize: 14.sp),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: isDesktop ? 14.0 : 14.sp,
+                    ),
                     decoration: InputDecoration(
                       labelText: labelHint,
                       labelStyle: TextStyle(
                         color: Colors.white38,
-                        fontSize: 14.sp,
+                        fontSize: isDesktop ? 14.0 : 14.sp,
                       ),
                       helperText: "Please update this to the exact Receiver IP",
                       helperStyle: TextStyle(
                         color: Colors.white60,
                         fontStyle: FontStyle.italic,
-                        fontSize: 12.sp,
+                        fontSize: isDesktop ? 12.0 : 12.sp,
                       ),
                       enabledBorder: UnderlineInputBorder(
                         borderSide: BorderSide(color: Colors.white24),
@@ -79,7 +87,7 @@ class _SenderSectionState extends State<SenderSection> {
                     ),
                     enabled: !state.isTransferring,
                   ),
-                  SizedBox(height: 20.h),
+                  SizedBox(height: isDesktop ? 20.0 : 20.h),
                   Row(
                     children: [
                       Expanded(
@@ -89,9 +97,10 @@ class _SenderSectionState extends State<SenderSection> {
                           "Send File",
                           false,
                           state,
+                          isDesktop,
                         ),
                       ),
-                      SizedBox(width: 15.w),
+                      SizedBox(width: isDesktop ? 15.0 : 15.w),
                       Expanded(
                         child: _btn(
                           context,
@@ -99,18 +108,24 @@ class _SenderSectionState extends State<SenderSection> {
                           "Send Folder",
                           true,
                           state,
+                          isDesktop,
                         ),
                       ),
                     ],
                   ),
                   if (state.isTransferring && !state.isReceiving) ...[
-                    SizedBox(height: 15.h),
+                    SizedBox(height: isDesktop ? 15.0 : 15.h),
                     ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.red,
-                        minimumSize: Size(double.infinity, 50.h),
+                        minimumSize: Size(
+                          double.infinity,
+                          isDesktop ? 50.0 : 50.h,
+                        ),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(15.r),
+                          borderRadius: BorderRadius.circular(
+                            isDesktop ? 15.0 : 15.r,
+                          ),
                         ),
                       ),
                       onPressed: () {
@@ -119,11 +134,14 @@ class _SenderSectionState extends State<SenderSection> {
                       icon: Icon(
                         Icons.cancel,
                         color: Colors.white,
-                        size: 24.sp,
+                        size: isDesktop ? 24.0 : 24.sp,
                       ),
                       label: Text(
                         "Cancel Transfer",
-                        style: TextStyle(color: Colors.white, fontSize: 16.sp),
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: isDesktop ? 16.0 : 16.sp,
+                        ),
                       ),
                     ),
                   ],
@@ -142,19 +160,23 @@ class _SenderSectionState extends State<SenderSection> {
     String text,
     bool isFolder,
     TransferState state,
+    bool isDesktop,
   ) {
     return ElevatedButton.icon(
       onPressed: state.isTransferring ? null : () => _pick(context, isFolder),
-      icon: Icon(icon, color: Colors.white, size: 20.sp),
+      icon: Icon(icon, color: Colors.white, size: isDesktop ? 20.0 : 20.sp),
       label: Text(
         text,
-        style: TextStyle(color: Colors.white, fontSize: 14.sp),
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: isDesktop ? 14.0 : 14.sp,
+        ),
       ),
       style: ElevatedButton.styleFrom(
         backgroundColor: Colors.blueAccent,
-        minimumSize: Size(0, 50.h),
+        minimumSize: Size(0, isDesktop ? 50.0 : 50.h),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(15.r),
+          borderRadius: BorderRadius.circular(isDesktop ? 15.0 : 15.r),
         ),
         disabledBackgroundColor: Colors.white12,
       ),
