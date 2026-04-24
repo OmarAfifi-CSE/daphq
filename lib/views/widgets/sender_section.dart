@@ -6,6 +6,8 @@ import '../../cubits/transfer_state.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class SenderSection extends StatefulWidget {
+  const SenderSection({super.key});
+
   @override
   _SenderSectionState createState() => _SenderSectionState();
 }

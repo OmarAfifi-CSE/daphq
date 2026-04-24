@@ -1,6 +1,4 @@
-import 'dart:io';
 import '../models/transfer_model.dart';
-import 'package:flutter/foundation.dart';
 
 class TransferState {
   final TransferModel model;

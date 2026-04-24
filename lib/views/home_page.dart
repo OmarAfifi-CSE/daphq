@@ -6,6 +6,8 @@ import 'widgets/receiver_section.dart';
 import 'widgets/sender_section.dart';
 
 class HomePage extends StatelessWidget {
+  const HomePage({super.key});
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(

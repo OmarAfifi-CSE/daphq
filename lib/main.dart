@@ -98,6 +98,8 @@ Future<void> requestAllPermissions() async {
 }
 
 class TurboTransferApp extends StatelessWidget {
+  const TurboTransferApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(

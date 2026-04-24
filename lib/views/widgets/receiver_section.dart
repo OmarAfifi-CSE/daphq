@@ -6,6 +6,8 @@ import '../../cubits/transfer_cubit.dart';
 import '../../cubits/transfer_state.dart';
 
 class ReceiverSection extends StatelessWidget {
+  const ReceiverSection({super.key});
+
   @override
   Widget build(BuildContext context) {
     return Column(

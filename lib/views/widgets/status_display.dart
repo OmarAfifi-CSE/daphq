@@ -5,6 +5,8 @@ import '../../cubits/transfer_cubit.dart';
 import '../../cubits/transfer_state.dart';
 
 class StatusDisplay extends StatelessWidget {
+  const StatusDisplay({super.key});
+
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<TransferCubit, TransferState>(

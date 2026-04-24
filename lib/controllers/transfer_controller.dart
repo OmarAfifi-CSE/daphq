@@ -58,10 +58,10 @@ class TransferController {
       };
 
       try {
-        String header = jsonEncode(metadata) + "\n";
+        String header = "${jsonEncode(metadata)}\n";
         socket.write(header);
         await socket.flush();
-      } on SocketException catch (e) {
+      } on SocketException {
         throw "Connection lost before sending data. Please check Wi-Fi.";
       }
 
@@ -205,7 +205,7 @@ class TransferController {
 
               if (!isAccepted) {
                 try {
-                  client.write(jsonEncode({"status": "REJECTED"}) + "\n");
+                  client.write("${jsonEncode({"status": "REJECTED"})}\n");
                   await client.flush();
                 } catch (_) {}
                 client.destroy();
@@ -226,7 +226,7 @@ class TransferController {
                     }
                   }
 
-                  client.write(jsonEncode({"status": "ACCEPTED", "offsets": offsets}) + "\n");
+                  client.write("${jsonEncode({"status": "ACCEPTED", "offsets": offsets})}\n");
                   await client.flush();
                 } catch (_) {
                   throw "Sender disconnected before starting.";
@@ -236,11 +236,8 @@ class TransferController {
               headerBuffer.addAll(chunk);
               continue;
             }
-          }
-
-          // 2. معالجة وتوزيع الداتا الخام على الملفات
-          if (metadata == null) continue; // safety check
-          List<dynamic> files = metadata!["files"];
+          } // safety check
+          List<dynamic> files = metadata["files"];
           try {
             while (offset < chunk.length && currentFileIndex < files.length) {
               var fileMeta = files[currentFileIndex];
@@ -276,8 +273,8 @@ class TransferController {
 
               if (bytesNeeded <= 0) {
                 // Already complete file from previous session
-                await currentSink!.flush();
-                await currentSink!.close();
+                await currentSink.flush();
+                await currentSink.close();
                 currentSink = null;
                 bytesReadForCurrentFile = 0;
                 currentFileIndex++;
@@ -286,13 +283,13 @@ class TransferController {
 
               // كتابة البيانات بدقة البايت
               if (remainingInChunk <= bytesNeeded) {
-                currentSink!.add(chunk.sublist(offset));
+                currentSink.add(chunk.sublist(offset));
                 bytesReadForCurrentFile += remainingInChunk;
                 received += remainingInChunk;
                 bytesSinceUpdate += remainingInChunk;
                 offset += remainingInChunk;
               } else {
-                currentSink!.add(chunk.sublist(offset, offset + bytesNeeded));
+                currentSink.add(chunk.sublist(offset, offset + bytesNeeded));
                 bytesReadForCurrentFile += bytesNeeded;
                 received += bytesNeeded;
                 bytesSinceUpdate += bytesNeeded;
@@ -314,8 +311,8 @@ class TransferController {
 
               // إغلاق الملف عند اكتمال حجمه
               if (bytesReadForCurrentFile == targetSize) {
-                await currentSink!.flush();
-                await currentSink!.close();
+                await currentSink.flush();
+                await currentSink.close();
                 currentSink = null;
                 bytesReadForCurrentFile = 0;
                 currentFileIndex++;
@@ -323,16 +320,16 @@ class TransferController {
             }
           } finally {
             if (currentSink != null && currentFileIndex >= files.length) { // Cleanup if loop finished
-              await currentSink!.flush();
-              await currentSink!.close();
+              await currentSink.flush();
+              await currentSink.close();
             }
           }
         } // end await for chunk
 
         // Final cleanup for sinking if any streams left open abruptly
         if (currentSink != null) {
-            await currentSink!.flush();
-            await currentSink!.close();
+            await currentSink.flush();
+            await currentSink.close();
             currentSink = null;
         }
 

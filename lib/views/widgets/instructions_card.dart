@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class InstructionsCard extends StatelessWidget {
+  const InstructionsCard({super.key});
+
   @override
   Widget build(BuildContext context) {
     return Container(
