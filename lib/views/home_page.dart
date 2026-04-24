@@ -13,7 +13,10 @@ class HomePage extends StatelessWidget {
     return Scaffold(
       backgroundColor: Color(0xFF12122A),
       appBar: AppBar(
-        title: Text("Turbo Transfer Pro", style: TextStyle(color: Colors.white, fontSize: 20.sp)),
+        title: Text(
+          "Turbo Transfer Pro",
+          style: TextStyle(color: Colors.white, fontSize: 20.sp),
+        ),
         centerTitle: true,
         elevation: 0,
         backgroundColor: Color(0xFF12122A),

@@ -13,56 +13,105 @@ class ReceiverSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text("Receiver Mode", style: TextStyle(color: Colors.white, fontSize: 20.sp, fontWeight: FontWeight.bold)),
+        Text(
+          "Receiver Mode",
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 20.sp,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
         SizedBox(height: 10.h),
         BlocBuilder<TransferCubit, TransferState>(
           builder: (context, state) {
             return Container(
               padding: EdgeInsets.all(15.w),
-              decoration: BoxDecoration(color: Colors.white.withAlpha(12), borderRadius: BorderRadius.circular(15.r)),
+              decoration: BoxDecoration(
+                color: Colors.white.withAlpha(12),
+                borderRadius: BorderRadius.circular(15.r),
+              ),
               child: Column(
                 children: [
                   Row(
                     children: [
                       Expanded(
                         child: Text(
-                          state.receiveFolder == null ? "No receive folder selected" : "Save to: ${state.receiveFolder}",
-                          style: TextStyle(color: state.receiveFolder == null ? Colors.redAccent : Colors.greenAccent, fontSize: 14.sp),
+                          state.receiveFolder == null
+                              ? "No receive folder selected"
+                              : "Save to: ${state.receiveFolder}",
+                          style: TextStyle(
+                            color: state.receiveFolder == null
+                                ? Colors.redAccent
+                                : Colors.greenAccent,
+                            fontSize: 14.sp,
+                          ),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       IconButton(
-                        icon: Icon(Icons.folder_open, color: Colors.white, size: 24.sp),
-                        onPressed: state.isTransferring ? null : () async {
-                          String? path = await FilePicker.getDirectoryPath();
-                          if (path != null) {
-                            context.read<TransferCubit>().setReceiveFolder(path);
-                          }
-                        },
-                      )
+                        icon: Icon(
+                          Icons.folder_open,
+                          color: Colors.white,
+                          size: 24.sp,
+                        ),
+                        onPressed: state.isTransferring
+                            ? null
+                            : () async {
+                                String? path =
+                                    await FilePicker.getDirectoryPath();
+                                if (path != null) {
+                                  context
+                                      .read<TransferCubit>()
+                                      .setReceiveFolder(path);
+                                }
+                              },
+                      ),
                     ],
                   ),
                   SizedBox(height: 15.h),
                   ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: state.isReceiving ? Colors.red : Colors.green,
+                      backgroundColor: state.isReceiving
+                          ? Colors.red
+                          : Colors.green,
                       minimumSize: Size(double.infinity, 50.h),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15.r)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(15.r),
+                      ),
                     ),
-                    onPressed: state.isTransferring && !state.isReceiving ? null : () {
-                      if (state.isReceiving) {
-                        context.read<TransferCubit>().stopReceiver();
-                      } else {
-                        if (state.receiveFolder == null) {
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Please select a receive folder first!")));
-                          return;
-                        }
-                        context.read<TransferCubit>().startReceiver(context: context);
-                      }
-                    },
-                    icon: Icon(state.isReceiving ? Icons.stop : Icons.wifi_tethering, color: Colors.white, size: 24.sp),
-                    label: Text(state.isReceiving ? "Stop Receiver" : "Start Receiver Server", style: TextStyle(color: Colors.white, fontSize: 16.sp)),
+                    onPressed: state.isTransferring && !state.isReceiving
+                        ? null
+                        : () {
+                            if (state.isReceiving) {
+                              context.read<TransferCubit>().stopReceiver();
+                            } else {
+                              if (state.receiveFolder == null) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      "Please select a receive folder first!",
+                                    ),
+                                  ),
+                                );
+                                return;
+                              }
+                              context.read<TransferCubit>().startReceiver(
+                                context: context,
+                              );
+                            }
+                          },
+                    icon: Icon(
+                      state.isReceiving ? Icons.stop : Icons.wifi_tethering,
+                      color: Colors.white,
+                      size: 24.sp,
+                    ),
+                    label: Text(
+                      state.isReceiving
+                          ? "Stop Receiver"
+                          : "Start Receiver Server",
+                      style: TextStyle(color: Colors.white, fontSize: 16.sp),
+                    ),
                   ),
                 ],
               ),

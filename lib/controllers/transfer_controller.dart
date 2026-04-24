@@ -9,6 +9,13 @@ class TransferController {
   static const int port = 9999;
   ServerSocket? _server;
 
+  Socket? _activeSenderSocket;
+  bool _isSenderCancelled = false;
+
+  Socket? _activeReceiverClient;
+  IOSink? _activeReceiverSink;
+  bool _isReceiverCancelled = false;
+
   // --- SENDER (PC): The New Direct-Stream Protocol ---
   Future<void> sendData({
     required String path,
@@ -33,28 +40,46 @@ class TransferController {
         for (var f in entities) {
           int size = f.lengthSync();
           // توحيد شكل المسار عشان الأندرويد يفهم الفولدرات صح
-          String normalizedPath = p.relative(f.path, from: p.dirname(path)).replaceAll(r'\', '/');
-          fileList.add({"path": normalizedPath, "size": size, "absPath": f.path});
+          String normalizedPath = p
+              .relative(f.path, from: p.dirname(path))
+              .replaceAll(r'\', '/');
+          fileList.add({
+            "path": normalizedPath,
+            "size": size,
+            "absPath": f.path,
+          });
           totalBytesToSend += size;
         }
       } else {
         var f = File(path);
         if (!f.existsSync()) throw "File not found!";
         int size = f.lengthSync();
-        fileList.add({"path": p.basename(path), "size": size, "absPath": f.path});
+        fileList.add({
+          "path": p.basename(path),
+          "size": size,
+          "absPath": f.path,
+        });
         totalBytesToSend += size;
       }
 
-      if (totalBytesToSend == 0) throw "Error: The selected item is empty (0.0 MB).";
+      if (totalBytesToSend == 0)
+        throw "Error: The selected item is empty (0.0 MB).";
 
       // 2. الاتصال بالموبايل
       onUpdate(TransferModel(status: "Connecting..."));
-      final socket = await Socket.connect(targetIp, port, timeout: Duration(seconds: 5));
+      final socket = await Socket.connect(
+        targetIp,
+        port,
+        timeout: Duration(seconds: 5),
+      );
+      _activeSenderSocket = socket;
       socket.setOption(SocketOption.tcpNoDelay, true);
 
       // 3. إرسال خريطة الملفات (JSON Header)
       Map<String, dynamic> metadata = {
-        "files": fileList.map((e) => {"path": e["path"], "size": e["size"]}).toList()
+        "files": fileList
+            .map((e) => {"path": e["path"], "size": e["size"]})
+            .toList(),
       };
 
       try {
@@ -71,7 +96,10 @@ class TransferController {
       // Read a single line/response from the receiver
       String authResponse = "";
       try {
-        final authData = await socket.first.timeout(const Duration(minutes: 1), onTimeout: () => throw "Timeout");
+        final authData = await socket.first.timeout(
+          const Duration(minutes: 1),
+          onTimeout: () => throw "Timeout",
+        );
         authResponse = utf8.decode(authData).trim();
       } catch (e) {
         throw "Receiver disconnected or timeout before answering.";
@@ -114,12 +142,14 @@ class TransferController {
 
             if (DateTime.now().difference(lastUpdate).inMilliseconds > 500) {
               double speed = (bytesSinceUpdate / 1024 / 1024) / 0.5;
-              onUpdate(TransferModel(
-                speed: speed,
-                transferred: sentBytes / 1024 / 1024,
-                fileName: p.basename(f["path"]),
-                status: "Pumping Data...",
-              ));
+              onUpdate(
+                TransferModel(
+                  speed: speed,
+                  transferred: sentBytes / 1024 / 1024,
+                  fileName: p.basename(f["path"]),
+                  status: "Pumping Data...",
+                ),
+              );
               bytesSinceUpdate = 0;
               lastUpdate = DateTime.now();
             }
@@ -134,42 +164,68 @@ class TransferController {
       double finalMB = totalBytesToSend / 1024 / 1024;
       double avg = finalMB / (stopwatch.elapsedMilliseconds / 1000);
 
-      onUpdate(TransferModel(
-        status: "SUCCESSFULLY SENT!",
-        transferred: finalMB,
-        avgSpeed: avg.toStringAsFixed(2),
-        totalTime: (stopwatch.elapsedMilliseconds / 1000).toStringAsFixed(1),
-        fileName: isFolder ? p.basename(path) : fileList.first["path"],
-      ));
+      onUpdate(
+        TransferModel(
+          status: "SUCCESSFULLY SENT!",
+          transferred: finalMB,
+          avgSpeed: avg.toStringAsFixed(2),
+          totalTime: (stopwatch.elapsedMilliseconds / 1000).toStringAsFixed(1),
+          fileName: isFolder ? p.basename(path) : fileList.first["path"],
+        ),
+      );
       onDone();
-
     } catch (e) {
-      if (e is SocketException) {
-        onUpdate(TransferModel(status: "Network Error: Please ensure Wi-Fi is connected."));
+      if (_isSenderCancelled) {
+        onUpdate(TransferModel(status: "Transfer Cancelled"));
+      } else if (e is SocketException) {
+        onUpdate(
+          TransferModel(
+            status: "Network Error: Please ensure Wi-Fi is connected.",
+          ),
+        );
       } else {
         onUpdate(TransferModel(status: "Error: $e"));
       }
       onDone();
+    } finally {
+      _activeSenderSocket = null;
+      _isSenderCancelled = false;
     }
+  }
+
+  void cancelSending() {
+    _isSenderCancelled = true;
+    _activeSenderSocket?.destroy();
+    _activeSenderSocket = null;
   }
 
   // --- RECEIVER (Mobile): The New Direct-Stream Protocol ---
   Future<void> startReceiver({
     required String saveDirectory,
     required Function(TransferModel) onUpdate,
-    required Future<bool> Function(String senderIp, int fileCount, double totalSizeMB) onRequestAuth,
+    required Future<bool> Function(
+      String senderIp,
+      int fileCount,
+      double totalSizeMB,
+    )
+    onRequestAuth,
     required VoidCallback onDone,
   }) async {
     try {
       if (_server != null) await _server!.close();
       try {
-        _server = await ServerSocket.bind(InternetAddress.anyIPv4, port, shared: true);
+        _server = await ServerSocket.bind(
+          InternetAddress.anyIPv4,
+          port,
+          shared: true,
+        );
       } on SocketException catch (e) {
         throw "Could not bind server. Are you connected to Wi-Fi? (${e.message})";
       }
       onUpdate(TransferModel(status: "Receiver Ready (Port: $port)"));
 
       await for (Socket client in _server!) {
+        _activeReceiverClient = client;
         Stopwatch stopwatch = Stopwatch()..start();
 
         List<int> headerBuffer = [];
@@ -198,10 +254,17 @@ class TransferController {
 
               // --- Authorization Step ---
               List<dynamic> files = metadata!["files"];
-              int totalBytes = files.fold(0, (sum, f) => sum + (f["size"] as int));
+              int totalBytes = files.fold(
+                0,
+                (sum, f) => sum + (f["size"] as int),
+              );
               double totalSizeMB = totalBytes / 1024 / 1024;
 
-              bool isAccepted = await onRequestAuth(client.remoteAddress.address, files.length, totalSizeMB);
+              bool isAccepted = await onRequestAuth(
+                client.remoteAddress.address,
+                files.length,
+                totalSizeMB,
+              );
 
               if (!isAccepted) {
                 try {
@@ -226,7 +289,9 @@ class TransferController {
                     }
                   }
 
-                  client.write("${jsonEncode({"status": "ACCEPTED", "offsets": offsets})}\n");
+                  client.write(
+                    "${jsonEncode({"status": "ACCEPTED", "offsets": offsets})}\n",
+                  );
                   await client.flush();
                 } catch (_) {
                   throw "Sender disconnected before starting.";
@@ -256,15 +321,16 @@ class TransferController {
                 }
 
                 currentSink = f.openWrite(mode: FileMode.append);
+                _activeReceiverSink = currentSink;
                 bytesReadForCurrentFile = existingLen;
                 if (received == 0) {
-                     // Add offsets of current + all previously completely skipped files to received
-                     int totalExisting = 0;
-                     for (int i = 0; i <= currentFileIndex; i++) {
-                         File tmp = File(p.join(saveDirectory, files[i]["path"]));
-                         if (tmp.existsSync()) totalExisting += tmp.lengthSync();
-                     }
-                     received += totalExisting;
+                  // Add offsets of current + all previously completely skipped files to received
+                  int totalExisting = 0;
+                  for (int i = 0; i <= currentFileIndex; i++) {
+                    File tmp = File(p.join(saveDirectory, files[i]["path"]));
+                    if (tmp.existsSync()) totalExisting += tmp.lengthSync();
+                  }
+                  received += totalExisting;
                 }
               }
 
@@ -299,12 +365,14 @@ class TransferController {
               // تحديث السرعة في الواجهة
               if (DateTime.now().difference(lastTime).inMilliseconds > 500) {
                 double speed = (bytesSinceUpdate / 1024 / 1024) / 0.5;
-                onUpdate(TransferModel(
-                  speed: speed,
-                  transferred: received / 1024 / 1024,
-                  fileName: p.basename(fileMeta["path"]),
-                  status: "Receiving Data...",
-                ));
+                onUpdate(
+                  TransferModel(
+                    speed: speed,
+                    transferred: received / 1024 / 1024,
+                    fileName: p.basename(fileMeta["path"]),
+                    status: "Receiving Data...",
+                  ),
+                );
                 bytesSinceUpdate = 0;
                 lastTime = DateTime.now();
               }
@@ -314,53 +382,90 @@ class TransferController {
                 await currentSink.flush();
                 await currentSink.close();
                 currentSink = null;
+                _activeReceiverSink = null;
                 bytesReadForCurrentFile = 0;
                 currentFileIndex++;
               }
             }
           } finally {
-            if (currentSink != null && currentFileIndex >= files.length) { // Cleanup if loop finished
+            if (currentSink != null && currentFileIndex >= files.length) {
+              // Cleanup if loop finished
               await currentSink.flush();
               await currentSink.close();
+              _activeReceiverSink = null;
             }
           }
         } // end await for chunk
 
+        if (_isReceiverCancelled) {
+          throw "Transfer Cancelled";
+        }
+
         // Final cleanup for sinking if any streams left open abruptly
         if (currentSink != null) {
-            await currentSink.flush();
-            await currentSink.close();
-            currentSink = null;
+          await currentSink.flush();
+          await currentSink.close();
+          currentSink = null;
+          _activeReceiverSink = null;
+        }
+
+        // Check for premature drop (sender destroyed socket)
+        int totalExpectedBytes =
+            metadata?["files"]?.fold(0, (sum, f) => sum + (f["size"] as int)) ??
+            0;
+        if (metadata != null && received < totalExpectedBytes) {
+          throw "Connection dropped prematurely.";
         }
 
         stopwatch.stop();
         double finalMB = received / 1024 / 1024;
 
-        onUpdate(TransferModel(
-          status: "Transfer Complete!",
-          transferred: finalMB,
-          avgSpeed: (finalMB / (stopwatch.elapsedMilliseconds / 1000)).toStringAsFixed(2),
-          totalTime: (stopwatch.elapsedMilliseconds / 1000).toStringAsFixed(1),
-          fileName: "All files saved.",
-        ));
+        onUpdate(
+          TransferModel(
+            status: "Transfer Complete!",
+            transferred: finalMB,
+            avgSpeed: (finalMB / (stopwatch.elapsedMilliseconds / 1000))
+                .toStringAsFixed(2),
+            totalTime: (stopwatch.elapsedMilliseconds / 1000).toStringAsFixed(
+              1,
+            ),
+            fileName: "All files saved.",
+          ),
+        );
         try {
           client.destroy();
         } catch (_) {}
         onDone();
       }
     } catch (e) {
-      if (e is SocketException) {
-        onUpdate(TransferModel(status: "Network Error: Please check Wi-Fi connection."));
+      if (_isReceiverCancelled) {
+        onUpdate(TransferModel(status: "Transfer Cancelled"));
+      } else if (e is SocketException) {
+        onUpdate(
+          TransferModel(
+            status: "Network Error: Please check Wi-Fi connection.",
+          ),
+        );
       } else {
         onUpdate(TransferModel(status: "Error: $e"));
       }
       onDone();
+    } finally {
+      _activeReceiverClient = null;
+      _activeReceiverSink = null;
+      _isReceiverCancelled = false;
     }
   }
 
-  void stopReceiver() {
+  void stopReceiving() {
+    _isReceiverCancelled = true;
     _server?.close();
     _server = null;
+
+    _activeReceiverSink?.close();
+    _activeReceiverSink = null;
+
+    _activeReceiverClient?.destroy();
+    _activeReceiverClient = null;
   }
 }
-
