@@ -1,6 +1,6 @@
 {
-    "name": "turbo_transfer",
-    "short_name": "turbo_transfer",
+    "name": "daphq",
+    "short_name": "daphq",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.turbo_transfer_oa" "\0"
-            VALUE "FileDescription", "turbo_transfer" "\0"
+            VALUE "CompanyName", "com.omarafifi" "\0"
+            VALUE "FileDescription", "daphq" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "turbo_transfer" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.turbo_transfer_oa. All rights reserved." "\0"
-            VALUE "OriginalFilename", "turbo_transfer.exe" "\0"
-            VALUE "ProductName", "turbo_transfer" "\0"
+            VALUE "InternalName", "daphq" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 com.omarafifi. All rights reserved." "\0"
+            VALUE "OriginalFilename", "daphq.exe" "\0"
+            VALUE "ProductName", "daphq" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

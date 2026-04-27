@@ -1,4 +1,4 @@
-name: turbo_transfer
+name: daphq
 description: "Cross-platform file transfer app over local Wi-Fi/Hotspot."
 publish_to: 'none'
 
