@@ -168,17 +168,24 @@ class SenderController {
       int bytesSinceUpdate = 0;
 
       for (var f in fileList) {
+        if (_isCancelled) throw "Transfer Cancelled";
         File fileToRead = File(f["absPath"]);
         final reader = fileToRead.openRead();
 
         try {
           await for (var chunk in reader) {
+            if (_isCancelled) throw "Transfer Cancelled";
             try {
               socket.add(chunk);
               await socket.flush(); // Prevent OOM by awaiting buffer flush
             } on SocketException {
               throw "Network disconnected during transfer.";
+            } on StateError {
+              if (_isCancelled) throw "Transfer Cancelled";
+              rethrow;
             }
+            
+            if (_isCancelled) throw "Transfer Cancelled";
             sentBytes += chunk.length;
             bytesSinceUpdate += chunk.length;
 
