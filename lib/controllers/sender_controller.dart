@@ -249,6 +249,9 @@ class SenderController {
         ),
       );
       onDone();
+    } on PathAccessException {
+      onUpdate(TransferModel(status: "Error: Permission Denied"));
+      onDone();
     } catch (e) {
       if (_isCancelled) {
         onUpdate(TransferModel(status: "Transfer Cancelled"));

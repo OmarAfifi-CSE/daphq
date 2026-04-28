@@ -295,6 +295,8 @@ class ReceiverController {
           if (received >= totalExpectedBytes) {
             await backgroundWriteCompleter.future;
           }
+        } on PathAccessException {
+          onUpdate(TransferModel(status: "Error: Permission Denied"));
         } catch (e) {
           if (_isCancelled) {
             onUpdate(
@@ -313,6 +315,9 @@ class ReceiverController {
           _activeSink = null;
         }
       }
+    } on PathAccessException {
+      onUpdate(TransferModel(status: "Error: Permission Denied"));
+      onDone();
     } catch (e) {
       if (_isCancelled) {
         onUpdate(TransferModel(status: "Transfer Cancelled"));

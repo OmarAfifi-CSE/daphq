@@ -41,6 +41,102 @@ class TransferCubit extends Cubit<TransferState> {
 
     bool showedWarning = false;
 
+    // 0. Storage Permission Check
+    bool hasStorage = false;
+    bool storagePermanentlyDenied = false;
+
+    if (await Permission.manageExternalStorage.isGranted || await Permission.storage.isGranted) {
+      hasStorage = true;
+    } else {
+      final manageStatus = await Permission.manageExternalStorage.request();
+      if (manageStatus.isGranted) {
+        hasStorage = true;
+      } else {
+        final storageStatus = await Permission.storage.request();
+        if (storageStatus.isGranted) {
+          hasStorage = true;
+        } else {
+          storagePermanentlyDenied = manageStatus.isPermanentlyDenied || storageStatus.isPermanentlyDenied;
+        }
+      }
+    }
+
+    if (!hasStorage) {
+      if (storagePermanentlyDenied && context.mounted) {
+        final proceed = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            backgroundColor: AppColors.dialogBackground,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            content: const Text(
+              "Storage access is required to send and receive files. Please enable it in Settings.",
+              style: TextStyle(color: Colors.white),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text(
+                  "Cancel",
+                  style: TextStyle(color: Colors.white70),
+                ),
+              ),
+              TextButton(
+                onPressed: () {
+                  openAppSettings();
+                  Navigator.pop(dialogContext, true);
+                },
+                child: const Text(
+                  "Open Settings",
+                  style: TextStyle(color: Colors.blue),
+                ),
+              ),
+            ],
+          ),
+        );
+        
+        if (proceed == false) {
+          scaffoldMessenger.clearSnackBars();
+          scaffoldMessenger.showSnackBar(
+            SnackBar(
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: const Color(0xFF1E1E2E),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(15),
+              ),
+              margin: const EdgeInsets.all(12),
+              content: const Text(
+                "Error: Storage permission is strictly required to transfer files.",
+                style: TextStyle(color: Colors.white),
+              ),
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
+        return false;
+      } else {
+        scaffoldMessenger.clearSnackBars();
+        scaffoldMessenger.showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: const Color(0xFF1E1E2E),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(15),
+            ),
+            margin: const EdgeInsets.all(12),
+            content: const Text(
+              "Error: Storage permission is strictly required to transfer files.",
+              style: TextStyle(color: Colors.white),
+            ),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+        return false;
+      }
+    }
+
     // 1. Notification Permission Check
     PermissionStatus notifStatus = await Permission.notification.status;
     if (notifStatus.isDenied) {
