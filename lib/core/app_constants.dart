@@ -18,7 +18,7 @@ class AppConstants {
   static const int authTimeoutMinutes = 1;
 
   /// Desktop window default size.
-  static const double windowWidth = 800;
+  static const double windowWidth = 1100;
   static const double windowHeight = 700;
 
   /// Desktop window minimum size.

@@ -61,7 +61,7 @@ void main() async {
 
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
     await windowManager.ensureInitialized();
-    WindowOptions windowOptions = WindowOptions(
+    WindowOptions windowOptions = const WindowOptions(
       size: Size(AppConstants.windowWidth, AppConstants.windowHeight),
       minimumSize: Size(
         AppConstants.windowMinWidth,
@@ -74,6 +74,7 @@ void main() async {
       title: 'Turbo Transfer Pro',
     );
     windowManager.waitUntilReadyToShow(windowOptions, () async {
+      await windowManager.center();
       await windowManager.show();
       await windowManager.focus();
     });
