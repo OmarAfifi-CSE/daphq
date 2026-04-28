@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
@@ -29,6 +30,8 @@ class UpdateService {
 
         if (_isRemoteGreater(localVersion, remoteVersion)) {
           if (!context.mounted) return;
+          final bool isDesktopOS = 
+              Platform.isWindows || Platform.isMacOS || Platform.isLinux;
           showDialog(
             context: context,
             barrierDismissible: false,
@@ -36,6 +39,7 @@ class UpdateService {
               newVersion: remoteVersionTag,
               whatsNew: releaseNotes,
               downloadUrl: downloadUrl,
+              isDesktop: isDesktopOS,
             ),
           );
         }
@@ -46,15 +50,19 @@ class UpdateService {
     }
   }
 
-  /// Removes common prefixes from a version string (e.g. 'v1.0.0' -> '1.0.0')
+  /// Removes common prefixes from a version string (e.g. 'v1.0.0-beta' -> '1.0.0')
   static String _cleanVersion(String version) {
     String cleanStr = version.toLowerCase().trim();
     if (cleanStr.startsWith('v')) {
       cleanStr = cleanStr.substring(1);
     }
-    // Also remove build numbers if any (e.g. '1.0.0+1' -> '1.0.0')
+    // Remove build numbers if any (e.g. '1.0.0+1' -> '1.0.0')
     if (cleanStr.contains('+')) {
       cleanStr = cleanStr.split('+').first;
+    }
+    // Remove pre-release tags (e.g. '1.0.0-beta' -> '1.0.0')
+    if (cleanStr.contains('-')) {
+      cleanStr = cleanStr.split('-').first;
     }
     return cleanStr;
   }
@@ -62,8 +70,8 @@ class UpdateService {
   /// Compares standard semantic versions. Returns true if remote > local.
   static bool _isRemoteGreater(String local, String remote) {
     try {
-      List<int> localParts = local.split('.').map((e) => int.parse(e)).toList();
-      List<int> remoteParts = remote.split('.').map((e) => int.parse(e)).toList();
+      List<int> localParts = local.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+      List<int> remoteParts = remote.split('.').map((e) => int.tryParse(e) ?? 0).toList();
 
       int maxLength = localParts.length > remoteParts.length
           ? localParts.length
