@@ -6,6 +6,7 @@ import '../../cubits/transfer_state.dart';
 import '../../core/app_colors.dart';
 import '../../core/responsive_utils.dart';
 import 'daphq_card.dart';
+import 'animated_press_button.dart';
 
 class SenderSection extends StatefulWidget {
   final bool isDesktop;
@@ -67,21 +68,33 @@ class SenderSectionState extends State<SenderSection> {
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 14.0.rx(isDesktop),
+                      fontWeight: FontWeight.w500,
                     ),
                     decoration: InputDecoration(
                       labelText: "Receiver IP Address (e.g. 192.168.x.x)",
                       labelStyle: TextStyle(
-                        color: Colors.white38,
+                        color: Colors.white60,
                         fontSize: 14.0.rx(isDesktop),
                       ),
                       helperText: "Please update this to the exact Receiver IP",
                       helperStyle: TextStyle(
-                        color: Colors.white60,
+                        color: Colors.white38,
                         fontStyle: FontStyle.italic,
                         fontSize: 12.0.rx(isDesktop),
                       ),
-                      enabledBorder: const UnderlineInputBorder(
-                        borderSide: BorderSide(color: Colors.white24),
+                      filled: true,
+                      fillColor: Colors.black.withAlpha(50),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10.0.rr(isDesktop)),
+                        borderSide: const BorderSide(color: Colors.white12),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10.0.rr(isDesktop)),
+                        borderSide: const BorderSide(color: AppColors.primary),
+                      ),
+                      disabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10.0.rr(isDesktop)),
+                        borderSide: const BorderSide(color: Colors.white10),
                       ),
                     ),
                     enabled: !state.isTransferring,
@@ -114,30 +127,33 @@ class SenderSectionState extends State<SenderSection> {
                   ),
                   if (state.isTransferring && !state.isReceiving) ...[
                     SizedBox(height: 15.0.rh(isDesktop)),
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        minimumSize: Size(double.infinity, 50.0.rh(isDesktop)),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(
-                            15.0.rr(isDesktop),
-                          ),
-                        ),
-                      ),
+                    AnimatedPressButton(
+                      isDesktop: isDesktop,
                       onPressed: () {
                         context.read<TransferCubit>().cancelSending();
                       },
-                      icon: Icon(
-                        Icons.cancel,
-                        color: Colors.white,
-                        size: 24.0.rx(isDesktop),
-                      ),
-                      label: Text(
-                        "Cancel Transfer",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16.0.rx(isDesktop),
-                        ),
+                      gradientColors: const [
+                        AppColors.danger,
+                        Color(0xFFE57373),
+                      ],
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.cancel,
+                            color: Colors.white,
+                            size: 24.0.rx(isDesktop),
+                          ),
+                          SizedBox(width: 8.0.rw(isDesktop)),
+                          Text(
+                            "Cancel Transfer",
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 16.0.rx(isDesktop),
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -158,20 +174,24 @@ class SenderSectionState extends State<SenderSection> {
     TransferState state,
     bool isDesktop,
   ) {
-    return ElevatedButton.icon(
+    return AnimatedPressButton(
+      isDesktop: isDesktop,
       onPressed: state.isTransferring ? null : () => _pick(context, isFolder),
-      icon: Icon(icon, color: Colors.white, size: 20.0.rx(isDesktop)),
-      label: Text(
-        text,
-        style: TextStyle(color: Colors.white, fontSize: 14.0.rx(isDesktop)),
-      ),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: Colors.blueAccent,
-        minimumSize: Size(0, 50.0.rh(isDesktop)),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(15.0.rr(isDesktop)),
-        ),
-        disabledBackgroundColor: Colors.white12,
+      gradientColors: const [AppColors.primary, Color(0xFF64B5F6)],
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: Colors.white, size: 20.0.rx(isDesktop)),
+          SizedBox(width: 8.0.rw(isDesktop)),
+          Text(
+            text,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 14.0.rx(isDesktop),
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -33,23 +33,43 @@ class TransferProgressView extends StatelessWidget {
           ),
           child: Column(
             children: [
-              Text(
-                model.status,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.blueAccent,
-                  fontSize: 18.0.rx(isDesktop),
-                  fontWeight: FontWeight.bold,
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
+                transitionBuilder: (Widget child, Animation<double> animation) {
+                  return FadeTransition(opacity: animation, child: child);
+                },
+                child: Text(
+                  model.status,
+                  key: ValueKey<String>(model.status),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: AppColors.primary,
+                    fontSize: 18.0.rx(isDesktop),
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
               SizedBox(height: 15.0.rh(isDesktop)),
-              Text(
-                "${model.speed.toStringAsFixed(1)} MB/s",
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 50.0.rx(isDesktop),
-                  fontWeight: FontWeight.bold,
-                ),
+              TweenAnimationBuilder<double>(
+                tween: Tween<double>(begin: 0, end: model.speed),
+                duration: const Duration(milliseconds: 500),
+                curve: Curves.easeOutCubic,
+                builder: (context, value, child) {
+                  return Text(
+                    "${value.toStringAsFixed(1)} MB/s",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 50.0.rx(isDesktop),
+                      fontWeight: FontWeight.bold,
+                      shadows: [
+                        Shadow(
+                          color: AppColors.primary.withAlpha(model.speed > 0 ? 150 : 0),
+                          blurRadius: 20,
+                        ),
+                      ],
+                    ),
+                  );
+                },
               ),
               if (model.avgSpeed != null)
                 Padding(
@@ -75,9 +95,16 @@ class TransferProgressView extends StatelessWidget {
                   ),
                   SizedBox(width: 15.0.rw(isDesktop)),
                   Expanded(
-                    child: _dataTile(
-                      "Data Size",
-                      "${model.transferred.toStringAsFixed(1)} MB",
+                    child: TweenAnimationBuilder<double>(
+                      tween: Tween<double>(begin: 0, end: model.transferred),
+                      duration: const Duration(milliseconds: 500),
+                      curve: Curves.easeOutCubic,
+                      builder: (context, value, child) {
+                        return _dataTile(
+                          "Data Size",
+                          "${value.toStringAsFixed(1)} MB",
+                        );
+                      },
                     ),
                   ),
                 ],

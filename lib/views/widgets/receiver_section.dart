@@ -6,6 +6,7 @@ import '../../cubits/transfer_state.dart';
 import '../../core/app_colors.dart';
 import '../../core/responsive_utils.dart';
 import 'daphq_card.dart';
+import 'animated_press_button.dart';
 
 class ReceiverSection extends StatelessWidget {
   final bool isDesktop;
@@ -79,16 +80,8 @@ class ReceiverSection extends StatelessWidget {
                     ],
                   ),
                   SizedBox(height: 15.0.rh(isDesktop)),
-                  ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: state.isReceiving
-                          ? Colors.red
-                          : Colors.green,
-                      minimumSize: Size(double.infinity, 50.0.rh(isDesktop)),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15.0.rr(isDesktop)),
-                      ),
-                    ),
+                  AnimatedPressButton(
+                    isDesktop: isDesktop,
                     onPressed: state.isTransferring && !state.isReceiving
                         ? null
                         : () {
@@ -110,19 +103,29 @@ class ReceiverSection extends StatelessWidget {
                               );
                             }
                           },
-                    icon: Icon(
-                      state.isReceiving ? Icons.stop : Icons.wifi_tethering,
-                      color: Colors.white,
-                      size: 24.0.rx(isDesktop),
-                    ),
-                    label: Text(
-                      state.isReceiving
-                          ? "Stop Receiver"
-                          : "Start Receiver Server",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16.0.rx(isDesktop),
-                      ),
+                    gradientColors: state.isReceiving
+                        ? const [AppColors.danger, Color(0xFFE57373)]
+                        : const [AppColors.success, Color(0xFF81C784)],
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          state.isReceiving ? Icons.stop : Icons.wifi_tethering,
+                          color: state.isReceiving ? Colors.white : Colors.black87,
+                          size: 24.0.rx(isDesktop),
+                        ),
+                        SizedBox(width: 8.0.rw(isDesktop)),
+                        Text(
+                          state.isReceiving
+                              ? "Stop Receiver"
+                              : "Start Receiver Server",
+                          style: TextStyle(
+                            color: state.isReceiving ? Colors.white : Colors.black87,
+                            fontSize: 16.0.rx(isDesktop),
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
