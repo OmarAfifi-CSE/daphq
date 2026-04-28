@@ -70,7 +70,7 @@ class SenderController {
       final socket = await Socket.connect(
         targetIp,
         AppConstants.transferPort,
-        timeout: Duration(seconds: AppConstants.connectionTimeoutSeconds),
+        timeout: const Duration(seconds: AppConstants.connectionTimeoutSeconds),
       );
       _activeSocket = socket;
       socket.setOption(SocketOption.tcpNoDelay, true);
@@ -96,7 +96,7 @@ class SenderController {
       String authResponse = "";
       try {
         final authData = await socket.first.timeout(
-          Duration(minutes: AppConstants.authTimeoutMinutes),
+          const Duration(minutes: AppConstants.authTimeoutMinutes),
           onTimeout: () => throw "Timeout",
         );
         authResponse = utf8.decode(authData).trim();

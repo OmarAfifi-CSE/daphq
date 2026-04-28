@@ -30,8 +30,8 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: (Platform.isWindows || Platform.isLinux || Platform.isMacOS)
-          ? PreferredSize(
-              preferredSize: const Size.fromHeight(kWindowCaptionHeight),
+          ? const PreferredSize(
+              preferredSize: Size.fromHeight(kWindowCaptionHeight),
               child: WindowCaption(
                 brightness: Brightness.dark,
                 backgroundColor: AppColors.appBarBackground,

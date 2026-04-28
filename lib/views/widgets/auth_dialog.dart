@@ -14,23 +14,23 @@ Future<bool> showAuthDialog({
         context: context,
         barrierDismissible: false,
         builder: (context) => AlertDialog(
-          title: Text(
+          title: const Text(
             "Incoming Transfer",
             style: TextStyle(color: Colors.white),
           ),
           backgroundColor: AppColors.dialogBackground,
           content: Text(
             "Sender: $senderIp\nFiles: $fileCount\nTotal Size: ${totalSizeMB.toStringAsFixed(2)} MB\n\nDo you want to accept?",
-            style: TextStyle(color: Colors.white70),
+            style: const TextStyle(color: Colors.white70),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: Text("Reject", style: TextStyle(color: Colors.redAccent)),
+              child: const Text("Reject", style: TextStyle(color: Colors.redAccent)),
             ),
             ElevatedButton(
               onPressed: () => Navigator.pop(context, true),
-              child: Text("Accept"),
+              child: const Text("Accept"),
             ),
           ],
         ),

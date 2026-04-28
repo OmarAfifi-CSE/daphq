@@ -80,7 +80,7 @@ void main() async {
     });
   }
 
-  runApp(TurboTransferApp());
+  runApp(const DaphqApp());
 }
 
 Future<void> requestAllPermissions() async {
@@ -100,8 +100,8 @@ Future<void> requestAllPermissions() async {
   });
 }
 
-class TurboTransferApp extends StatelessWidget {
-  const TurboTransferApp({super.key});
+class DaphqApp extends StatelessWidget {
+  const DaphqApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -110,7 +110,10 @@ class TurboTransferApp extends StatelessWidget {
         Size baseSize;
         if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
           // Fixed design size for desktop to avoid weird stretching
-          baseSize = Size(AppConstants.windowWidth, AppConstants.windowHeight);
+          baseSize = const Size(
+            AppConstants.windowWidth,
+            AppConstants.windowHeight,
+          );
         } else {
           baseSize = const Size(360, 690);
         }
@@ -131,7 +134,7 @@ class TurboTransferApp extends StatelessWidget {
               ),
               home: BlocProvider(
                 create: (_) => TransferCubit(),
-                child: HomePage(),
+                child: const HomePage(),
               ),
             );
           },

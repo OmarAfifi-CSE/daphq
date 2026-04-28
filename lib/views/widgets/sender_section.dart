@@ -79,7 +79,7 @@ class SenderSectionState extends State<SenderSection> {
                         fontStyle: FontStyle.italic,
                         fontSize: 12.0.rx(isDesktop),
                       ),
-                      enabledBorder: UnderlineInputBorder(
+                      enabledBorder: const UnderlineInputBorder(
                         borderSide: BorderSide(color: Colors.white24),
                       ),
                     ),
@@ -192,7 +192,7 @@ class SenderSectionState extends State<SenderSection> {
         if (!context.mounted) return;
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text("Please enter target IP!")));
+        ).showSnackBar(const SnackBar(content: Text("Please enter target IP!")));
         return;
       }
       cubit.sendData(path: path, isFolder: isFolder);

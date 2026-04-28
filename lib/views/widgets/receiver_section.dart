@@ -96,7 +96,7 @@ class ReceiverSection extends StatelessWidget {
                             } else {
                               if (state.receiveFolder == null) {
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
+                                  const SnackBar(
                                     content: Text(
                                       "Please select a receive folder first!",
                                     ),
