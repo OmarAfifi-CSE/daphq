@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:convert';
 import 'dart:ui';
+import 'dart:typed_data';
 import 'package:path/path.dart' as p;
 import '../models/transfer_model.dart';
 import '../core/app_constants.dart';
@@ -182,13 +183,13 @@ class ReceiverController {
 
                 // Write bytes with exact boundary precision
                 if (remainingInChunk <= bytesNeeded) {
-                  currentSink.add(chunk.sublist(offset));
+                  currentSink.add(Uint8List.sublistView(chunk as Uint8List, offset));
                   bytesReadForCurrentFile += remainingInChunk;
                   received += remainingInChunk;
                   bytesSinceUpdate += remainingInChunk;
                   offset += remainingInChunk;
                 } else {
-                  currentSink.add(chunk.sublist(offset, offset + bytesNeeded));
+                  currentSink.add(Uint8List.sublistView(chunk as Uint8List, offset, offset + bytesNeeded));
                   bytesReadForCurrentFile += bytesNeeded;
                   received += bytesNeeded;
                   bytesSinceUpdate += bytesNeeded;

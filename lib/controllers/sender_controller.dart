@@ -133,6 +133,7 @@ class SenderController {
           await for (var chunk in reader) {
             try {
               socket.add(chunk);
+              await socket.flush(); // Prevent OOM by awaiting buffer flush
             } on SocketException {
               throw "Network disconnected during transfer.";
             }
