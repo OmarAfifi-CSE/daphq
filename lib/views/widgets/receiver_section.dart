@@ -26,6 +26,10 @@ class ReceiverSection extends StatelessWidget {
         ),
         SizedBox(height: 10.0.rh(isDesktop)),
         BlocBuilder<TransferCubit, TransferState>(
+          buildWhen: (previous, current) =>
+              previous.isReceiving != current.isReceiving ||
+              previous.isTransferring != current.isTransferring ||
+              previous.receiveFolder != current.receiveFolder,
           builder: (context, state) {
             return Container(
               padding: EdgeInsets.all(15.0.rw(isDesktop)),

@@ -5,15 +5,23 @@ import '../../cubits/transfer_state.dart';
 import '../../core/app_colors.dart';
 import '../../core/responsive_utils.dart';
 
-class StatusDisplay extends StatelessWidget {
+class TransferProgressView extends StatelessWidget {
   final bool isDesktop;
 
-  const StatusDisplay({super.key, this.isDesktop = false});
+  const TransferProgressView({super.key, this.isDesktop = false});
 
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<TransferCubit, TransferState>(
-      buildWhen: (previous, current) => previous.model != current.model,
+      buildWhen: (previous, current) {
+        final p = previous.model;
+        final c = current.model;
+        return p.progress != c.progress || 
+               p.speed != c.speed || 
+               p.status != c.status || 
+               p.transferred != c.transferred || 
+               p.fileName != c.fileName;
+      },
       builder: (context, state) {
         final model = state.model;
         return Container(

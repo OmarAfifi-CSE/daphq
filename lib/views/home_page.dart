@@ -4,8 +4,9 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:window_manager/window_manager.dart';
 import '../core/app_colors.dart';
 import '../services/update_service.dart';
+import '../core/app_constants.dart';
 import 'widgets/instructions_card.dart';
-import 'widgets/status_display.dart';
+import 'widgets/transfer_progress_view.dart';
 import 'widgets/receiver_section.dart';
 import 'widgets/sender_section.dart';
 
@@ -36,14 +37,14 @@ class _HomePageState extends State<HomePage> {
                 brightness: Brightness.dark,
                 backgroundColor: AppColors.appBarBackground,
                 title: Text(
-                  'Turbo Transfer Pro',
+                  AppConstants.appName,
                   style: TextStyle(color: Colors.white, fontSize: 14),
                 ),
               ),
             )
           : AppBar(
               title: Text(
-                "Turbo Transfer Pro",
+                AppConstants.appName,
                 style: TextStyle(color: Colors.white, fontSize: 20.sp),
               ),
               centerTitle: true,
@@ -75,7 +76,7 @@ class _HomePageState extends State<HomePage> {
                               children: [
                                 InstructionsCard(isDesktop: isDesktopOS),
                                 const SizedBox(height: 20),
-                                StatusDisplay(isDesktop: isDesktopOS),
+                                TransferProgressView(isDesktop: isDesktopOS),
                               ],
                             ),
                           ),
@@ -115,7 +116,7 @@ class _HomePageState extends State<HomePage> {
                     children: [
                       InstructionsCard(isDesktop: isDesktopOS),
                       SizedBox(height: isDesktopOS ? 20.0 : 20.h),
-                      StatusDisplay(isDesktop: isDesktopOS),
+                      TransferProgressView(isDesktop: isDesktopOS),
                       SizedBox(height: isDesktopOS ? 30.0 : 30.h),
                       ReceiverSection(isDesktop: isDesktopOS),
                       SizedBox(height: isDesktopOS ? 30.0 : 30.h),

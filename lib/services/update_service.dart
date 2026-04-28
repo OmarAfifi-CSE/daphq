@@ -4,15 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import '../views/widgets/update_dialog.dart';
+import '../core/app_constants.dart';
 
 class UpdateService {
-  static const String _githubApiUrl =
-      'https://api.github.com/repos/OmarAfifi-CSE/daphq/releases/latest';
-
   /// Checks for updates and shows a dialog if a newer version is available.
   static Future<void> checkForUpdates(BuildContext context) async {
     try {
-      final response = await http.get(Uri.parse(_githubApiUrl)).timeout(
+      final response = await http.get(Uri.parse(AppConstants.githubApiUrl)).timeout(
             const Duration(seconds: 10),
           );
 

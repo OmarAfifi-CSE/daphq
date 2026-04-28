@@ -10,6 +10,7 @@ import '../main.dart';
 import 'dart:io';
 import 'package:permission_handler/permission_handler.dart';
 import '../core/app_colors.dart';
+import '../core/app_constants.dart';
 
 class TransferCubit extends Cubit<TransferState> {
   final SenderController _sender = SenderController();
@@ -256,7 +257,7 @@ class TransferCubit extends Cubit<TransferState> {
 
   Future<void> _startForegroundService(String title, String text, {NotificationButton? button}) async {
     if (Platform.isAndroid) {
-      final safeTitle = title.isEmpty ? "Turbo Transfer" : title;
+      final safeTitle = title.isEmpty ? AppConstants.appName : title;
       final safeText = text.isEmpty ? "Running..." : text;
 
       print('Service Start Attempted');
@@ -264,7 +265,7 @@ class TransferCubit extends Cubit<TransferState> {
         notificationTitle: safeTitle,
         notificationText: safeText,
         callback: startCallback,
-        serviceId: 100,
+        serviceId: AppConstants.foregroundServiceId,
         serviceTypes: [ForegroundServiceTypes.dataSync],
         notificationIcon: const NotificationIcon(
           metaDataName: 'com.pravera.flutter_foreground_task.notification_icon',
@@ -309,7 +310,7 @@ class TransferCubit extends Cubit<TransferState> {
 
     emit(state.copyWith(isReceiving: true, isTransferring: false));
     await _startForegroundService(
-      "Turbo Transfer",
+      AppConstants.appName,
       "Waiting for incoming files...",
       button: const NotificationButton(id: 'stopReceivingButton', text: 'Stop Receiving'),
     );
@@ -355,7 +356,7 @@ class TransferCubit extends Cubit<TransferState> {
       onDone: () {
         if (Platform.isAndroid) {
           FlutterForegroundTask.updateService(
-            notificationTitle: 'Turbo Transfer',
+            notificationTitle: AppConstants.appName,
             notificationText: 'Receiver idle...',
           );
         }
@@ -374,7 +375,7 @@ class TransferCubit extends Cubit<TransferState> {
 
     emit(state.copyWith(isTransferring: true));
     await _startForegroundService(
-      "Turbo Transfer",
+      AppConstants.appName,
       "Sending files...",
       button: const NotificationButton(id: 'cancelSendingButton', text: 'Cancel Sending'),
     );
@@ -409,6 +410,7 @@ class TransferCubit extends Cubit<TransferState> {
 
   @override
   Future<void> close() {
+    FlutterForegroundTask.removeTaskDataCallback(_onReceiveTaskData);
     _receiver.stop();
     _stopForegroundService();
     return super.close();

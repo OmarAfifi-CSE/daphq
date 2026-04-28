@@ -54,9 +54,9 @@ void main() async {
     await requestAllPermissions();
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
-        channelId: 'transfer_channel',
-        channelName: 'Transfer Service',
-        channelDescription: 'Keeps background transfers alive.',
+        channelId: AppConstants.notificationChannelId,
+        channelName: AppConstants.notificationChannelName,
+        channelDescription: AppConstants.notificationChannelDesc,
         channelImportance: NotificationChannelImportance.LOW,
         priority: NotificationPriority.LOW,
       ),

@@ -52,6 +52,10 @@ class SenderSectionState extends State<SenderSection> {
         ),
         SizedBox(height: 10.0.rh(isDesktop)),
         BlocBuilder<TransferCubit, TransferState>(
+          buildWhen: (previous, current) =>
+              previous.isTransferring != current.isTransferring ||
+              previous.isReceiving != current.isReceiving ||
+              previous.targetIp != current.targetIp,
           builder: (context, state) {
             return Container(
               padding: EdgeInsets.all(15.0.rw(isDesktop)),
