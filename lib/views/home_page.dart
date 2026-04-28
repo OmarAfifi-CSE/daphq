@@ -3,13 +3,27 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:window_manager/window_manager.dart';
 import '../core/app_colors.dart';
+import '../services/update_service.dart';
 import 'widgets/instructions_card.dart';
 import 'widgets/status_display.dart';
 import 'widgets/receiver_section.dart';
 import 'widgets/sender_section.dart';
 
-class HomePage extends StatelessWidget {
+class HomePage extends StatefulWidget {
   const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      UpdateService.checkForUpdates(context);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
