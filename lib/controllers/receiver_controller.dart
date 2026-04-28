@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:convert';
 import 'dart:ui';
 import 'dart:typed_data';
+import 'dart:async';
 import 'package:path/path.dart' as p;
 import '../models/transfer_model.dart';
 import '../core/app_constants.dart';
@@ -53,6 +54,7 @@ class ReceiverController {
         try {
           Stopwatch stopwatch = Stopwatch()..start();
           bool isRejected = false;
+          Completer<void> backgroundWriteCompleter = Completer<void>();
 
           List<int> headerBuffer = [];
           Map<String, dynamic>? metadata;
@@ -80,11 +82,8 @@ class ReceiverController {
 
                 // Authorization step
                 List<dynamic> files = metadata!["files"];
-                int totalBytes = files.fold(
-                  0,
-                  (sum, f) => sum + (f["size"] as int),
-                );
-                double totalSizeMB = totalBytes / 1024 / 1024;
+                double totalSizeMB =
+                    (metadata["fileSize"] as int) / 1024 / 1024;
 
                 bool isAccepted = await onRequestAuth(
                   client.remoteAddress.address,
@@ -107,23 +106,31 @@ class ReceiverController {
                   break;
                 } else {
                   try {
-                    // Calculate resume offsets for partially received files
-                    Map<String, int> offsets = {};
-                    for (var fMeta in files) {
-                      File localF = File(p.join(saveDirectory, fMeta["path"]));
-                      if (localF.existsSync()) {
-                        int len = localF.lengthSync();
-                        if (len <= fMeta["size"]) {
-                          offsets[fMeta["path"]] = len;
-                        } else {
-                          localF.deleteSync();
+                    String originalName = metadata["fileName"];
+                    String finalFileName = _generateUniquePath(
+                      saveDirectory,
+                      originalName,
+                    );
+
+                    if (finalFileName != originalName) {
+                      if (metadata["isFolder"] == true) {
+                        for (var fMeta in files) {
+                          List<String> segments = p.split(fMeta["path"]);
+                          if (segments.isNotEmpty) {
+                            segments[0] = finalFileName;
+                            fMeta["path"] = p
+                                .joinAll(segments)
+                                .replaceAll(r'\', '/');
+                          }
+                        }
+                      } else {
+                        if (files.isNotEmpty) {
+                          files[0]["path"] = finalFileName;
                         }
                       }
                     }
 
-                    client.write(
-                      "${jsonEncode({"status": "ACCEPTED", "offsets": offsets})}\n",
-                    );
+                    client.write("${jsonEncode({"s": "r"})}\n");
                     await client.flush();
                   } catch (_) {
                     throw "Sender disconnected before starting.";
@@ -148,24 +155,9 @@ class ReceiverController {
                   // Create subdirectories recursively
                   f.parent.createSync(recursive: true);
 
-                  int existingLen = f.existsSync() ? f.lengthSync() : 0;
-                  if (existingLen > targetSize) {
-                    f.deleteSync();
-                    existingLen = 0;
-                  }
-
-                  currentSink = f.openWrite(mode: FileMode.append);
+                  currentSink = f.openWrite();
                   _activeSink = currentSink;
-                  bytesReadForCurrentFile = existingLen;
-                  if (received == 0) {
-                    // Add offsets of current + all previously skipped files to received
-                    int totalExisting = 0;
-                    for (int i = 0; i <= currentFileIndex; i++) {
-                      File tmp = File(p.join(saveDirectory, files[i]["path"]));
-                      if (tmp.existsSync()) totalExisting += tmp.lengthSync();
-                    }
-                    received += totalExisting;
-                  }
+                  bytesReadForCurrentFile = 0;
                 }
 
                 int remainingInChunk = chunk.length - offset;
@@ -183,13 +175,15 @@ class ReceiverController {
 
                 // Write bytes with exact boundary precision
                 if (remainingInChunk <= bytesNeeded) {
-                  currentSink.add(Uint8List.sublistView(chunk as Uint8List, offset));
+                  currentSink.add(Uint8List.sublistView(chunk, offset));
                   bytesReadForCurrentFile += remainingInChunk;
                   received += remainingInChunk;
                   bytesSinceUpdate += remainingInChunk;
                   offset += remainingInChunk;
                 } else {
-                  currentSink.add(Uint8List.sublistView(chunk as Uint8List, offset, offset + bytesNeeded));
+                  currentSink.add(
+                    Uint8List.sublistView(chunk, offset, offset + bytesNeeded),
+                  );
                   bytesReadForCurrentFile += bytesNeeded;
                   received += bytesNeeded;
                   bytesSinceUpdate += bytesNeeded;
@@ -214,12 +208,40 @@ class ReceiverController {
 
                 // Close file when fully received
                 if (bytesReadForCurrentFile == targetSize) {
-                  await currentSink.flush();
-                  await currentSink.close();
+                  var sinkToClose = currentSink;
                   currentSink = null;
                   _activeSink = null;
                   bytesReadForCurrentFile = 0;
                   currentFileIndex++;
+
+                  int totalExpectedBytes = files.fold(
+                    0,
+                    (sum, f) => sum + (f["size"] as int),
+                  );
+
+                  if (received >= totalExpectedBytes) {
+                    // In background: close, then send tiny done signal
+                    sinkToClose.flush().then((_) {
+                      sinkToClose.close().then((_) {
+                        try {
+                          client.write('${jsonEncode({"s": "d"})}\n');
+                          client.flush().whenComplete(() {
+                            if (!backgroundWriteCompleter.isCompleted) {
+                              backgroundWriteCompleter.complete();
+                            }
+                          });
+                        } catch (_) {
+                          if (!backgroundWriteCompleter.isCompleted) {
+                            backgroundWriteCompleter.complete();
+                          }
+                        }
+                      });
+                    });
+                    break; // Exit the chunk loop early since we have everything
+                  } else {
+                    await sinkToClose.flush();
+                    await sinkToClose.close();
+                  }
                 }
               }
             } finally {
@@ -273,6 +295,10 @@ class ReceiverController {
               fileName: "All files saved.",
             ),
           );
+
+          if (received >= totalExpectedBytes) {
+            await backgroundWriteCompleter.future;
+          }
         } catch (e) {
           if (_isCancelled) {
             onUpdate(
@@ -346,6 +372,26 @@ class ReceiverController {
       return "Transfer cancelled by the other device. Ready & Waiting...";
     } else {
       return "Network Error: Please check Wi-Fi connection. Ready & Waiting...";
+    }
+  }
+
+  /// Generates a unique path by appending (1), (2), etc. if the file or directory exists.
+  String _generateUniquePath(String dir, String name) {
+    String checkPath = p.join(dir, name);
+    if (!File(checkPath).existsSync() && !Directory(checkPath).existsSync()) {
+      return name;
+    }
+    String extension = p.extension(name);
+    String base = p.basenameWithoutExtension(name);
+    int counter = 1;
+    while (true) {
+      String newName = '$base ($counter)$extension';
+      String newCheckPath = p.join(dir, newName);
+      if (!File(newCheckPath).existsSync() &&
+          !Directory(newCheckPath).existsSync()) {
+        return newName;
+      }
+      counter++;
     }
   }
 }

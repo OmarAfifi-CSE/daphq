@@ -76,7 +76,11 @@ class SenderController {
       socket.setOption(SocketOption.tcpNoDelay, true);
 
       // Send file metadata (JSON header)
+      String originalName = isFolder ? p.basename(path) : p.basename(path);
       Map<String, dynamic> metadata = {
+        "fileName": originalName,
+        "fileSize": totalBytesToSend,
+        "isFolder": isFolder,
         "files": fileList
             .map((e) => {"path": e["path"], "size": e["size"]})
             .toList(),
@@ -90,32 +94,69 @@ class SenderController {
         throw "Connection lost before sending data. Please check Wi-Fi.";
       }
 
-      // Wait for authorization
-      onUpdate(TransferModel(status: "Waiting for Receiver to Accept..."));
+      // Set up listeners for Receiver responses (READY and DONE)
+      Completer<Map<String, dynamic>> readyCompleter = Completer();
+      Completer<void> doneCompleter = Completer();
+      String headerBuffer = "";
 
-      String authResponse = "";
+      socket.listen(
+        (data) {
+          headerBuffer += utf8.decode(data);
+          while (headerBuffer.contains('\n')) {
+            int newlineIndex = headerBuffer.indexOf('\n');
+            String line = headerBuffer.substring(0, newlineIndex).trim();
+            headerBuffer = headerBuffer.substring(newlineIndex + 1);
+
+            if (line.isNotEmpty) {
+              try {
+                Map<String, dynamic> response = jsonDecode(line);
+                if (response["status"] == "REJECTED") {
+                  if (!readyCompleter.isCompleted) {
+                    readyCompleter.completeError(
+                      "Transfer Rejected by Receiver.",
+                    );
+                  }
+                } else if (response["s"] == "r") {
+                  if (!readyCompleter.isCompleted) {
+                    readyCompleter.complete({});
+                  }
+                } else if (response["s"] == "d") {
+                  if (!doneCompleter.isCompleted) {
+                    doneCompleter.complete();
+                  }
+                }
+              } catch (_) {}
+            }
+          }
+        },
+        onError: (e) {
+          if (!readyCompleter.isCompleted)
+            readyCompleter.completeError("Receiver disconnected.");
+          if (!doneCompleter.isCompleted)
+            doneCompleter.completeError("Receiver disconnected.");
+        },
+        onDone: () {
+          if (!readyCompleter.isCompleted)
+            readyCompleter.completeError("Receiver disconnected.");
+          if (!doneCompleter.isCompleted)
+            doneCompleter.completeError("Receiver disconnected.");
+        },
+        cancelOnError: true,
+      );
+
+      // Wait for authorization and readiness
+      onUpdate(TransferModel(status: "Waiting for Receiver to Accept..."));
       try {
-        final authData = await socket.first.timeout(
+        await readyCompleter.future.timeout(
           const Duration(minutes: AppConstants.authTimeoutMinutes),
           onTimeout: () => throw "Timeout",
         );
-        authResponse = utf8.decode(authData).trim();
       } catch (e) {
-        throw "Receiver disconnected or timeout before answering.";
+        if (e == "Timeout") {
+          throw "Receiver disconnected or timeout before answering.";
+        }
+        rethrow;
       }
-
-      Map<String, dynamic>? authResObj;
-      try {
-        authResObj = jsonDecode(authResponse);
-      } catch (_) {}
-
-      if (authResObj != null && authResObj["status"] != "ACCEPTED") {
-        throw "Transfer Rejected by Receiver.";
-      } else if (authResObj == null && authResponse != "ACCEPTED") {
-        throw "Transfer Rejected by Receiver.";
-      }
-
-      Map<String, dynamic> offsets = authResObj?["offsets"] ?? {};
 
       // Stream file data
       int sentBytes = 0;
@@ -123,11 +164,8 @@ class SenderController {
       int bytesSinceUpdate = 0;
 
       for (var f in fileList) {
-        int offset = (offsets[f["path"]] ?? 0) as int;
         File fileToRead = File(f["absPath"]);
-        final reader = fileToRead.openRead(offset);
-
-        sentBytes += offset;
+        final reader = fileToRead.openRead();
 
         try {
           await for (var chunk in reader) {
@@ -159,11 +197,40 @@ class SenderController {
       }
 
       await socket.flush();
-      await socket.close();
-      stopwatch.stop();
 
+      // Stop the stopwatch immediately after bytes are sent for accurate speed
+      stopwatch.stop();
       double finalMB = totalBytesToSend / 1024 / 1024;
       double avg = finalMB / (stopwatch.elapsedMilliseconds / 1000);
+
+      // Wait for DONE status with timeout
+      onUpdate(
+        TransferModel(
+          status: "Finalizing transfer... Please wait for disk write.",
+          fileName: originalName,
+          speed: 0,
+          transferred: finalMB,
+          avgSpeed: avg.toStringAsFixed(2),
+        ),
+      );
+
+      try {
+        await doneCompleter.future.timeout(
+          const Duration(seconds: 30),
+          onTimeout: () {
+            if (sentBytes >= totalBytesToSend) {
+              return; // Ignore timeout if all bytes were sent
+            }
+            throw "Timeout waiting for Receiver to finalize disk write.";
+          },
+        );
+      } catch (e) {
+        if (sentBytes < totalBytesToSend) {
+          rethrow;
+        }
+      }
+
+      await socket.close();
 
       onUpdate(
         TransferModel(
