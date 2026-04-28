@@ -95,10 +95,7 @@ void main() async {
 }
 
 Future<void> requestAllPermissions() async {
-  await [
-    Permission.storage,
-    Permission.notification,
-  ].request();
+  await [Permission.storage, Permission.notification].request();
 
   // Full file access (required for Android 11+)
   if (await Permission.manageExternalStorage.isDenied) {

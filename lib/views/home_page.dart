@@ -34,14 +34,29 @@ class _HomePageState extends State<HomePage> {
         extendBodyBehindAppBar: true,
         backgroundColor: Colors.transparent,
         appBar: (Platform.isWindows || Platform.isLinux || Platform.isMacOS)
-            ? const PreferredSize(
-                preferredSize: Size.fromHeight(kWindowCaptionHeight),
+            ? PreferredSize(
+                preferredSize: const Size.fromHeight(kWindowCaptionHeight),
                 child: WindowCaption(
                   brightness: Brightness.dark,
                   backgroundColor: AppColors.appBarBackground,
-                  title: Text(
-                    AppConstants.appName,
-                    style: TextStyle(color: Colors.white, fontSize: 14),
+                  title: Row(
+                    children: [
+                      Image.asset(
+                        'assets/logo.png',
+                        width: 16,
+                        height: 16,
+                        filterQuality: FilterQuality.high,
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        AppConstants.appName,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               )
