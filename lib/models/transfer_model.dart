@@ -5,6 +5,7 @@ class TransferModel {
   String status;
   String? avgSpeed;
   String? totalTime;
+  double progress;
 
   TransferModel({
     this.speed = 0.0,
@@ -13,5 +14,6 @@ class TransferModel {
     this.status = "Idle",
     this.avgSpeed,
     this.totalTime,
+    this.progress = 0.0,
   });
 }

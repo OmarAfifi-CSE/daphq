@@ -130,16 +130,20 @@ class SenderController {
           }
         },
         onError: (e) {
-          if (!readyCompleter.isCompleted)
+          if (!readyCompleter.isCompleted) {
             readyCompleter.completeError("Receiver disconnected.");
-          if (!doneCompleter.isCompleted)
+          }
+          if (!doneCompleter.isCompleted) {
             doneCompleter.completeError("Receiver disconnected.");
+          }
         },
         onDone: () {
-          if (!readyCompleter.isCompleted)
+          if (!readyCompleter.isCompleted) {
             readyCompleter.completeError("Receiver disconnected.");
-          if (!doneCompleter.isCompleted)
+          }
+          if (!doneCompleter.isCompleted) {
             doneCompleter.completeError("Receiver disconnected.");
+          }
         },
         cancelOnError: true,
       );
@@ -187,6 +191,9 @@ class SenderController {
                   transferred: sentBytes / 1024 / 1024,
                   fileName: p.basename(f["path"]),
                   status: "Pumping Data...",
+                  progress: totalBytesToSend > 0
+                      ? sentBytes / totalBytesToSend
+                      : 0.0,
                 ),
               );
               bytesSinceUpdate = 0;

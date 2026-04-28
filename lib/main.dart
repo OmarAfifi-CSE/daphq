@@ -16,13 +16,22 @@ void startCallback() {
 
 class MyTaskHandler extends TaskHandler {
   @override
-  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {}
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
+    print('MyTaskHandler.onStart reached at $timestamp');
+  }
 
   @override
-  Future<void> onDestroy(DateTime timestamp, bool isForceDestroy) async {}
+  Future<void> onDestroy(DateTime timestamp, bool isForceDestroy) async {
+    print('MyTaskHandler.onDestroy reached! Force: $isForceDestroy');
+  }
 
   @override
-  void onNotificationButtonPressed(String id) {}
+  void onNotificationButtonPressed(String id) {
+    print('MyTaskHandler.onNotificationButtonPressed: $id');
+    if (id == 'stopButton') {
+      FlutterForegroundTask.sendDataToMain('STOP');
+    }
+  }
 
   @override
   void onNotificationPressed() {
@@ -35,6 +44,7 @@ class MyTaskHandler extends TaskHandler {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  FlutterForegroundTask.initCommunicationPort();
 
   if (Platform.isAndroid) {
     await requestAllPermissions();
@@ -55,6 +65,7 @@ void main() async {
         autoRunOnBoot: false,
         allowWakeLock: true,
         allowWifiLock: true,
+        stopWithTask: false,
       ),
     );
   }
@@ -71,7 +82,7 @@ void main() async {
       backgroundColor: Colors.transparent,
       skipTaskbar: false,
       titleBarStyle: TitleBarStyle.hidden,
-      title: 'Turbo Transfer Pro',
+      title: 'Daphq',
     );
     windowManager.waitUntilReadyToShow(windowOptions, () async {
       await windowManager.center();
@@ -124,7 +135,7 @@ class DaphqApp extends StatelessWidget {
           splitScreenMode: true,
           builder: (context, child) {
             return MaterialApp(
-              title: 'Turbo Transfer Pro',
+              title: 'Daphq',
               debugShowCheckedModeBanner: false,
               theme: ThemeData(
                 primarySwatch: Colors.indigo,

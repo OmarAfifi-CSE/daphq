@@ -58,6 +58,7 @@ class ReceiverController {
 
           List<int> headerBuffer = [];
           Map<String, dynamic>? metadata;
+          int totalExpectedBytes = 0;
 
           int currentFileIndex = 0;
           int bytesReadForCurrentFile = 0;
@@ -82,8 +83,11 @@ class ReceiverController {
 
                 // Authorization step
                 List<dynamic> files = metadata!["files"];
-                double totalSizeMB =
-                    (metadata["fileSize"] as int) / 1024 / 1024;
+                totalExpectedBytes = files.fold(
+                  0,
+                  (sum, f) => sum + (f["size"] as int),
+                );
+                double totalSizeMB = totalExpectedBytes / 1024 / 1024;
 
                 bool isAccepted = await onRequestAuth(
                   client.remoteAddress.address,
@@ -200,6 +204,9 @@ class ReceiverController {
                       transferred: received / 1024 / 1024,
                       fileName: p.basename(fileMeta["path"]),
                       status: "Receiving Data...",
+                      progress: totalExpectedBytes > 0
+                          ? received / totalExpectedBytes
+                          : 0.0,
                     ),
                   );
                   bytesSinceUpdate = 0;
@@ -213,11 +220,6 @@ class ReceiverController {
                   _activeSink = null;
                   bytesReadForCurrentFile = 0;
                   currentFileIndex++;
-
-                  int totalExpectedBytes = files.fold(
-                    0,
-                    (sum, f) => sum + (f["size"] as int),
-                  );
 
                   if (received >= totalExpectedBytes) {
                     // In background: close, then send tiny done signal
@@ -270,12 +272,6 @@ class ReceiverController {
           }
 
           // Check for premature connection drop
-          int totalExpectedBytes =
-              metadata?["files"]?.fold(
-                0,
-                (sum, f) => sum + (f["size"] as int),
-              ) ??
-              0;
           if (metadata != null && received < totalExpectedBytes) {
             throw "Connection dropped prematurely.";
           }

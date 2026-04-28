@@ -190,12 +190,13 @@ class SenderSectionState extends State<SenderSection> {
     if (path != null) {
       if (cubit.state.targetIp.trim().isEmpty) {
         if (!context.mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text("Please enter target IP!")));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Please enter target IP!")),
+        );
         return;
       }
-      cubit.sendData(path: path, isFolder: isFolder);
+      if (!context.mounted) return;
+      cubit.sendData(context: context, path: path, isFolder: isFolder);
     }
   }
 }
