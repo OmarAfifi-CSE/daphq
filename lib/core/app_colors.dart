@@ -5,10 +5,10 @@ class AppColors {
   AppColors._();
 
   /// Main scaffold background.
-  static const Color background = Color(0xFF121212);
+  static const Color background = Color(0xFF12122A);
 
   /// AppBar and window caption background.
-  static const Color appBarBackground = Color(0xFF1E1E1E);
+  static const Color appBarBackground = Color(0xFF0F172A);
 
   /// Dialog background (e.g. auth dialog).
   static const Color dialogBackground = Color(0xFF252525);
