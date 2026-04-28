@@ -71,9 +71,11 @@ class ReceiverSection extends StatelessWidget {
                                 String? path =
                                     await FilePicker.getDirectoryPath();
                                 if (path != null) {
-                                  context
-                                      .read<TransferCubit>()
-                                      .setReceiveFolder(path);
+                                  if (context.mounted) {
+                                    context
+                                        .read<TransferCubit>()
+                                        .setReceiveFolder(path);
+                                  }
                                 }
                               },
                       ),

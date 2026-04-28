@@ -17,18 +17,13 @@ void startCallback() {
 
 class MyTaskHandler extends TaskHandler {
   @override
-  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
-    print('MyTaskHandler.onStart reached at $timestamp');
-  }
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {}
 
   @override
-  Future<void> onDestroy(DateTime timestamp, bool isForceDestroy) async {
-    print('MyTaskHandler.onDestroy reached! Force: $isForceDestroy');
-  }
+  Future<void> onDestroy(DateTime timestamp, bool isForceDestroy) async {}
 
   @override
   void onNotificationButtonPressed(String id) {
-    print('MyTaskHandler.onNotificationButtonPressed: $id');
     if (id == 'stopReceivingButton') {
       FlutterForegroundTask.sendDataToMain('STOP_RECEIVING');
     } else if (id == 'cancelSendingButton') {
@@ -100,9 +95,8 @@ void main() async {
 }
 
 Future<void> requestAllPermissions() async {
-  Map<Permission, PermissionStatus> statuses = await [
+  await [
     Permission.storage,
-    Permission.requestInstallPackages, // Required for sending APK files
     Permission.notification,
   ].request();
 
@@ -110,10 +104,6 @@ Future<void> requestAllPermissions() async {
   if (await Permission.manageExternalStorage.isDenied) {
     await Permission.manageExternalStorage.request();
   }
-
-  statuses.forEach((permission, status) {
-    print('${permission.toString()}: $status');
-  });
 }
 
 class DaphqApp extends StatelessWidget {

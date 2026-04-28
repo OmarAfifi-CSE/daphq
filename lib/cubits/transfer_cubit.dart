@@ -22,7 +22,6 @@ class TransferCubit extends Cubit<TransferState> {
   }
 
   void _onReceiveTaskData(dynamic message) {
-    print('TransferCubit._onReceiveTaskData received: $message');
     if (message == 'STOP_RECEIVING') {
       stopReceiver();
     } else if (message == 'CANCEL_SENDING') {
@@ -260,8 +259,7 @@ class TransferCubit extends Cubit<TransferState> {
       final safeTitle = title.isEmpty ? AppConstants.appName : title;
       final safeText = text.isEmpty ? "Running..." : text;
 
-      print('Service Start Attempted');
-      final result = await FlutterForegroundTask.startService(
+      await FlutterForegroundTask.startService(
         notificationTitle: safeTitle,
         notificationText: safeText,
         callback: startCallback,
@@ -272,7 +270,6 @@ class TransferCubit extends Cubit<TransferState> {
         ),
         notificationButtons: button != null ? [button] : null,
       );
-      print('Service Result: ${result is ServiceRequestSuccess}');
     }
   }
 
