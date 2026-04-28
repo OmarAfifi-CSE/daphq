@@ -5,6 +5,7 @@ import '../../cubits/transfer_cubit.dart';
 import '../../cubits/transfer_state.dart';
 import '../../core/app_colors.dart';
 import '../../core/responsive_utils.dart';
+import 'daphq_card.dart';
 
 class SenderSection extends StatefulWidget {
   final bool isDesktop;
@@ -57,12 +58,8 @@ class SenderSectionState extends State<SenderSection> {
               previous.isReceiving != current.isReceiving ||
               previous.targetIp != current.targetIp,
           builder: (context, state) {
-            return Container(
-              padding: EdgeInsets.all(15.0.rw(isDesktop)),
-              decoration: BoxDecoration(
-                color: AppColors.cardOverlay,
-                borderRadius: BorderRadius.circular(15.0.rr(isDesktop)),
-              ),
+            return DaphqCard(
+              isDesktop: isDesktop,
               child: Column(
                 children: [
                   TextField(

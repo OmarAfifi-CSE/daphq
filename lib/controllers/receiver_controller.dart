@@ -76,6 +76,11 @@ class ReceiverController {
               int newlineIndex = chunk.indexOf(10); // \n
               if (newlineIndex != -1) {
                 headerBuffer.addAll(chunk.sublist(0, newlineIndex));
+                
+                if (headerBuffer.length > 1024 * 1024) {
+                  throw const FileSystemException("Security Exception: Header exceeded 1MB limit. Possible Out-Of-Memory attack.");
+                }
+                
                 String jsonStr = utf8.decode(headerBuffer);
                 metadata = jsonDecode(jsonStr);
 
@@ -142,6 +147,9 @@ class ReceiverController {
                 }
               } else {
                 headerBuffer.addAll(chunk);
+                if (headerBuffer.length > 1024 * 1024) {
+                  throw const FileSystemException("Security Exception: Header exceeded 1MB limit. Possible Out-Of-Memory attack.");
+                }
                 continue;
               }
             }
