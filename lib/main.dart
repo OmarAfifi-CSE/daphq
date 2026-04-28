@@ -8,6 +8,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'views/home_page.dart';
 import 'cubits/transfer_cubit.dart';
 import 'core/app_constants.dart';
+import 'core/app_colors.dart';
 
 @pragma('vm:entry-point')
 void startCallback() {
@@ -142,7 +143,18 @@ class DaphqApp extends StatelessWidget {
               title: 'Daphq',
               debugShowCheckedModeBanner: false,
               theme: ThemeData(
-                primarySwatch: Colors.indigo,
+                brightness: Brightness.dark,
+                scaffoldBackgroundColor: AppColors.background,
+                primaryColor: AppColors.primary,
+                colorScheme: const ColorScheme.dark(
+                  primary: AppColors.primary,
+                  surface: AppColors.appBarBackground,
+                ),
+                textSelectionTheme: TextSelectionThemeData(
+                  cursorColor: AppColors.primary,
+                  selectionColor: AppColors.primary.withAlpha(100),
+                  selectionHandleColor: AppColors.primary,
+                ),
                 useMaterial3: true,
                 visualDensity: VisualDensity.adaptivePlatformDensity,
                 fontFamily: 'Roboto',

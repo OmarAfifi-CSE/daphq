@@ -65,6 +65,7 @@ class SenderSectionState extends State<SenderSection> {
                 children: [
                   TextField(
                     controller: _ipController,
+                    cursorColor: AppColors.primary,
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 14.0.rx(isDesktop),
@@ -185,6 +186,8 @@ class SenderSectionState extends State<SenderSection> {
           SizedBox(width: 8.0.rw(isDesktop)),
           Text(
             text,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: Colors.white,
               fontSize: 14.0.rx(isDesktop),
