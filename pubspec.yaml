@@ -16,7 +16,7 @@ dependencies:
   flutter_screenutil: ^5.9.3
   window_manager: ^0.5.1
   flutter_foreground_task: ^9.2.2
-  path: any
+  path: ^1.9.1
   http: ^1.6.0
   package_info_plus: ^9.0.1
   url_launcher: ^6.3.2
