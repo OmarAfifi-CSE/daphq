@@ -22,7 +22,11 @@ class TransferCubit extends Cubit<TransferState> {
 
   void _onReceiveTaskData(dynamic message) {
     print('TransferCubit._onReceiveTaskData received: $message');
-    if (message == 'STOP') {
+    if (message == 'STOP_RECEIVING') {
+      stopReceiver();
+    } else if (message == 'CANCEL_SENDING') {
+      cancelSending();
+    } else if (message == 'STOP') {
       stopReceiver();
       cancelSending();
     }
@@ -118,7 +122,7 @@ class TransferCubit extends Cubit<TransferState> {
       // If warning shown (duration 5s), wait 5.5s to show battery check exactly after it fades
       // Otherwise, delay slightly (0.5s) for visual separation from system dialogs
       final delay = showedWarning
-          ? const Duration(milliseconds: 5500)
+          ? const Duration(milliseconds: 2000)
           : const Duration(milliseconds: 500);
       await Future.delayed(delay);
 
@@ -154,7 +158,7 @@ class TransferCubit extends Cubit<TransferState> {
     }
   }
 
-  Future<void> _startForegroundService(String title, String text) async {
+  Future<void> _startForegroundService(String title, String text, {NotificationButton? button}) async {
     if (Platform.isAndroid) {
       final safeTitle = title.isEmpty ? "Turbo Transfer" : title;
       final safeText = text.isEmpty ? "Running..." : text;
@@ -169,9 +173,7 @@ class TransferCubit extends Cubit<TransferState> {
         notificationIcon: const NotificationIcon(
           metaDataName: 'com.pravera.flutter_foreground_task.notification_icon',
         ),
-        notificationButtons: [
-          const NotificationButton(id: 'stopButton', text: 'Stop/Cancel'),
-        ],
+        notificationButtons: button != null ? [button] : null,
       );
       print('Service Result: ${result is ServiceRequestSuccess}');
     }
@@ -213,6 +215,7 @@ class TransferCubit extends Cubit<TransferState> {
     await _startForegroundService(
       "Turbo Transfer",
       "Waiting for incoming files...",
+      button: const NotificationButton(id: 'stopReceivingButton', text: 'Stop Receiving'),
     );
 
     _receiver.startReceiver(
@@ -242,7 +245,7 @@ class TransferCubit extends Cubit<TransferState> {
             notificationText:
                 '${model.transferred.toStringAsFixed(2)} MB $speedStr - ${model.status}',
             notificationButtons: [
-              const NotificationButton(id: 'stopButton', text: 'Stop/Cancel'),
+              const NotificationButton(id: 'stopReceivingButton', text: 'Stop Receiving'),
             ],
           );
         }
@@ -274,7 +277,11 @@ class TransferCubit extends Cubit<TransferState> {
     if (!await _prepareRequirements(context)) return;
 
     emit(state.copyWith(isTransferring: true));
-    await _startForegroundService("Turbo Transfer", "Sending files...");
+    await _startForegroundService(
+      "Turbo Transfer",
+      "Sending files...",
+      button: const NotificationButton(id: 'cancelSendingButton', text: 'Cancel Sending'),
+    );
 
     _sender.sendData(
       path: path,
@@ -291,7 +298,7 @@ class TransferCubit extends Cubit<TransferState> {
             notificationText:
                 '${model.transferred.toStringAsFixed(2)} MB $speedStr - ${model.status}',
             notificationButtons: [
-              const NotificationButton(id: 'stopButton', text: 'Stop/Cancel'),
+              const NotificationButton(id: 'cancelSendingButton', text: 'Cancel Sending'),
             ],
           );
         }

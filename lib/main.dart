@@ -28,7 +28,11 @@ class MyTaskHandler extends TaskHandler {
   @override
   void onNotificationButtonPressed(String id) {
     print('MyTaskHandler.onNotificationButtonPressed: $id');
-    if (id == 'stopButton') {
+    if (id == 'stopReceivingButton') {
+      FlutterForegroundTask.sendDataToMain('STOP_RECEIVING');
+    } else if (id == 'cancelSendingButton') {
+      FlutterForegroundTask.sendDataToMain('CANCEL_SENDING');
+    } else if (id == 'stopButton') {
       FlutterForegroundTask.sendDataToMain('STOP');
     }
   }
