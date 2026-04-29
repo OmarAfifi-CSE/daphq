@@ -3,7 +3,7 @@ class AppConstants {
   AppConstants._();
 
   /// TCP port used for all file transfers.
-  static const int transferPort = 9999;
+  static const int transferPort = 62004;
 
   /// Global branding string.
   static const String appName = 'Daphq';
@@ -21,6 +21,9 @@ class AppConstants {
 
   /// Default target IP address for the sender.
   static const String defaultTargetIp = '192.168.137.1';
+
+  /// Flush threshold for socket buffer (2 MB).
+  static const int socketFlushThresholdBytes = 2 * 1024 * 1024;
 
   /// UI update interval during transfers (milliseconds).
   static const int speedUpdateIntervalMs = 500;

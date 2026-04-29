@@ -45,7 +45,7 @@ class ReceiverController {
       }
       onUpdate(
         TransferModel(
-          status: "Receiver Ready (Port: ${AppConstants.transferPort})",
+          status: "Receiver Ready\n(Port: ${AppConstants.transferPort})",
         ),
       );
 

@@ -59,7 +59,7 @@ class TransferProgressView extends StatelessWidget {
                     "${value.toStringAsFixed(1)} MB/s",
                     style: TextStyle(
                       color: Colors.white,
-                      fontSize: 50.0.rx(isDesktop),
+                      fontSize: 42.0.rx(isDesktop),
                       fontWeight: FontWeight.bold,
                       shadows: [
                         Shadow(

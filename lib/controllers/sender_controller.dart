@@ -166,6 +166,7 @@ class SenderController {
       int sentBytes = 0;
       DateTime lastUpdate = DateTime.now();
       int bytesSinceUpdate = 0;
+      int bytesBuffered = 0;
 
       for (var f in fileList) {
         if (_isCancelled) throw "Transfer Cancelled";
@@ -177,21 +178,27 @@ class SenderController {
             if (_isCancelled) throw "Transfer Cancelled";
             try {
               socket.add(chunk);
-              await socket.flush(); // Prevent OOM by awaiting buffer flush
+              bytesBuffered += chunk.length;
+              if (bytesBuffered >= AppConstants.socketFlushThresholdBytes) {
+                await socket.flush(); // Prevent OOM by awaiting buffer flush
+                bytesBuffered = 0;
+              }
             } on SocketException {
               throw "Network disconnected during transfer.";
             } on StateError {
               if (_isCancelled) throw "Transfer Cancelled";
               rethrow;
             }
-            
+
             if (_isCancelled) throw "Transfer Cancelled";
             sentBytes += chunk.length;
             bytesSinceUpdate += chunk.length;
 
             if (DateTime.now().difference(lastUpdate).inMilliseconds >
                 AppConstants.speedUpdateIntervalMs) {
-              double speed = (bytesSinceUpdate / 1024 / 1024) / 0.5;
+              double speed =
+                  (bytesSinceUpdate / 1024 / 1024) /
+                  (AppConstants.speedUpdateIntervalMs / 1000);
               onUpdate(
                 TransferModel(
                   speed: speed,
