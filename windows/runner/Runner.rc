@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.omarafifi" "\0"
-            VALUE "FileDescription", "daphq" "\0"
+            VALUE "CompanyName", "Omar Afifi" "\0"
+            VALUE "FileDescription", "Daphq - High Speed Cross-Platform File Transfer" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "daphq" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.omarafifi. All rights reserved." "\0"
-            VALUE "OriginalFilename", "daphq.exe" "\0"
-            VALUE "ProductName", "daphq" "\0"
+            VALUE "InternalName", "Daphq" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Omar Afifi. All rights reserved." "\0"
+            VALUE "OriginalFilename", "Daphq.exe" "\0"
+            VALUE "ProductName", "Daphq" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
