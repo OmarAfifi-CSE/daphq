@@ -89,6 +89,7 @@ class ReceiverSection extends StatelessWidget {
                         ? null
                         : () {
                             if (state.isReceiving) {
+                              CustomSnackBar.hide();
                               context.read<TransferCubit>().stopReceiver();
                             } else {
                               if (state.receiveFolder == null) {

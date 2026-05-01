@@ -39,16 +39,13 @@ class _HomePageState extends State<HomePage> {
       child: BlocListener<TransferCubit, TransferState>(
         listener: (context, state) {
           final cubit = context.read<TransferCubit>();
-          if (!state.isReceiving && !state.isTransferring) {
-            ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          }
 
           // 1. Handle Error Messages
           if (state.errorMessage != null) {
             CustomSnackBar.show(
               context,
               message: state.errorMessage!,
-              duration: const Duration(seconds: 5),
+              duration: const Duration(seconds: 4),
             );
             cubit.clearFeedback();
           }
@@ -57,9 +54,8 @@ class _HomePageState extends State<HomePage> {
           if (state.showBatteryOptimizationSnackBar) {
             CustomSnackBar.show(
               context,
-              message:
-                  "For faster speeds and stable background transfer, consider disabling battery optimization.",
-              duration: const Duration(seconds: 4),
+              message: "Disable battery limits for speed & stable transfers.",
+              duration: const Duration(seconds: 3),
               action: SnackBarAction(
                 label: "DISABLE",
                 textColor: Colors.indigoAccent,

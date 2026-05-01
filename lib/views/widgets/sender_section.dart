@@ -177,6 +177,7 @@ class SenderSectionState extends State<SenderSection> {
                                 AnimatedPressButton(
                                   isDesktop: isDesktop,
                                   onPressed: () {
+                                    CustomSnackBar.hide();
                                     context
                                         .read<TransferCubit>()
                                         .cancelSending();

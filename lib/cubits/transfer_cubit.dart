@@ -91,7 +91,7 @@ class TransferCubit extends Cubit<TransferState> {
       emit(
         state.copyWith(
           errorMessage:
-              "Warning: Transfer may stop if the app is minimized without notifications.",
+              "Warning: Transfer may stop if minimized without notifications.",
         ),
       );
     } else if (!notifStatus.isGranted &&
@@ -108,7 +108,7 @@ class TransferCubit extends Cubit<TransferState> {
     bool isIgnoring = await Permission.ignoreBatteryOptimizations.isGranted;
     if (!isIgnoring) {
       final delay = showedWarning
-          ? const Duration(milliseconds: 2000)
+          ? const Duration(milliseconds: 4500)
           : const Duration(milliseconds: 500);
       await Future.delayed(delay);
 
