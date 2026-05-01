@@ -1,21 +1,22 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:permission_handler/permission_handler.dart';
+
 import '../controllers/sender_controller.dart';
 import '../controllers/receiver_controller.dart';
 import '../models/transfer_model.dart';
-import '../views/widgets/auth_dialog.dart';
 import 'transfer_state.dart';
-import '../main.dart';
-import 'dart:io';
-import 'package:permission_handler/permission_handler.dart';
-import '../core/app_colors.dart';
 import '../core/app_constants.dart';
+import '../main.dart';
 
 class TransferCubit extends Cubit<TransferState> {
   final SenderController _sender = SenderController();
   final ReceiverController _receiver = ReceiverController();
-  BuildContext? _lastContext;
+
+  Completer<bool>? _authCompleter;
+  Completer<bool>? _notifCompleter;
 
   TransferCubit() : super(TransferState(model: TransferModel())) {
     FlutterForegroundTask.addTaskDataCallback(_onReceiveTaskData);
@@ -32,12 +33,8 @@ class TransferCubit extends Cubit<TransferState> {
     }
   }
 
-  Future<bool> _prepareRequirements(BuildContext context) async {
-    _lastContext = context;
+  Future<bool> _prepareRequirements() async {
     if (!Platform.isAndroid) return true;
-
-    // Capture the ScaffoldMessengerState synchronously to prevent async unmounting issues
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
 
     bool showedWarning = false;
 
@@ -45,7 +42,8 @@ class TransferCubit extends Cubit<TransferState> {
     bool hasStorage = false;
     bool storagePermanentlyDenied = false;
 
-    if (await Permission.manageExternalStorage.isGranted || await Permission.storage.isGranted) {
+    if (await Permission.manageExternalStorage.isGranted ||
+        await Permission.storage.isGranted) {
       hasStorage = true;
     } else {
       final manageStatus = await Permission.manageExternalStorage.request();
@@ -56,81 +54,22 @@ class TransferCubit extends Cubit<TransferState> {
         if (storageStatus.isGranted) {
           hasStorage = true;
         } else {
-          storagePermanentlyDenied = manageStatus.isPermanentlyDenied || storageStatus.isPermanentlyDenied;
+          storagePermanentlyDenied =
+              manageStatus.isPermanentlyDenied ||
+              storageStatus.isPermanentlyDenied;
         }
       }
     }
 
     if (!hasStorage) {
-      if (storagePermanentlyDenied && context.mounted) {
-        final proceed = await showDialog<bool>(
-          context: context,
-          barrierDismissible: false,
-          builder: (dialogContext) => AlertDialog(
-            backgroundColor: AppColors.dialogBackground,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            content: const Text(
-              "Storage access is required to send and receive files. Please enable it in Settings.",
-              style: TextStyle(color: Colors.white),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text(
-                  "Cancel",
-                  style: TextStyle(color: Colors.white70),
-                ),
-              ),
-              TextButton(
-                onPressed: () {
-                  openAppSettings();
-                  Navigator.pop(dialogContext, true);
-                },
-                child: const Text(
-                  "Open Settings",
-                  style: TextStyle(color: Colors.blue),
-                ),
-              ),
-            ],
-          ),
-        );
-        
-        if (proceed == false) {
-          scaffoldMessenger.clearSnackBars();
-          scaffoldMessenger.showSnackBar(
-            SnackBar(
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: const Color(0xFF1E1E2E),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(15),
-              ),
-              margin: const EdgeInsets.all(12),
-              content: const Text(
-                "Error: Storage permission is strictly required to transfer files.",
-                style: TextStyle(color: Colors.white),
-              ),
-              duration: const Duration(seconds: 5),
-            ),
-          );
-        }
+      if (storagePermanentlyDenied) {
+        emit(state.copyWith(showStorageSettingsDialog: true));
         return false;
       } else {
-        scaffoldMessenger.clearSnackBars();
-        scaffoldMessenger.showSnackBar(
-          SnackBar(
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: const Color(0xFF1E1E2E),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(15),
-            ),
-            margin: const EdgeInsets.all(12),
-            content: const Text(
-              "Error: Storage permission is strictly required to transfer files.",
-              style: TextStyle(color: Colors.white),
-            ),
-            duration: const Duration(seconds: 5),
+        emit(
+          state.copyWith(
+            errorMessage:
+                "Error: Storage permission is strictly required to transfer files.",
           ),
         );
         return false;
@@ -143,118 +82,49 @@ class TransferCubit extends Cubit<TransferState> {
       notifStatus = await Permission.notification.request();
     }
 
-    if (notifStatus.isPermanentlyDenied && context.mounted) {
-      final proceed = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) => AlertDialog(
-          backgroundColor: AppColors.dialogBackground,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          content: const Text(
-            "Notifications are required to keep the transfer alive in the background. Please enable them in Settings.",
-            style: TextStyle(color: Colors.white),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text(
-                "Cancel",
-                style: TextStyle(color: Colors.white70),
-              ),
-            ),
-            TextButton(
-              onPressed: () {
-                openAppSettings();
-                Navigator.pop(dialogContext, true);
-              },
-              child: const Text(
-                "Open Settings",
-                style: TextStyle(color: Colors.blue),
-              ),
-            ),
-          ],
+    if (notifStatus.isPermanentlyDenied) {
+      _notifCompleter = Completer<bool>();
+      emit(state.copyWith(showNotificationWarningDialog: true));
+      bool proceed = await _notifCompleter!.future;
+      if (!proceed) return false;
+      showedWarning = true;
+      emit(
+        state.copyWith(
+          errorMessage:
+              "Warning: Transfer may stop if the app is minimized without notifications.",
         ),
       );
-
-      if (proceed == false) {
-        showedWarning = true;
-        scaffoldMessenger.clearSnackBars();
-        scaffoldMessenger.showSnackBar(
-          SnackBar(
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: const Color(0xFF1E1E2E),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(15),
-            ),
-            margin: const EdgeInsets.all(12),
-            content: const Text(
-              "Warning: Transfer may stop if the app is minimized without notifications.",
-              style: TextStyle(color: Colors.white),
-            ),
-            duration: const Duration(seconds: 5),
-          ),
-        );
-      } else if (proceed == true) {
-        return false;
-      }
     } else if (!notifStatus.isGranted &&
         notifStatus != PermissionStatus.permanentlyDenied) {
       return false;
     }
 
-    // 2. Battery Optimization Check (Fire-and-forget Aysnc to prevent blocking transfer init)
-    _triggerBatteryCheck(showedWarning, scaffoldMessenger);
+    // 2. Battery Optimization Check (Fire-and-forget Async to prevent blocking transfer init)
+    _triggerBatteryCheck(showedWarning);
     return true;
   }
 
-  Future<void> _triggerBatteryCheck(
-    bool showedWarning,
-    ScaffoldMessengerState scaffoldMessenger,
-  ) async {
+  Future<void> _triggerBatteryCheck(bool showedWarning) async {
     bool isIgnoring = await Permission.ignoreBatteryOptimizations.isGranted;
     if (!isIgnoring) {
-      // If warning shown (duration 5s), wait 5.5s to show battery check exactly after it fades
-      // Otherwise, delay slightly (0.5s) for visual separation from system dialogs
       final delay = showedWarning
           ? const Duration(milliseconds: 2000)
           : const Duration(milliseconds: 500);
       await Future.delayed(delay);
 
-      scaffoldMessenger.clearSnackBars();
-      scaffoldMessenger.showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFF1E1E2E),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(15),
-          ),
-          margin: const EdgeInsets.all(12),
-          content: const Text(
-            "For faster speeds and stable background transfer, consider disabling battery optimization.",
-            style: TextStyle(color: Colors.white),
-          ),
-          action: SnackBarAction(
-            label: "DISABLE",
-            textColor: Colors.indigoAccent,
-            onPressed: () async {
-              await Permission.ignoreBatteryOptimizations.request();
-            },
-          ),
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      if (isClosed || (!state.isReceiving && !state.isTransferring)) {
+        return;
+      }
+
+      emit(state.copyWith(showBatteryOptimizationSnackBar: true));
     }
   }
 
-  void _dismissSnackbar() {
-    if (_lastContext != null && _lastContext!.mounted) {
-      ScaffoldMessenger.of(_lastContext!).hideCurrentSnackBar();
-    }
-  }
-
-  Future<void> _startForegroundService(String title, String text, {NotificationButton? button}) async {
+  Future<void> _startForegroundService(
+    String title,
+    String text, {
+    NotificationButton? button,
+  }) async {
     if (Platform.isAndroid) {
       final safeTitle = title.isEmpty ? AppConstants.appName : title;
       final safeText = text.isEmpty ? "Running..." : text;
@@ -287,29 +157,36 @@ class TransferCubit extends Cubit<TransferState> {
     emit(state.copyWith(targetIp: ip));
   }
 
+  void clearFeedback() {
+    emit(state.copyWith(clearFeedback: true));
+  }
+
   void stopReceiver() {
-    _dismissSnackbar();
     _receiver.stop();
     emit(
       state.copyWith(
         isReceiving: false,
         isTransferring: false,
+        clearFeedback: true,
         model: TransferModel(status: "Receiver Stopped"),
       ),
     );
     _stopForegroundService();
   }
 
-  Future<void> startReceiver({required BuildContext context}) async {
+  Future<void> startReceiver() async {
     if (state.receiveFolder == null) return;
 
-    if (!await _prepareRequirements(context)) return;
+    if (!await _prepareRequirements()) return;
 
     emit(state.copyWith(isReceiving: true, isTransferring: false));
     await _startForegroundService(
       AppConstants.appName,
       "Waiting for incoming files...",
-      button: const NotificationButton(id: 'stopReceivingButton', text: 'Stop Receiving'),
+      button: const NotificationButton(
+        id: 'stopReceivingButton',
+        text: 'Stop Receiving',
+      ),
     );
 
     _receiver.startReceiver(
@@ -339,17 +216,27 @@ class TransferCubit extends Cubit<TransferState> {
             notificationText:
                 '${model.transferred.toStringAsFixed(2)} MB $speedStr - ${model.status}',
             notificationButtons: [
-              const NotificationButton(id: 'stopReceivingButton', text: 'Stop Receiving'),
+              const NotificationButton(
+                id: 'stopReceivingButton',
+                text: 'Stop Receiving',
+              ),
             ],
           );
         }
       },
-      onRequestAuth: (senderIp, count, size) => showAuthDialog(
-        context: context,
-        senderIp: senderIp,
-        fileCount: count,
-        totalSizeMB: size,
-      ),
+      onRequestAuth: (senderIp, count, size) {
+        _authCompleter = Completer<bool>();
+        emit(
+          state.copyWith(
+            authRequest: AuthRequest(
+              senderIp: senderIp,
+              fileCount: count,
+              totalSizeMB: size,
+            ),
+          ),
+        );
+        return _authCompleter!.future;
+      },
       onDone: () {
         if (Platform.isAndroid) {
           FlutterForegroundTask.updateService(
@@ -361,20 +248,33 @@ class TransferCubit extends Cubit<TransferState> {
     );
   }
 
-  Future<void> sendData({
-    required BuildContext context,
-    required String path,
-    required bool isFolder,
-  }) async {
+  void resolveAuth(bool accept) {
+    if (_authCompleter != null && !_authCompleter!.isCompleted) {
+      _authCompleter!.complete(accept);
+    }
+    emit(state.copyWith(clearAuthRequest: true));
+  }
+
+  void resolveNotificationWarning(bool proceed) {
+    if (_notifCompleter != null && !_notifCompleter!.isCompleted) {
+      _notifCompleter!.complete(proceed);
+    }
+    emit(state.copyWith(clearFeedback: true));
+  }
+
+  Future<void> sendData({required String path, required bool isFolder}) async {
     if (state.isTransferring || state.targetIp.trim().isEmpty) return;
 
-    if (!await _prepareRequirements(context)) return;
+    if (!await _prepareRequirements()) return;
 
     emit(state.copyWith(isTransferring: true));
     await _startForegroundService(
       AppConstants.appName,
       "Sending files...",
-      button: const NotificationButton(id: 'cancelSendingButton', text: 'Cancel Sending'),
+      button: const NotificationButton(
+        id: 'cancelSendingButton',
+        text: 'Cancel Sending',
+      ),
     );
 
     _sender.sendData(
@@ -392,14 +292,18 @@ class TransferCubit extends Cubit<TransferState> {
             notificationText:
                 '${model.transferred.toStringAsFixed(2)} MB $speedStr - ${model.status}',
             notificationButtons: [
-              const NotificationButton(id: 'cancelSendingButton', text: 'Cancel Sending'),
+              const NotificationButton(
+                id: 'cancelSendingButton',
+                text: 'Cancel Sending',
+              ),
             ],
           );
         }
       },
       onDone: () {
-        if (!isClosed) emit(state.copyWith(isTransferring: false));
-        _dismissSnackbar();
+        if (!isClosed) {
+          emit(state.copyWith(isTransferring: false, clearFeedback: true));
+        }
         _stopForegroundService();
       },
     );
@@ -414,11 +318,11 @@ class TransferCubit extends Cubit<TransferState> {
   }
 
   void cancelSending() {
-    _dismissSnackbar();
     _sender.cancel();
     emit(
       state.copyWith(
         isTransferring: false,
+        clearFeedback: true,
         model: TransferModel(status: "Transfer Cancelled"),
       ),
     );

@@ -7,6 +7,7 @@ import '../../core/app_colors.dart';
 import '../../core/responsive_utils.dart';
 import 'daphq_card.dart';
 import 'animated_press_button.dart';
+import 'custom_snackbar.dart';
 
 class ReceiverSection extends StatelessWidget {
   final bool isDesktop;
@@ -91,18 +92,13 @@ class ReceiverSection extends StatelessWidget {
                               context.read<TransferCubit>().stopReceiver();
                             } else {
                               if (state.receiveFolder == null) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text(
-                                      "Please select a receive folder first!",
-                                    ),
-                                  ),
+                                CustomSnackBar.show(
+                                  context,
+                                  message: "Please select a receive folder first!",
                                 );
                                 return;
                               }
-                              context.read<TransferCubit>().startReceiver(
-                                context: context,
-                              );
+                              context.read<TransferCubit>().startReceiver();
                             }
                           },
                     gradientColors: state.isReceiving

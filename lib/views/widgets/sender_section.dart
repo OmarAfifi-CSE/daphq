@@ -7,6 +7,7 @@ import '../../core/app_colors.dart';
 import '../../core/responsive_utils.dart';
 import 'daphq_card.dart';
 import 'animated_press_button.dart';
+import 'custom_snackbar.dart';
 
 class SenderSection extends StatefulWidget {
   final bool isDesktop;
@@ -214,13 +215,14 @@ class SenderSectionState extends State<SenderSection> {
     if (path != null) {
       if (cubit.state.targetIp.trim().isEmpty) {
         if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Please enter target IP!")),
+        CustomSnackBar.show(
+          context,
+          message: "Please enter target IP!",
         );
         return;
       }
       if (!context.mounted) return;
-      cubit.sendData(context: context, path: path, isFolder: isFolder);
+      cubit.sendData(path: path, isFolder: isFolder);
     }
   }
 }
