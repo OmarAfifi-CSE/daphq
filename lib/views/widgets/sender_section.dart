@@ -60,106 +60,159 @@ class SenderSectionState extends State<SenderSection> {
               previous.isReceiving != current.isReceiving ||
               previous.targetIp != current.targetIp,
           builder: (context, state) {
-            return DaphqCard(
-              isDesktop: isDesktop,
-              child: Column(
-                children: [
-                  TextField(
-                    controller: _ipController,
-                    cursorColor: AppColors.primary,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 14.0.rx(isDesktop),
-                      fontWeight: FontWeight.w500,
-                    ),
-                    decoration: InputDecoration(
-                      labelText: "Receiver IP Address (e.g. 192.168.x.x)",
-                      labelStyle: TextStyle(
-                        color: Colors.white60,
+            return AnimatedSize(
+              duration: const Duration(milliseconds: 350),
+              curve: Curves.easeInOutCubic,
+              alignment: Alignment.topCenter,
+              child: DaphqCard(
+                isDesktop: isDesktop,
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: _ipController,
+                      cursorColor: AppColors.primary,
+                      style: TextStyle(
+                        color: Colors.white,
                         fontSize: 14.0.rx(isDesktop),
+                        fontWeight: FontWeight.w500,
                       ),
-                      helperText: "Please update this to the exact Receiver IP",
-                      helperStyle: TextStyle(
-                        color: Colors.white38,
-                        fontStyle: FontStyle.italic,
-                        fontSize: 12.0.rx(isDesktop),
+                      decoration: InputDecoration(
+                        labelText: "Receiver IP Address (e.g. 192.168.x.x)",
+                        labelStyle: TextStyle(
+                          color: Colors.white60,
+                          fontSize: 14.0.rx(isDesktop),
+                        ),
+                        helperText:
+                            "Please update this to the exact Receiver IP",
+                        helperStyle: TextStyle(
+                          color: Colors.white38,
+                          fontStyle: FontStyle.italic,
+                          fontSize: 12.0.rx(isDesktop),
+                        ),
+                        filled: true,
+                        fillColor: Colors.black.withAlpha(50),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(
+                            10.0.rr(isDesktop),
+                          ),
+                          borderSide: const BorderSide(color: Colors.white12),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(
+                            10.0.rr(isDesktop),
+                          ),
+                          borderSide: const BorderSide(
+                            color: AppColors.primary,
+                          ),
+                        ),
+                        disabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(
+                            10.0.rr(isDesktop),
+                          ),
+                          borderSide: const BorderSide(color: Colors.white10),
+                        ),
                       ),
-                      filled: true,
-                      fillColor: Colors.black.withAlpha(50),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10.0.rr(isDesktop)),
-                        borderSide: const BorderSide(color: Colors.white12),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10.0.rr(isDesktop)),
-                        borderSide: const BorderSide(color: AppColors.primary),
-                      ),
-                      disabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10.0.rr(isDesktop)),
-                        borderSide: const BorderSide(color: Colors.white10),
-                      ),
+                      enabled: !state.isTransferring,
                     ),
-                    enabled: !state.isTransferring,
-                  ),
-                  SizedBox(height: 20.0.rh(isDesktop)),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildSendButton(
-                          context,
-                          Icons.file_copy,
-                          "Send File",
-                          false,
-                          state,
-                          isDesktop,
+                    SizedBox(height: 20.0.rh(isDesktop)),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildSendButton(
+                            context,
+                            Icons.file_copy,
+                            "Send File",
+                            false,
+                            state,
+                            isDesktop,
+                          ),
                         ),
-                      ),
-                      SizedBox(width: 15.0.rw(isDesktop)),
-                      Expanded(
-                        child: _buildSendButton(
-                          context,
-                          Icons.folder,
-                          "Send Folder",
-                          true,
-                          state,
-                          isDesktop,
+                        SizedBox(width: 15.0.rw(isDesktop)),
+                        Expanded(
+                          child: _buildSendButton(
+                            context,
+                            Icons.folder,
+                            "Send Folder",
+                            true,
+                            state,
+                            isDesktop,
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                  if (state.isTransferring && !state.isReceiving) ...[
-                    SizedBox(height: 15.0.rh(isDesktop)),
-                    AnimatedPressButton(
-                      isDesktop: isDesktop,
-                      onPressed: () {
-                        context.read<TransferCubit>().cancelSending();
-                      },
-                      gradientColors: const [
-                        AppColors.danger,
-                        Color(0xFFE57373),
                       ],
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.cancel,
-                            color: Colors.white,
-                            size: 24.0.rx(isDesktop),
-                          ),
-                          SizedBox(width: 8.0.rw(isDesktop)),
-                          Text(
-                            "Cancel Transfer",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 16.0.rx(isDesktop),
-                              fontWeight: FontWeight.bold,
+                    ),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 350),
+                      switchInCurve: Curves.easeInOutCubic,
+                      switchOutCurve: Curves.easeInOutCubic,
+                      layoutBuilder:
+                          (
+                            Widget? currentChild,
+                            List<Widget> previousChildren,
+                          ) {
+                            return Stack(
+                              alignment: Alignment.topCenter,
+                              children: <Widget>[
+                                ...previousChildren,
+                                // ignore: use_null_aware_elements
+                                if (currentChild != null) currentChild,
+                              ],
+                            );
+                          },
+                      transitionBuilder:
+                          (Widget child, Animation<double> animation) {
+                            return FadeTransition(
+                              opacity: animation,
+                              child: SizeTransition(
+                                sizeFactor: animation,
+                                axisAlignment: -1.0,
+                                child: child,
+                              ),
+                            );
+                          },
+                      child: (state.isTransferring && !state.isReceiving)
+                          ? Column(
+                              key: const ValueKey('cancel_btn'),
+                              children: [
+                                SizedBox(height: 15.0.rh(isDesktop)),
+                                AnimatedPressButton(
+                                  isDesktop: isDesktop,
+                                  onPressed: () {
+                                    context
+                                        .read<TransferCubit>()
+                                        .cancelSending();
+                                  },
+                                  gradientColors: const [
+                                    AppColors.danger,
+                                    Color(0xFFE57373),
+                                  ],
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.cancel,
+                                        color: Colors.white,
+                                        size: 24.0.rx(isDesktop),
+                                      ),
+                                      SizedBox(width: 8.0.rw(isDesktop)),
+                                      Text(
+                                        "Cancel Transfer",
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 16.0.rx(isDesktop),
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            )
+                          : const SizedBox.shrink(
+                              key: ValueKey('empty_cancel'),
                             ),
-                          ),
-                        ],
-                      ),
                     ),
                   ],
-                ],
+                ),
               ),
             );
           },
@@ -215,10 +268,7 @@ class SenderSectionState extends State<SenderSection> {
     if (path != null) {
       if (cubit.state.targetIp.trim().isEmpty) {
         if (!context.mounted) return;
-        CustomSnackBar.show(
-          context,
-          message: "Please enter target IP!",
-        );
+        CustomSnackBar.show(context, message: "Please enter target IP!");
         return;
       }
       if (!context.mounted) return;

@@ -16,100 +16,128 @@ class TransferProgressView extends StatelessWidget {
       buildWhen: (previous, current) {
         final p = previous.model;
         final c = current.model;
-        return p.progress != c.progress || 
-               p.speed != c.speed || 
-               p.status != c.status || 
-               p.transferred != c.transferred || 
-               p.fileName != c.fileName;
+        return p.progress != c.progress ||
+            p.speed != c.speed ||
+            p.status != c.status ||
+            p.transferred != c.transferred ||
+            p.fileName != c.fileName;
       },
       builder: (context, state) {
         final model = state.model;
-        return Container(
-          padding: EdgeInsets.all(25.0.rw(isDesktop)),
-          decoration: BoxDecoration(
-            color: AppColors.cardOverlay,
-            borderRadius: BorderRadius.circular(25.0.rr(isDesktop)),
-            border: Border.all(color: Colors.white12),
-          ),
-          child: Column(
-            children: [
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 300),
-                transitionBuilder: (Widget child, Animation<double> animation) {
-                  return FadeTransition(opacity: animation, child: child);
-                },
-                child: Text(
-                  model.status,
-                  key: ValueKey<String>(model.status),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: AppColors.primary,
-                    fontSize: 18.0.rx(isDesktop),
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              SizedBox(height: 15.0.rh(isDesktop)),
-              TweenAnimationBuilder<double>(
-                tween: Tween<double>(begin: 0, end: model.speed),
-                duration: const Duration(milliseconds: 500),
-                curve: Curves.easeOutCubic,
-                builder: (context, value, child) {
-                  return Text(
-                    "${value.toStringAsFixed(1)} MB/s",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 42.0.rx(isDesktop),
-                      fontWeight: FontWeight.bold,
-                      shadows: [
-                        Shadow(
-                          color: AppColors.primary.withAlpha(model.speed > 0 ? 150 : 0),
-                          blurRadius: 20,
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-              if (model.avgSpeed != null)
-                Padding(
-                  padding: EdgeInsets.only(top: 10.0.rh(isDesktop)),
-                  child: Text(
-                    "Avg: ${model.avgSpeed} MB/s | Time: ${model.totalTime}s",
-                    style: TextStyle(
-                      color: Colors.greenAccent,
-                      fontSize: 16.0.rx(isDesktop),
-                    ),
-                  ),
-                ),
-              Divider(color: Colors.white10, height: 40.0.rh(isDesktop)),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: _dataTile(
-                      "Current File",
-                      model.fileName.isEmpty ? "Ready" : model.fileName,
-                      isFileName: true,
-                    ),
-                  ),
-                  SizedBox(width: 15.0.rw(isDesktop)),
-                  Expanded(
-                    child: TweenAnimationBuilder<double>(
-                      tween: Tween<double>(begin: 0, end: model.transferred),
-                      duration: const Duration(milliseconds: 500),
-                      curve: Curves.easeOutCubic,
-                      builder: (context, value, child) {
-                        return _dataTile(
-                          "Data Size",
-                          "${value.toStringAsFixed(1)} MB",
+        return AnimatedSize(
+          duration: const Duration(milliseconds: 350),
+          alignment: Alignment.topCenter,
+          child: Container(
+            padding: EdgeInsets.all(25.0.rw(isDesktop)),
+            decoration: BoxDecoration(
+              color: AppColors.cardOverlay,
+              borderRadius: BorderRadius.circular(25.0.rr(isDesktop)),
+              border: Border.all(color: Colors.white12),
+            ),
+            child: Column(
+              children: [
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 350),
+                  layoutBuilder:
+                      (Widget? currentChild, List<Widget> previousChildren) {
+                        return Stack(
+                          alignment: Alignment.topCenter,
+                          children: <Widget>[
+                            ...previousChildren,
+                            ?currentChild,
+                          ],
                         );
                       },
+                  transitionBuilder:
+                      (Widget child, Animation<double> animation) {
+                        return FadeTransition(
+                          opacity: animation,
+                          child: SizeTransition(
+                            sizeFactor: animation,
+                            axisAlignment: -1.0,
+                            child: child,
+                          ),
+                        );
+                      },
+                  child: Container(
+                    key: ValueKey<String>(model.status),
+                    width: double.infinity,
+                    alignment: Alignment.center,
+                    child: Text(
+                      model.status,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: AppColors.primary,
+                        fontSize: 18.0.rx(isDesktop),
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
-                ],
-              ),
-            ],
+                ),
+                SizedBox(height: 15.0.rh(isDesktop)),
+                TweenAnimationBuilder<double>(
+                  tween: Tween<double>(begin: 0, end: model.speed),
+                  duration: const Duration(milliseconds: 500),
+                  curve: Curves.easeOutCubic,
+                  builder: (context, value, child) {
+                    return Text(
+                      "${value.toStringAsFixed(1)} MB/s",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 42.0.rx(isDesktop),
+                        fontWeight: FontWeight.bold,
+                        shadows: [
+                          Shadow(
+                            color: AppColors.primary.withAlpha(
+                              model.speed > 0 ? 150 : 0,
+                            ),
+                            blurRadius: 20,
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+                if (model.avgSpeed != null)
+                  Padding(
+                    padding: EdgeInsets.only(top: 10.0.rh(isDesktop)),
+                    child: Text(
+                      "Avg: ${model.avgSpeed} MB/s | Time: ${model.totalTime}s",
+                      style: TextStyle(
+                        color: Colors.greenAccent,
+                        fontSize: 16.0.rx(isDesktop),
+                      ),
+                    ),
+                  ),
+                Divider(color: Colors.white10, height: 40.0.rh(isDesktop)),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: _dataTile(
+                        "Current File",
+                        model.fileName.isEmpty ? "Ready" : model.fileName,
+                        isFileName: true,
+                      ),
+                    ),
+                    SizedBox(width: 15.0.rw(isDesktop)),
+                    Expanded(
+                      child: TweenAnimationBuilder<double>(
+                        tween: Tween<double>(begin: 0, end: model.transferred),
+                        duration: const Duration(milliseconds: 500),
+                        curve: Curves.easeOutCubic,
+                        builder: (context, value, child) {
+                          return _dataTile(
+                            "Data Size",
+                            "${value.toStringAsFixed(1)} MB",
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         );
       },

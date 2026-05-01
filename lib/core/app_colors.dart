@@ -27,4 +27,7 @@ class AppColors {
   /// Semantic colors
   static const Color success = Colors.green;
   static const Color danger = Colors.red;
+
+  /// Snackbar background (high contrast)
+  static const Color snackBarBackground = Color(0xFF2B2D42);
 }

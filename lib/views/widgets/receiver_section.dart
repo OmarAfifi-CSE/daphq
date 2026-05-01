@@ -94,7 +94,8 @@ class ReceiverSection extends StatelessWidget {
                               if (state.receiveFolder == null) {
                                 CustomSnackBar.show(
                                   context,
-                                  message: "Please select a receive folder first!",
+                                  message:
+                                      "Please select a receive folder first!",
                                 );
                                 return;
                               }
@@ -109,7 +110,9 @@ class ReceiverSection extends StatelessWidget {
                       children: [
                         Icon(
                           state.isReceiving ? Icons.stop : Icons.wifi_tethering,
-                          color: state.isReceiving ? Colors.white : Colors.black87,
+                          color: state.isReceiving
+                              ? Colors.white
+                              : Colors.black87,
                           size: 24.0.rx(isDesktop),
                         ),
                         SizedBox(width: 8.0.rw(isDesktop)),
@@ -118,7 +121,9 @@ class ReceiverSection extends StatelessWidget {
                               ? "Stop Receiver"
                               : "Start Receiver Server",
                           style: TextStyle(
-                            color: state.isReceiving ? Colors.white : Colors.black87,
+                            color: state.isReceiving
+                                ? Colors.white
+                                : Colors.black87,
                             fontSize: 16.0.rx(isDesktop),
                             fontWeight: FontWeight.bold,
                           ),
