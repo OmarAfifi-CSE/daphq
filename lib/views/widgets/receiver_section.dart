@@ -4,10 +4,13 @@ import 'package:file_picker/file_picker.dart';
 import '../../cubits/transfer_cubit.dart';
 import '../../cubits/transfer_state.dart';
 import '../../core/app_colors.dart';
+import '../../core/app_constants.dart';
 import '../../core/responsive_utils.dart';
 import 'daphq_card.dart';
 import 'animated_press_button.dart';
 import 'custom_snackbar.dart';
+import 'section_title.dart';
+import 'status_text.dart';
 
 class ReceiverSection extends StatelessWidget {
   final bool isDesktop;
@@ -19,14 +22,7 @@ class ReceiverSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          "Receiver Mode",
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 20.0.rx(isDesktop),
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+        SectionTitle(title: AppConstants.receiverMode, isDesktop: isDesktop),
         SizedBox(height: 10.0.rh(isDesktop)),
         BlocBuilder<TransferCubit, TransferState>(
           buildWhen: (previous, current) =>
@@ -41,23 +37,13 @@ class ReceiverSection extends StatelessWidget {
                   Row(
                     children: [
                       Expanded(
-                        child: Tooltip(
-                          message:
-                              state.receiveFolder ??
-                              "No receive folder selected",
-                          child: Text(
-                            state.receiveFolder == null
-                                ? "No receive folder selected"
-                                : "Save to: ${state.receiveFolder}",
-                            style: TextStyle(
-                              color: state.receiveFolder == null
-                                  ? Colors.redAccent
-                                  : Colors.greenAccent,
-                              fontSize: 14.0.rx(isDesktop),
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                        child: StatusText(
+                          text: state.receiveFolder == null
+                              ? AppConstants.noFolderSelected
+                              : "${AppConstants.saveToPrefix}${state.receiveFolder}",
+                          isError: state.receiveFolder == null,
+                          isDesktop: isDesktop,
+                          tooltip: state.receiveFolder,
                         ),
                       ),
                       IconButton(
@@ -95,8 +81,7 @@ class ReceiverSection extends StatelessWidget {
                               if (state.receiveFolder == null) {
                                 CustomSnackBar.show(
                                   context,
-                                  message:
-                                      "Please select a receive folder first!",
+                                  message: AppConstants.selectFolderFirst,
                                 );
                                 return;
                               }
@@ -104,8 +89,8 @@ class ReceiverSection extends StatelessWidget {
                             }
                           },
                     gradientColors: state.isReceiving
-                        ? const [AppColors.danger, Color(0xFFE57373)]
-                        : const [AppColors.success, Color(0xFF81C784)],
+                        ? const [AppColors.danger, AppColors.dangerLight]
+                        : const [AppColors.success, AppColors.successLight],
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -119,8 +104,8 @@ class ReceiverSection extends StatelessWidget {
                         SizedBox(width: 8.0.rw(isDesktop)),
                         Text(
                           state.isReceiving
-                              ? "Stop Receiver"
-                              : "Start Receiver Server",
+                              ? AppConstants.stopReceiver
+                              : AppConstants.startReceiver,
                           style: TextStyle(
                             color: state.isReceiving
                                 ? Colors.white

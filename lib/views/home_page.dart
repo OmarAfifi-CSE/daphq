@@ -77,14 +77,14 @@ class _HomePageState extends State<HomePage> {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 content: const Text(
-                  "Storage access is required to send and receive files. Please enable it in Settings.",
+                  AppConstants.storagePermissionRequired,
                   style: TextStyle(color: Colors.white),
                 ),
                 actions: [
                   TextButton(
                     onPressed: () => Navigator.pop(dialogContext),
                     child: const Text(
-                      "Cancel",
+                      AppConstants.cancel,
                       style: TextStyle(color: Colors.white70),
                     ),
                   ),
@@ -94,7 +94,7 @@ class _HomePageState extends State<HomePage> {
                       Navigator.pop(dialogContext);
                     },
                     child: const Text(
-                      "Open Settings",
+                      AppConstants.openSettings,
                       style: TextStyle(color: Colors.blue),
                     ),
                   ),
@@ -103,7 +103,7 @@ class _HomePageState extends State<HomePage> {
             );
             cubit.clearFeedback();
           }
-
+ 
           if (state.showNotificationWarningDialog) {
             showDialog(
               context: context,
@@ -114,7 +114,7 @@ class _HomePageState extends State<HomePage> {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 content: const Text(
-                  "Notifications are permanently denied. Transfers may stop if the app is minimized without notifications.",
+                  AppConstants.notificationPermissionWarning,
                   style: TextStyle(color: Colors.white),
                 ),
                 actions: [
@@ -124,7 +124,7 @@ class _HomePageState extends State<HomePage> {
                       cubit.resolveNotificationWarning(true);
                     },
                     child: const Text(
-                      "Proceed Anyway",
+                      AppConstants.proceedAnyway,
                       style: TextStyle(color: Colors.white70),
                     ),
                   ),
@@ -135,7 +135,7 @@ class _HomePageState extends State<HomePage> {
                       cubit.resolveNotificationWarning(false);
                     },
                     child: const Text(
-                      "Open Settings",
+                      AppConstants.openSettings,
                       style: TextStyle(color: Colors.blue),
                     ),
                   ),

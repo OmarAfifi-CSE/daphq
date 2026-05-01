@@ -23,11 +23,14 @@ class AppColors {
 
   /// Primary action color
   static const Color primary = Colors.blueAccent;
-  
+
   /// Semantic colors
   static const Color success = Colors.green;
+  static const Color successLight = Color(0xFF81C784);
   static const Color danger = Colors.red;
+  static const Color dangerLight = Color(0xFFE57373);
+  static const Color primaryLight = Color(0xFF64B5F6);
 
-  /// Snackbar background (high contrast)
+  /// Snackbar background
   static const Color snackBarBackground = Color(0xFF2B2D42);
 }

@@ -4,10 +4,12 @@ import 'package:file_picker/file_picker.dart';
 import '../../cubits/transfer_cubit.dart';
 import '../../cubits/transfer_state.dart';
 import '../../core/app_colors.dart';
+import '../../core/app_constants.dart';
 import '../../core/responsive_utils.dart';
 import 'daphq_card.dart';
 import 'animated_press_button.dart';
 import 'custom_snackbar.dart';
+import 'section_title.dart';
 
 class SenderSection extends StatefulWidget {
   final bool isDesktop;
@@ -45,14 +47,7 @@ class SenderSectionState extends State<SenderSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          "Sender Mode",
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 20.0.rx(isDesktop),
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+        SectionTitle(title: AppConstants.senderMode, isDesktop: isDesktop),
         SizedBox(height: 10.0.rh(isDesktop)),
         BlocBuilder<TransferCubit, TransferState>(
           buildWhen: (previous, current) =>
@@ -77,13 +72,12 @@ class SenderSectionState extends State<SenderSection> {
                         fontWeight: FontWeight.w500,
                       ),
                       decoration: InputDecoration(
-                        labelText: "Receiver IP Address (e.g. 192.168.x.x)",
+                        labelText: AppConstants.receiverIpLabel,
                         labelStyle: TextStyle(
                           color: Colors.white60,
                           fontSize: 14.0.rx(isDesktop),
                         ),
-                        helperText:
-                            "Please update this to the exact Receiver IP",
+                        helperText: AppConstants.receiverIpHelper,
                         helperStyle: TextStyle(
                           color: Colors.white38,
                           fontStyle: FontStyle.italic,
@@ -121,7 +115,7 @@ class SenderSectionState extends State<SenderSection> {
                           child: _buildSendButton(
                             context,
                             Icons.file_copy,
-                            "Send File",
+                            AppConstants.sendFile,
                             false,
                             state,
                             isDesktop,
@@ -132,7 +126,7 @@ class SenderSectionState extends State<SenderSection> {
                           child: _buildSendButton(
                             context,
                             Icons.folder,
-                            "Send Folder",
+                            AppConstants.sendFolder,
                             true,
                             state,
                             isDesktop,
@@ -153,8 +147,7 @@ class SenderSectionState extends State<SenderSection> {
                               alignment: Alignment.topCenter,
                               children: <Widget>[
                                 ...previousChildren,
-                                // ignore: use_null_aware_elements
-                                if (currentChild != null) currentChild,
+                                ?currentChild,
                               ],
                             );
                           },
@@ -184,7 +177,7 @@ class SenderSectionState extends State<SenderSection> {
                                   },
                                   gradientColors: const [
                                     AppColors.danger,
-                                    Color(0xFFE57373),
+                                    AppColors.dangerLight,
                                   ],
                                   child: Row(
                                     mainAxisAlignment: MainAxisAlignment.center,
@@ -196,7 +189,7 @@ class SenderSectionState extends State<SenderSection> {
                                       ),
                                       SizedBox(width: 8.0.rw(isDesktop)),
                                       Text(
-                                        "Cancel Transfer",
+                                        AppConstants.cancelTransfer,
                                         style: TextStyle(
                                           color: Colors.white,
                                           fontSize: 16.0.rx(isDesktop),
@@ -233,7 +226,7 @@ class SenderSectionState extends State<SenderSection> {
     return AnimatedPressButton(
       isDesktop: isDesktop,
       onPressed: state.isTransferring ? null : () => _pick(context, isFolder),
-      gradientColors: const [AppColors.primary, Color(0xFF64B5F6)],
+      gradientColors: const [AppColors.primary, AppColors.primaryLight],
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -269,7 +262,7 @@ class SenderSectionState extends State<SenderSection> {
     if (path != null) {
       if (cubit.state.targetIp.trim().isEmpty) {
         if (!context.mounted) return;
-        CustomSnackBar.show(context, message: "Please enter target IP!");
+        CustomSnackBar.show(context, message: AppConstants.enterTargetIp);
         return;
       }
       if (!context.mounted) return;

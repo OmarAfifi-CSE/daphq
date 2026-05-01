@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/app_colors.dart';
+import '../../core/app_constants.dart';
 import '../../core/responsive_utils.dart';
 
 class InstructionsCard extends StatelessWidget {
@@ -29,7 +30,7 @@ class InstructionsCard extends StatelessWidget {
               SizedBox(width: 10.0.rw(isDesktop)),
               Expanded(
                 child: Text(
-                  "How to use for Max Speed",
+                  AppConstants.instructionsTitle,
                   style: TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -40,21 +41,13 @@ class InstructionsCard extends StatelessWidget {
             ],
           ),
           SizedBox(height: 10.0.rh(isDesktop)),
-          _stepText(
-            "1. Connect both devices to the same network (Wi-Fi or Hotspot).",
-          ),
+          _stepText(AppConstants.step1),
           SizedBox(height: 5.0.rh(isDesktop)),
-          _stepText(
-            "2. For max speed, one device should open a 5GHz Hotspot and the other connect to it.",
-          ),
+          _stepText(AppConstants.step2),
           SizedBox(height: 5.0.rh(isDesktop)),
-          _stepText(
-            "3. On the RECEIVER: Select a folder and click 'Start Receiver Server'.",
-          ),
+          _stepText(AppConstants.step3),
           SizedBox(height: 5.0.rh(isDesktop)),
-          _stepText(
-            "4. On the SENDER: Enter the Receiver's IP Address and select what to send.",
-          ),
+          _stepText(AppConstants.step4),
         ],
       ),
     );
