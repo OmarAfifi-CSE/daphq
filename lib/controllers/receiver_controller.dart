@@ -46,6 +46,12 @@ class ReceiverController {
       Object? lastError;
 
       while (attempts < maxAttempts && !_isCancelled) {
+        onUpdate(
+          TransferModel(
+            status:
+                "Initializing Server (Attempt ${attempts + 1}/$maxAttempts)...",
+          ),
+        );
         try {
           // Primary strategy: Bind to all interfaces (0.0.0.0)
           _server = await ServerSocket.bind(
