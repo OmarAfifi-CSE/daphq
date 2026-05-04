@@ -32,17 +32,67 @@ class ReceiverController {
     onRequestAuth,
     required VoidCallback onDone,
   }) async {
+    _isCancelled = false;
     try {
-      if (_server != null) await _server!.close();
-      try {
-        _server = await ServerSocket.bind(
-          InternetAddress.anyIPv4,
-          AppConstants.transferPort,
-          shared: true,
-        );
-      } on SocketException catch (e) {
-        throw "Could not bind server. Are you connected to Wi-Fi? (${e.message})";
+      if (_server != null) {
+        await _server!.close();
+        _server = null;
+        // Small delay to ensure OS releases the port
+        await Future.delayed(const Duration(milliseconds: 200));
       }
+
+      int attempts = 0;
+      const int maxAttempts = 5;
+      Object? lastError;
+
+      while (attempts < maxAttempts && !_isCancelled) {
+        try {
+          // Primary strategy: Bind to all interfaces (0.0.0.0)
+          _server = await ServerSocket.bind(
+            InternetAddress.anyIPv4,
+            AppConstants.transferPort,
+            shared: true,
+          );
+          break; // Success
+        } catch (e) {
+          lastError = e;
+          
+          // Fallback strategy: Try binding to specific available interfaces
+          try {
+            final interfaces = await NetworkInterface.list(
+              type: InternetAddressType.IPv4,
+            );
+            for (var interface in interfaces) {
+              for (var addr in interface.addresses) {
+                if (!addr.isLoopback) {
+                  try {
+                    _server = await ServerSocket.bind(
+                      addr,
+                      AppConstants.transferPort,
+                      shared: true,
+                    );
+                    if (_server != null) break;
+                  } catch (_) {}
+                }
+              }
+              if (_server != null) break;
+            }
+          } catch (_) {}
+
+          if (_server != null) break; // Success via fallback
+
+          attempts++;
+          if (attempts < maxAttempts && !_isCancelled) {
+            await Future.delayed(const Duration(seconds: 1));
+          }
+        }
+      }
+
+      if (_server == null && !_isCancelled) {
+        throw "Could not bind server. Please check your network or Hotspot.\n\nTip: Try turning your Hotspot off and on again to reset the connection. (${lastError is SocketException ? lastError.message : lastError})";
+      }
+
+      if (_isCancelled) return;
       onUpdate(
         TransferModel(
           status: "Receiver Ready\n(Port: ${AppConstants.transferPort})",
@@ -342,7 +392,7 @@ class ReceiverController {
         } else {
           onUpdate(
             TransferModel(
-              status: "Network Error: Please check Wi-Fi connection.",
+              status: "Network Error: Please check network or Hotspot connection.",
             ),
           );
         }
@@ -380,7 +430,7 @@ class ReceiverController {
         msg.contains("connection reset by peer")) {
       return "Transfer cancelled by the other device. Ready & Waiting...";
     } else {
-      return "Network Error: Please check Wi-Fi connection. Ready & Waiting...";
+      return "Network Error: Please check network or Hotspot connection. Ready & Waiting...";
     }
   }
 

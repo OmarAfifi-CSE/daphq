@@ -91,7 +91,7 @@ class SenderController {
         socket.write(header);
         await socket.flush();
       } on SocketException {
-        throw "Connection lost before sending data. Please check Wi-Fi.";
+        throw "Connection lost before sending data. Please check network/Hotspot.";
       }
 
       // Set up listeners for Receiver responses (READY and DONE)
@@ -312,14 +312,14 @@ class SenderController {
     } else if (osError == 101 ||
         osError == 10051 ||
         msg.contains("network is unreachable")) {
-      return "No network connection. Please turn on Wi-Fi or connect to the Hotspot.";
+      return "No network connection. Please turn on Wi-Fi/Hotspot.";
     } else if (osError == 104 ||
         osError == 10054 ||
         osError == 32 ||
         msg.contains("connection reset by peer")) {
       return "Transfer cancelled by the other device.";
     } else {
-      return "Network Error: Please ensure Wi-Fi is connected.";
+      return "Network Error: Please ensure network/Hotspot is connected.";
     }
   }
 }
