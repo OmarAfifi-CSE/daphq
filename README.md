@@ -28,7 +28,7 @@ Whether you're syncing massive folders across your devices or sharing gigabytes 
 
 Daphq is built with a modern, reactive, and highly scalable architecture:
 
-- **Framework**: Developed using **Flutter (Dart)** for true cross-platform compatibility (Android, iOS, Windows, macOS, Linux).
+- **Framework**: Developed using **Flutter (Dart)** for true cross-platform compatibility (Currently: Android, Windows).
 - **State Management**: Implements the **BLoC (Business Logic Component) / Cubit** pattern (`flutter_bloc`). This cleanly decouples the UI from complex network logic, ensuring the application remains highly responsive even under intense data loads.
 - **Background Execution**: Leverages `flutter_foreground_task` on Android to maintain uninterrupted background data synchronization, strictly adhering to modern Android 14/15 Foreground Service data-sync requirements.
 - **Window Management**: Uses `window_manager` for native-feeling desktop experiences, providing flicker-free layouts and optimal UX on desktop environments.
