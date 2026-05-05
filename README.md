@@ -1,7 +1,6 @@
-# Daphq ⚡
-
 <p align="center">
   <img src="assets/logo.png" alt="Daphq Logo" width="150"/>
+  <h1 align="center">Daphq</h1>
 </p>
 
 <p align="center">
@@ -78,7 +77,7 @@ Daphq's performance has been rigorously tested to ensure it pushes hardware to i
 
 | Android UI | Windows Desktop UI |
 | :---: | :---: |
-| <img src="assets/placeholder_android.png" alt="Android Interface" width="250"/> | <img src="assets/placeholder_windows.png" alt="Windows Interface" width="450"/> |
+| <img src="assets/Android-Interface.png" alt="Android Interface" width="250"/> | <img src="assets/Windows-Interface.png" alt="Windows Interface" width="450"/> |
 | *Clean, robust mobile layout with background service tracking.* | *Flicker-free, responsive desktop experience.* |
 
 ## 🔬 Under the Hood (Technical Audit Highlights)
