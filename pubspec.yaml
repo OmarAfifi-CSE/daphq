@@ -1,5 +1,5 @@
 name: daphq
-description: "Cross-platform file transfer app over local Wi-Fi/Hotspot."
+description: "A high-performance, raw TCP-based file transfer utility for seamless cross-platform data synchronization."
 publish_to: 'none'
 
 version: 1.0.0+1
