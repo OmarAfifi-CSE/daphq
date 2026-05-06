@@ -5,6 +5,9 @@ class AppConstants {
   /// TCP port used for all file transfers.
   static const int transferPort = 62004;
 
+  /// UDP port used for device discovery.
+  static const int discoveryPort = 62005;
+
   /// Global branding string.
   static const String appName = 'Daphq';
 
@@ -34,6 +37,9 @@ class AppConstants {
   /// Authorization response timeout (minutes).
   static const int authTimeoutMinutes = 1;
 
+  /// Discovery broadcast interval (seconds).
+  static const int discoveryIntervalSeconds = 3;
+
   /// Desktop window default size.
   static const double windowWidth = 1100;
   static const double windowHeight = 700;
@@ -45,6 +51,11 @@ class AppConstants {
   // --- UI Strings ---
   static const String receiverMode = 'Receiver Mode';
   static const String senderMode = 'Sender Mode';
+  static const String nearbyDevices = 'Nearby Devices';
+  static const String searchingDevices = 'Searching for devices...';
+  static const String noDevicesFound = 'No devices found yet. Make sure both are on same Wi-Fi.';
+  static const String advancedMode = 'Advanced (Manual IP)';
+  static const String readyToReceive = 'Ready to Receive';
   static const String noFolderSelected = 'No receive folder selected';
   static const String saveToPrefix = 'Save to: ';
   static const String stopReceiver = 'Stop Receiver';
@@ -71,8 +82,8 @@ class AppConstants {
   static const String instructionsTitle = 'How to use for Max Speed';
   static const String step1 = '1. Connect both devices to the same network (Wi-Fi or Hotspot).';
   static const String step2 = '2. For max speed, one device should open a 5GHz Hotspot and the other connect to it.';
-  static const String step3 = "3. On the RECEIVER: Select a folder and click 'Start Receiver Server'.";
-  static const String step4 = "4. On the SENDER: Enter the Receiver's IP Address and select what to send.";
+  static const String step3 = "3. Daphq will automatically find other devices on the network.";
+  static const String step4 = "4. Select a device from the list to start sending files.";
 
   // --- Layout Constants ---
   static const double borderRadius = 15.0;

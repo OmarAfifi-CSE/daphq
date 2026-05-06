@@ -24,10 +24,8 @@ class MyTaskHandler extends TaskHandler {
 
   @override
   void onNotificationButtonPressed(String id) {
-    FlutterForegroundTask.sendDataToMain(
-      id == 'stopReceivingButton' ? 'STOP_RECEIVING' : 'CANCEL_SENDING',
-    );
-    FlutterForegroundTask.stopService();
+    // Send message to main task to trigger clean stop in Cubit
+    FlutterForegroundTask.sendDataToMain(id);
   }
 
   @override
@@ -123,29 +121,29 @@ class DaphqApp extends StatelessWidget {
           minTextAdapt: true,
           splitScreenMode: true,
           builder: (context, child) {
-            return MaterialApp(
-              title: 'Daphq',
-              debugShowCheckedModeBanner: false,
-              theme: ThemeData(
-                brightness: Brightness.dark,
-                scaffoldBackgroundColor: AppColors.background,
-                primaryColor: AppColors.primary,
-                colorScheme: const ColorScheme.dark(
-                  primary: AppColors.primary,
-                  surface: AppColors.appBarBackground,
+            return BlocProvider(
+              create: (_) => TransferCubit(),
+              child: MaterialApp(
+                title: 'Daphq',
+                debugShowCheckedModeBanner: false,
+                theme: ThemeData(
+                  brightness: Brightness.dark,
+                  scaffoldBackgroundColor: AppColors.background,
+                  primaryColor: AppColors.primary,
+                  colorScheme: const ColorScheme.dark(
+                    primary: AppColors.primary,
+                    surface: AppColors.appBarBackground,
+                  ),
+                  textSelectionTheme: TextSelectionThemeData(
+                    cursorColor: AppColors.primary,
+                    selectionColor: AppColors.primary.withAlpha(100),
+                    selectionHandleColor: AppColors.primary,
+                  ),
+                  useMaterial3: true,
+                  visualDensity: VisualDensity.adaptivePlatformDensity,
+                  fontFamily: 'Roboto',
                 ),
-                textSelectionTheme: TextSelectionThemeData(
-                  cursorColor: AppColors.primary,
-                  selectionColor: AppColors.primary.withAlpha(100),
-                  selectionHandleColor: AppColors.primary,
-                ),
-                useMaterial3: true,
-                visualDensity: VisualDensity.adaptivePlatformDensity,
-                fontFamily: 'Roboto',
-              ),
-              home: BlocProvider(
-                create: (_) => TransferCubit(),
-                child: const HomePage(),
+                home: const HomePage(),
               ),
             );
           },
