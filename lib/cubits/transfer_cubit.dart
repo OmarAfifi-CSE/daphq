@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:path/path.dart' as p;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -9,6 +10,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import '../controllers/sender_controller.dart';
 import '../controllers/receiver_controller.dart';
 import '../services/discovery_service.dart';
+import 'package:file_picker/file_picker.dart';
 import '../models/transfer_model.dart';
 import 'transfer_state.dart';
 import '../core/app_constants.dart';
@@ -110,22 +112,28 @@ class TransferCubit extends Cubit<TransferState> {
     bool hasStorage = false;
     bool storagePermanentlyDenied = false;
 
-    if (await Permission.manageExternalStorage.isGranted ||
-        await Permission.storage.isGranted) {
-      hasStorage = true;
-    } else {
-      final manageStatus = await Permission.manageExternalStorage.request();
-      if (manageStatus.isGranted) {
+    // Check Android version
+    final deviceInfo = DeviceInfoPlugin();
+    final androidInfo = await deviceInfo.androidInfo;
+    final sdkInt = androidInfo.version.sdkInt;
+
+    if (sdkInt >= 30) {
+      // Android 11+ uses Manage External Storage for folders
+      if (await Permission.manageExternalStorage.isGranted) {
         hasStorage = true;
       } else {
-        final storageStatus = await Permission.storage.request();
-        if (storageStatus.isGranted) {
-          hasStorage = true;
-        } else {
-          storagePermanentlyDenied =
-              manageStatus.isPermanentlyDenied ||
-              storageStatus.isPermanentlyDenied;
-        }
+        final status = await Permission.manageExternalStorage.request();
+        hasStorage = status.isGranted;
+        storagePermanentlyDenied = status.isPermanentlyDenied;
+      }
+    } else {
+      // Older Androids use standard Storage permission
+      if (await Permission.storage.isGranted) {
+        hasStorage = true;
+      } else {
+        final status = await Permission.storage.request();
+        hasStorage = status.isGranted;
+        storagePermanentlyDenied = status.isPermanentlyDenied;
       }
     }
 
@@ -335,12 +343,69 @@ class TransferCubit extends Cubit<TransferState> {
     emit(state.copyWith(clearFeedback: true));
   }
 
-  Future<void> sendData({required String path, required bool isFolder}) async {
-    if (state.isTransferring || state.targetIp.trim().isEmpty) return;
+  void addSelectedPaths(List<String> paths) {
+    final newList = List<String>.from(state.selectedPaths)..addAll(paths);
+    emit(state.copyWith(selectedPaths: newList));
+  }
+
+  void removeSelectedPath(String path) {
+    final newList = List<String>.from(state.selectedPaths)..remove(path);
+    emit(state.copyWith(selectedPaths: newList));
+  }
+
+  void clearSelection() {
+    emit(state.copyWith(clearSelection: true));
+  }
+
+  Future<void> pickItems(FileType type) async {
+    try {
+      String? initialDirectory;
+      
+      // Smart folder opening for Desktop
+      if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+        final home = Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'];
+        if (home != null) {
+          if (type == FileType.image) {
+            initialDirectory = p.join(home, Platform.isWindows ? 'Pictures' : 'Pictures');
+          } else if (type == FileType.video) {
+            initialDirectory = p.join(home, Platform.isWindows ? 'Videos' : 'Movies');
+          }
+        }
+      }
+
+      final result = await FilePicker.pickFiles(
+        allowMultiple: true,
+        type: (Platform.isWindows || Platform.isMacOS || Platform.isLinux) ? FileType.any : type,
+        initialDirectory: initialDirectory,
+      );
+      
+      if (result != null) {
+        addSelectedPaths(result.paths.whereType<String>().toList());
+      }
+    } catch (e) {
+      emit(state.copyWith(errorMessage: "Error picking files: $e"));
+    }
+  }
+
+  Future<void> pickFolder() async {
+    try {
+      final path = await FilePicker.getDirectoryPath();
+      if (path != null) {
+        addSelectedPaths([path]);
+      }
+    } catch (e) {
+      emit(state.copyWith(errorMessage: "Error picking folder: $e"));
+    }
+  }
+
+  Future<void> sendData({List<String>? paths}) async {
+    final itemsToSend = paths ?? state.selectedPaths;
+    if (itemsToSend.isEmpty || state.isTransferring || state.targetIp.trim().isEmpty) return;
 
     if (!await _prepareRequirements()) return;
 
     emit(state.copyWith(isTransferring: true));
+
     await _startForegroundService(
       AppConstants.appName,
       "Sending files...",
@@ -350,50 +415,69 @@ class TransferCubit extends Cubit<TransferState> {
       ),
     );
 
-    _sender.sendData(
-      path: path,
-      targetIp: state.targetIp.trim(),
-      isFolder: isFolder,
-      onUpdate: (model) {
-        if (!isClosed) emit(state.copyWith(model: model));
-        if (Platform.isAndroid && state.isTransferring) {
-          FlutterForegroundTask.updateService(
-            notificationTitle: 'Sending: ${model.fileName}',
-            notificationText:
-                '${model.transferred.toStringAsFixed(2)} MB (${(model.progress * 100).toInt()}%) - ${model.speed.toStringAsFixed(1)} MB/s',
-            notificationButtons: [
-              const NotificationButton(
-                id: 'cancelSendingButton',
-                text: 'Cancel Sending',
-              ),
-            ],
-          );
-        }
-      },
-      onDone: () {
-        if (!isClosed) {
-          emit(state.copyWith(isTransferring: false, clearFeedback: true));
-        }
-        
-        if (state.isReceiving) {
-          // Keep service alive but update to idle receiver status
-          if (Platform.isAndroid) {
+    try {
+      await _sender.sendData(
+        paths: itemsToSend,
+        targetIp: state.targetIp.trim(),
+        onUpdate: (model) {
+          if (!isClosed) emit(state.copyWith(model: model));
+          if (Platform.isAndroid && state.isTransferring) {
             FlutterForegroundTask.updateService(
-              notificationTitle: AppConstants.appName,
-              notificationText: "Waiting for incoming files...",
+              notificationTitle: 'Sending: ${model.fileName}',
+              notificationText:
+                  '${model.transferred.toStringAsFixed(2)} MB (${(model.progress * 100).toInt()}%) - ${model.speed.toStringAsFixed(1)} MB/s',
               notificationButtons: [
                 const NotificationButton(
-                  id: 'stopReceivingButton',
-                  text: 'Stop Receiving',
+                  id: 'cancelSendingButton',
+                  text: 'Cancel Sending',
                 ),
               ],
             );
           }
-        } else {
-          _stopForegroundService();
+        },
+      );
+
+      if (!isClosed) {
+        emit(
+          state.copyWith(
+            isTransferring: false,
+            clearFeedback: true,
+            clearSelection: true,
+            model: TransferModel(status: "Transfer Complete!"),
+          ),
+        );
+      }
+
+      if (state.isReceiving) {
+        if (Platform.isAndroid) {
+          FlutterForegroundTask.updateService(
+            notificationTitle: AppConstants.appName,
+            notificationText: "Waiting for incoming files...",
+            notificationButtons: [
+              const NotificationButton(
+                id: 'stopReceivingButton',
+                text: 'Stop Receiving',
+              ),
+            ],
+          );
         }
-      },
-    );
+      } else {
+        _stopForegroundService();
+      }
+    } catch (e) {
+      if (!isClosed) {
+        emit(
+          state.copyWith(
+            isTransferring: false,
+            errorMessage: e.toString(),
+            model: TransferModel(status: "Error: $e"),
+          ),
+        );
+      }
+      if (!state.isReceiving) {
+        _stopForegroundService();
+      }
+    }
   }
 
   @override

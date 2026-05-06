@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'dart:convert';
-import 'dart:ui';
 import 'dart:async';
 import 'package:path/path.dart' as p;
 import '../models/transfer_model.dart';
@@ -18,56 +17,57 @@ class SenderController {
   ///
   /// Calls [onUpdate] with progress updates and [onDone] when finished.
   Future<void> sendData({
-    required String path,
+    required List<String> paths,
     required String targetIp,
-    required bool isFolder,
     required Function(TransferModel) onUpdate,
-    required VoidCallback onDone,
   }) async {
+    _isCancelled = false;
+    Socket? socket;
     Stopwatch stopwatch = Stopwatch()..start();
     try {
       onUpdate(TransferModel(status: "Analyzing Files..."));
 
+      // 1. Prepare file list from multiple paths
       List<Map<String, dynamic>> fileList = [];
-      int totalBytesToSend = 0;
+      double totalSizeBytes = 0;
 
-      if (isFolder) {
-        var dir = Directory(path);
-        if (!dir.existsSync()) throw "Folder not found!";
-
-        var entities = dir.listSync(recursive: true).whereType<File>();
-        for (var f in entities) {
-          int size = f.lengthSync();
-          // Normalize path separators for cross-platform compatibility
-          String normalizedPath = p
-              .relative(f.path, from: p.dirname(path))
-              .replaceAll(r'\', '/');
+      for (String path in paths) {
+        if (FileSystemEntity.isDirectorySync(path)) {
+          final dir = Directory(path);
+          final files = dir.listSync(recursive: true).whereType<File>();
+          
+          for (var f in files) {
+            final relPath = p.relative(f.path, from: dir.parent.path).replaceAll(r'\', '/');
+            final size = f.lengthSync();
+            fileList.add({
+              "absPath": f.path,
+              "path": relPath,
+              "size": size,
+            });
+            totalSizeBytes += size;
+          }
+        } else {
+          final file = File(path);
+          final size = file.lengthSync();
+          final fileName = p.basename(file.path);
           fileList.add({
-            "path": normalizedPath,
+            "absPath": file.path,
+            "path": fileName,
             "size": size,
-            "absPath": f.path,
           });
-          totalBytesToSend += size;
+          totalSizeBytes += size;
         }
-      } else {
-        var f = File(path);
-        if (!f.existsSync()) throw "File not found!";
-        int size = f.lengthSync();
-        fileList.add({
-          "path": p.basename(path),
-          "size": size,
-          "absPath": f.path,
-        });
-        totalBytesToSend += size;
       }
 
-      if (totalBytesToSend == 0) {
+      if (fileList.isEmpty) throw "No files found in selection.";
+
+      if (totalSizeBytes == 0) {
         throw "Error: The selected item is empty (0.0 MB).";
       }
 
       // Connect to receiver
       onUpdate(TransferModel(status: "Connecting..."));
-      final socket = await Socket.connect(
+      socket = await Socket.connect(
         targetIp,
         AppConstants.transferPort,
         timeout: const Duration(seconds: AppConstants.connectionTimeoutSeconds),
@@ -76,11 +76,14 @@ class SenderController {
       socket.setOption(SocketOption.tcpNoDelay, true);
 
       // Send file metadata (JSON header)
-      String originalName = isFolder ? p.basename(path) : p.basename(path);
+      String originalName = paths.length == 1 
+          ? p.basename(paths[0]) 
+          : "${p.basename(paths[0])} and ${paths.length - 1} more";
+          
       Map<String, dynamic> metadata = {
         "fileName": originalName,
-        "fileSize": totalBytesToSend,
-        "isFolder": isFolder,
+        "fileSize": totalSizeBytes,
+        "isFolder": paths.length > 1 || FileSystemEntity.isDirectorySync(paths[0]),
         "files": fileList
             .map((e) => {"path": e["path"], "size": e["size"]})
             .toList(),
@@ -118,7 +121,7 @@ class SenderController {
                   } else {
                     // If already transferring, trigger a cancellation
                     _isCancelled = true;
-                    socket.destroy();
+                    socket?.destroy();
                   }
                 } else if (response["s"] == "r") {
                   if (!readyCompleter.isCompleted) {
@@ -211,8 +214,8 @@ class SenderController {
                   transferred: sentBytes / 1024 / 1024,
                   fileName: p.basename(f["path"]),
                   status: "Pumping Data...",
-                  progress: totalBytesToSend > 0
-                      ? sentBytes / totalBytesToSend
+                  progress: totalSizeBytes > 0
+                      ? sentBytes / totalSizeBytes
                       : 0.0,
                 ),
               );
@@ -227,7 +230,7 @@ class SenderController {
 
       // Stop the stopwatch immediately after bytes are sent for accurate speed
       stopwatch.stop();
-      double finalMB = totalBytesToSend / 1024 / 1024;
+      double finalMB = totalSizeBytes / 1024 / 1024;
       double avg = finalMB / (stopwatch.elapsedMilliseconds / 1000);
 
       // Wait for DONE status with timeout
@@ -245,14 +248,14 @@ class SenderController {
         await doneCompleter.future.timeout(
           const Duration(seconds: 30),
           onTimeout: () {
-            if (sentBytes >= totalBytesToSend) {
+            if (sentBytes >= totalSizeBytes) {
               return; // Ignore timeout if all bytes were sent
             }
             throw "Timeout waiting for Receiver to finalize disk write.";
           },
         );
       } catch (e) {
-        if (sentBytes < totalBytesToSend) {
+        if (sentBytes < totalSizeBytes) {
           rethrow;
         }
       }
@@ -265,13 +268,11 @@ class SenderController {
           transferred: finalMB,
           avgSpeed: avg.toStringAsFixed(2),
           totalTime: (stopwatch.elapsedMilliseconds / 1000).toStringAsFixed(1),
-          fileName: isFolder ? p.basename(path) : fileList.first["path"],
+          fileName: paths.length == 1 ? p.basename(paths[0]) : "Multiple Items",
         ),
       );
-      onDone();
     } on PathAccessException {
       onUpdate(TransferModel(status: "Error: Permission Denied"));
-      onDone();
     } catch (e) {
       if (_isCancelled) {
         onUpdate(TransferModel(status: "Transfer Cancelled"));
@@ -287,7 +288,6 @@ class SenderController {
       } else {
         onUpdate(TransferModel(status: "Error: $e"));
       }
-      onDone();
     } finally {
       _activeSocket = null;
       _isCancelled = false;

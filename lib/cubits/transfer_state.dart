@@ -33,6 +33,7 @@ class TransferState {
   final bool showNotificationWarningDialog;
   final bool showBatteryOptimizationSnackBar;
   final AuthRequest? authRequest;
+  final List<String> selectedPaths;
 
   TransferState({
     required this.model,
@@ -49,6 +50,7 @@ class TransferState {
     this.showNotificationWarningDialog = false,
     this.showBatteryOptimizationSnackBar = false,
     this.authRequest,
+    this.selectedPaths = const [],
   }) : targetIp = targetIp ?? AppConstants.defaultTargetIp;
 
   TransferState copyWith({
@@ -66,8 +68,10 @@ class TransferState {
     bool? showNotificationWarningDialog,
     bool? showBatteryOptimizationSnackBar,
     AuthRequest? authRequest,
+    List<String>? selectedPaths,
     bool clearFeedback = false,
     bool clearAuthRequest = false,
+    bool clearSelection = false,
   }) {
     return TransferState(
       model: model ?? this.model,
@@ -94,6 +98,7 @@ class TransferState {
           : (showBatteryOptimizationSnackBar ??
                 this.showBatteryOptimizationSnackBar),
       authRequest: clearAuthRequest ? null : (authRequest ?? this.authRequest),
+      selectedPaths: clearSelection ? const [] : (selectedPaths ?? this.selectedPaths),
     );
   }
 }
