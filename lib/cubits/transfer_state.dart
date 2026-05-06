@@ -1,4 +1,5 @@
 import '../models/transfer_model.dart';
+import '../models/discovery_model.dart';
 import '../core/app_constants.dart';
 
 class AuthRequest {
@@ -20,6 +21,11 @@ class TransferState {
   final String? receiveFolder;
   final String targetIp;
 
+  // Discovery fields
+  final List<DiscoveryModel> discoveredDevices;
+  final String deviceName;
+  final bool isAdvancedMode;
+
   // UI Feedback properties
   final String? errorMessage;
   final String? warningMessage;
@@ -34,6 +40,9 @@ class TransferState {
     this.isReceiving = false,
     this.receiveFolder,
     String? targetIp,
+    this.discoveredDevices = const [],
+    this.deviceName = 'Unknown Device',
+    this.isAdvancedMode = false,
     this.errorMessage,
     this.warningMessage,
     this.showStorageSettingsDialog = false,
@@ -48,6 +57,9 @@ class TransferState {
     bool? isReceiving,
     String? receiveFolder,
     String? targetIp,
+    List<DiscoveryModel>? discoveredDevices,
+    String? deviceName,
+    bool? isAdvancedMode,
     String? errorMessage,
     String? warningMessage,
     bool? showStorageSettingsDialog,
@@ -63,6 +75,9 @@ class TransferState {
       isReceiving: isReceiving ?? this.isReceiving,
       receiveFolder: receiveFolder ?? this.receiveFolder,
       targetIp: targetIp ?? this.targetIp,
+      discoveredDevices: discoveredDevices ?? this.discoveredDevices,
+      deviceName: deviceName ?? this.deviceName,
+      isAdvancedMode: isAdvancedMode ?? this.isAdvancedMode,
       errorMessage: clearFeedback ? null : (errorMessage ?? this.errorMessage),
       warningMessage: clearFeedback
           ? null
