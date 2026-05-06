@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:file_picker/file_picker.dart';
 import '../../../cubits/transfer_cubit.dart';
 import '../../../cubits/transfer_state.dart';
 import '../../../core/app_colors.dart';
@@ -11,6 +10,7 @@ import '../common/animated_press_button.dart';
 import '../common/custom_snackbar.dart';
 import '../common/section_title.dart';
 import 'nearby_devices_list.dart';
+import 'device_transfer_menu.dart';
 
 class SenderSection extends StatefulWidget {
   final bool isDesktop;
@@ -122,30 +122,34 @@ class SenderSectionState extends State<SenderSection> {
                         enabled: !state.isTransferring,
                       ),
                       SizedBox(height: 15.rh(isDesktop)),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildSendButton(
-                              context,
-                              Icons.file_copy,
-                              AppConstants.sendFile,
-                              false,
-                              state,
-                              isDesktop,
+                      
+                      // Manual IP "Continue" Button
+                      AnimatedPressButton(
+                        isDesktop: isDesktop,
+                        onPressed: () {
+                          final ip = _ipController.text.trim();
+                          if (ip.isEmpty) {
+                            CustomSnackBar.show(context, message: AppConstants.enterTargetIp);
+                            return;
+                          }
+                          DeviceTransferMenu.show(context, ip, "Manual Receiver", isDesktop);
+                        },
+                        gradientColors: const [AppColors.primary, AppColors.primaryLight],
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.open_in_new_rounded, color: Colors.white, size: 20.rx(isDesktop)),
+                            SizedBox(width: 10.rw(isDesktop)),
+                            Text(
+                              "Select Content & Send",
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 14.rx(isDesktop),
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
-                          ),
-                          SizedBox(width: 10.rw(isDesktop)),
-                          Expanded(
-                            child: _buildSendButton(
-                              context,
-                              Icons.folder,
-                              AppConstants.sendFolder,
-                              true,
-                              state,
-                              isDesktop,
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ] else ...[
                       // Simple Mode (Discovery)
@@ -234,66 +238,5 @@ class SenderSectionState extends State<SenderSection> {
         ),
       ],
     );
-  }
-
-  Widget _buildSendButton(
-    BuildContext context,
-    IconData icon,
-    String text,
-    bool isFolder,
-    TransferState state,
-    bool isDesktop,
-  ) {
-    return AnimatedPressButton(
-      isDesktop: isDesktop,
-      onPressed: state.isTransferring ? null : () => _pick(context, isFolder),
-      gradientColors: const [AppColors.primary, AppColors.primaryLight],
-      child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: 4.rw(isDesktop)),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: Colors.white, size: 18.0.rx(isDesktop)),
-            SizedBox(width: 4.0.rw(isDesktop)),
-            Flexible(
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Text(
-                  text,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 13.0.rx(isDesktop),
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _pick(BuildContext context, bool isFolder) async {
-    final cubit = context.read<TransferCubit>();
-    if (cubit.state.isTransferring) return;
-
-    String? path;
-    if (isFolder) {
-      path = await FilePicker.getDirectoryPath();
-    } else {
-      FilePickerResult? r = await FilePicker.pickFiles();
-      path = r?.files.single.path;
-    }
-
-    if (path != null) {
-      if (cubit.state.targetIp.trim().isEmpty) {
-        if (!context.mounted) return;
-        CustomSnackBar.show(context, message: AppConstants.enterTargetIp);
-        return;
-      }
-      if (!context.mounted) return;
-      cubit.sendData(path: path, isFolder: isFolder);
-    }
   }
 }

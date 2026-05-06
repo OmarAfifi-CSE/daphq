@@ -1,13 +1,12 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:file_picker/file_picker.dart';
 import '../../../cubits/transfer_cubit.dart';
 import '../../../cubits/transfer_state.dart';
 import '../../../core/app_colors.dart';
-import '../../../core/app_constants.dart';
 import '../../../core/responsive_utils.dart';
 import '../common/animated_press_button.dart';
-import '../common/custom_snackbar.dart';
+import '../common/unified_add_button.dart';
 
 class DeviceTransferMenu extends StatelessWidget {
   final String ip;
@@ -27,138 +26,182 @@ class DeviceTransferMenu extends StatelessWidget {
     String name,
     bool isDesktop,
   ) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppColors.dialogBackground,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) =>
-          DeviceTransferMenu(ip: ip, name: name, isDesktop: isDesktop),
-    );
+    if (isDesktop) {
+      showDialog(
+        context: context,
+        builder: (context) => Dialog(
+          backgroundColor: AppColors.dialogBackground,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: Container(
+            width: 420,
+            height: 520,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.white10),
+            ),
+            child: DeviceTransferMenu(ip: ip, name: name, isDesktop: true),
+          ),
+        ),
+      );
+    } else {
+      showModalBottomSheet(
+        context: context,
+        backgroundColor: AppColors.dialogBackground,
+        isScrollControlled: true,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
+        ),
+        builder: (context) => DraggableScrollableSheet(
+          initialChildSize: 0.6,
+          minChildSize: 0.4,
+          maxChildSize: 0.9,
+          expand: false,
+          builder: (context, scrollController) =>
+              DeviceTransferMenu(ip: ip, name: name, isDesktop: false),
+        ),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final cubit = context.read<TransferCubit>();
+
     return BlocBuilder<TransferCubit, TransferState>(
       builder: (context, state) {
-        return SafeArea(
-          child: Padding(
-            padding: EdgeInsets.all(20.rr(isDesktop)),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  "Send to $name",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18.rx(isDesktop),
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                SizedBox(height: 20.rh(isDesktop)),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _MenuButton(
-                        icon: Icons.file_copy,
-                        text: AppConstants.sendFile,
-                        isDesktop: isDesktop,
-                        onPressed: () =>
-                            _pickAndSend(context, ip, false, state),
-                      ),
+        return Container(
+          padding: EdgeInsets.all(20.rr(isDesktop)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Header
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    "Send to $name",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18.rx(isDesktop),
+                      fontWeight: FontWeight.bold,
                     ),
-                    SizedBox(width: 15.rw(isDesktop)),
-                    Expanded(
-                      child: _MenuButton(
-                        icon: Icons.folder,
-                        text: AppConstants.sendFolder,
-                        isDesktop: isDesktop,
-                        onPressed: () => _pickAndSend(context, ip, true, state),
+                  ),
+                  Row(
+                    children: [
+                      if (state.selectedPaths.isNotEmpty)
+                        TextButton(
+                          onPressed: () => cubit.clearSelection(),
+                          child: Text(
+                            "Clear All",
+                            style: TextStyle(color: AppColors.danger, fontSize: 13.rx(isDesktop)),
+                          ),
+                        ),
+                      if (isDesktop) ...[
+                        SizedBox(width: 10.rw(isDesktop)),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white60),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+              const Divider(color: Colors.white10, height: 30),
+
+              // Add Buttons
+              // Unified Add Button
+              UnifiedAddButton(
+                isDesktop: isDesktop,
+              ),
+
+              SizedBox(height: 20.rh(isDesktop)),
+
+              // Selected Items List
+              Expanded(
+                child: state.selectedPaths.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.cloud_upload_outlined,
+                                size: 50.rx(isDesktop), color: Colors.white24),
+                            SizedBox(height: 10.rh(isDesktop)),
+                            Text(
+                              "No items selected yet",
+                              style: TextStyle(
+                                  color: Colors.white38, fontSize: 14.rx(isDesktop)),
+                            ),
+                          ],
+                        ),
+                      )
+                    : ListView.separated(
+                        itemCount: state.selectedPaths.length,
+                        separatorBuilder: (context, index) =>
+                            const Divider(color: Colors.white10, height: 1),
+                        itemBuilder: (context, index) {
+                          final path = state.selectedPaths[index];
+                          final isDir = FileSystemEntity.isDirectorySync(path);
+                          final name = path.split(Platform.pathSeparator).last;
+
+                          return ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: Icon(
+                              isDir ? Icons.folder : Icons.insert_drive_file,
+                              color: isDir ? AppColors.primary : Colors.white70,
+                            ),
+                            title: Text(
+                              name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  color: Colors.white, fontSize: 14.rx(isDesktop)),
+                            ),
+                            trailing: IconButton(
+                              icon: const Icon(Icons.close, color: Colors.white38, size: 18),
+                              onPressed: () => cubit.removeSelectedPath(path),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+
+              // Send Button
+              SizedBox(height: 20.rh(isDesktop)),
+              AnimatedPressButton(
+                isDesktop: isDesktop,
+                onPressed: state.selectedPaths.isEmpty || state.isTransferring
+                    ? null
+                    : () {
+                        cubit.setTargetIp(ip);
+                        cubit.sendData();
+                        Navigator.pop(context);
+                      },
+                gradientColors: const [AppColors.primary, AppColors.primaryLight],
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.send_rounded, color: Colors.white, size: 20.rx(isDesktop)),
+                    SizedBox(width: 10.rw(isDesktop)),
+                    Text(
+                      state.selectedPaths.isEmpty
+                          ? "Select Items to Send"
+                          : "Send ${state.selectedPaths.length} Items",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16.rx(isDesktop),
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
                   ],
                 ),
-                SizedBox(height: 10.rh(isDesktop)),
-              ],
-            ),
+              ),
+            ],
           ),
         );
       },
     );
   }
 
-  Future<void> _pickAndSend(
-    BuildContext context,
-    String ip,
-    bool isFolder,
-    TransferState state,
-  ) async {
-    if (state.isTransferring) {
-      CustomSnackBar.show(
-        context,
-        message: "A transfer is already in progress.",
-      );
-      return;
-    }
-
-    final cubit = context.read<TransferCubit>();
-    Navigator.pop(context); // Close sheet first
-
-    String? path;
-    if (isFolder) {
-      path = await FilePicker.getDirectoryPath();
-    } else {
-      FilePickerResult? r = await FilePicker.pickFiles();
-      path = r?.files.single.path;
-    }
-
-    if (path != null) {
-      cubit.setTargetIp(ip);
-      cubit.sendData(path: path, isFolder: isFolder);
-    }
-  }
 }
 
-class _MenuButton extends StatelessWidget {
-  final IconData icon;
-  final String text;
-  final bool isDesktop;
-  final VoidCallback onPressed;
-
-  const _MenuButton({
-    required this.icon,
-    required this.text,
-    required this.isDesktop,
-    required this.onPressed,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedPressButton(
-      isDesktop: isDesktop,
-      onPressed: onPressed,
-      gradientColors: const [AppColors.primary, AppColors.primaryLight],
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: Colors.white, size: 28.rx(isDesktop)),
-          SizedBox(height: 5.rh(isDesktop)),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(
-              text,
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 13.rx(isDesktop),
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
