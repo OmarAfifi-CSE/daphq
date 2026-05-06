@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:file_picker/file_picker.dart';
-import '../../cubits/transfer_cubit.dart';
-import '../../cubits/transfer_state.dart';
-import '../../core/app_colors.dart';
-import '../../core/app_constants.dart';
-import '../../core/responsive_utils.dart';
-import 'daphq_card.dart';
-import 'animated_press_button.dart';
-import 'custom_snackbar.dart';
-import 'section_title.dart';
-import 'status_text.dart';
+import '../../../cubits/transfer_cubit.dart';
+import '../../../cubits/transfer_state.dart';
+import '../../../core/app_colors.dart';
+import '../../../core/app_constants.dart';
+import '../../../core/responsive_utils.dart';
+import '../common/daphq_card.dart';
+import '../common/animated_press_button.dart';
+import '../common/custom_snackbar.dart';
+import '../common/section_title.dart';
+import '../common/status_text.dart';
 
 class ReceiverSection extends StatelessWidget {
   final bool isDesktop;
@@ -37,13 +37,47 @@ class ReceiverSection extends StatelessWidget {
                   Row(
                     children: [
                       Expanded(
-                        child: StatusText(
-                          text: state.receiveFolder == null
-                              ? AppConstants.noFolderSelected
-                              : "${AppConstants.saveToPrefix}${state.receiveFolder}",
-                          isError: state.receiveFolder == null,
-                          isDesktop: isDesktop,
-                          tooltip: state.receiveFolder,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  width: 8.rx(isDesktop),
+                                  height: 8.rx(isDesktop),
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: state.isReceiving ? AppColors.success : AppColors.danger,
+                                    boxShadow: state.isReceiving ? [
+                                      BoxShadow(
+                                        color: AppColors.success.withAlpha(100),
+                                        blurRadius: 4,
+                                        spreadRadius: 2,
+                                      )
+                                    ] : null,
+                                  ),
+                                ),
+                                SizedBox(width: 8.rw(isDesktop)),
+                                Text(
+                                  state.isReceiving ? AppConstants.readyToReceive : "Receiver Offline",
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 14.rx(isDesktop),
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            SizedBox(height: 5.rh(isDesktop)),
+                            StatusText(
+                              text: state.receiveFolder == null
+                                  ? AppConstants.noFolderSelected
+                                  : "${AppConstants.saveToPrefix}${state.receiveFolder}",
+                              isError: state.receiveFolder == null,
+                              isDesktop: isDesktop,
+                              tooltip: state.receiveFolder,
+                            ),
+                          ],
                         ),
                       ),
                       IconButton(
@@ -95,11 +129,11 @@ class ReceiverSection extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Icon(
-                          state.isReceiving ? Icons.stop : Icons.wifi_tethering,
+                          state.isReceiving ? Icons.stop : Icons.play_arrow,
                           color: state.isReceiving
                               ? Colors.white
                               : Colors.black87,
-                          size: 24.0.rx(isDesktop),
+                          size: 20.0.rx(isDesktop),
                         ),
                         SizedBox(width: 8.0.rw(isDesktop)),
                         Text(
@@ -110,7 +144,7 @@ class ReceiverSection extends StatelessWidget {
                             color: state.isReceiving
                                 ? Colors.white
                                 : Colors.black87,
-                            fontSize: 16.0.rx(isDesktop),
+                            fontSize: 14.0.rx(isDesktop),
                             fontWeight: FontWeight.bold,
                           ),
                         ),

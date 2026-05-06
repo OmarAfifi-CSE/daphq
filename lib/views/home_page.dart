@@ -5,16 +5,16 @@ import 'package:window_manager/window_manager.dart';
 import '../core/app_colors.dart';
 import '../services/update_service.dart';
 import '../core/app_constants.dart';
-import 'widgets/instructions_card.dart';
-import 'widgets/transfer_progress_view.dart';
-import 'widgets/receiver_section.dart';
-import 'widgets/sender_section.dart';
+import 'widgets/common/instructions_card.dart';
+import 'widgets/common/transfer_progress_view.dart';
+import 'widgets/receiver/receiver_section.dart';
+import 'widgets/sender/sender_section.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../cubits/transfer_cubit.dart';
 import '../cubits/transfer_state.dart';
-import 'widgets/auth_dialog.dart';
-import 'widgets/custom_snackbar.dart';
+import 'widgets/receiver/auth_dialog.dart';
+import 'widgets/common/custom_snackbar.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -37,6 +37,17 @@ class _HomePageState extends State<HomePage> {
     return GestureDetector(
       onTap: () => FocusScope.of(context).unfocus(),
       child: BlocListener<TransferCubit, TransferState>(
+        listenWhen: (previous, current) =>
+            (previous.authRequest != current.authRequest &&
+                current.authRequest != null) ||
+            (previous.errorMessage != current.errorMessage &&
+                current.errorMessage != null) ||
+            (previous.showStorageSettingsDialog !=
+                current.showStorageSettingsDialog &&
+                current.showStorageSettingsDialog) ||
+            (previous.showNotificationWarningDialog !=
+                current.showNotificationWarningDialog &&
+                current.showNotificationWarningDialog),
         listener: (context, state) {
           final cubit = context.read<TransferCubit>();
 
@@ -103,7 +114,7 @@ class _HomePageState extends State<HomePage> {
             );
             cubit.clearFeedback();
           }
- 
+
           if (state.showNotificationWarningDialog) {
             showDialog(
               context: context,
@@ -276,7 +287,9 @@ class _HomePageState extends State<HomePage> {
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 500),
                       child: SingleChildScrollView(
-                        physics: const BouncingScrollPhysics(),
+                        physics: isDesktopOS
+                            ? const ClampingScrollPhysics()
+                            : const BouncingScrollPhysics(),
                         padding: isDesktopOS
                             ? const EdgeInsets.all(20.0)
                             : EdgeInsets.all(20.w),

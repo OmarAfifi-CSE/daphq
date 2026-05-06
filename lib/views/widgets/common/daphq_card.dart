@@ -1,7 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import '../../core/app_colors.dart';
-import '../../core/responsive_utils.dart';
+import '../../../core/app_colors.dart';
+import '../../../core/responsive_utils.dart';
 
 class DaphqCard extends StatelessWidget {
   final Widget child;

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import '../../core/app_colors.dart';
-import '../../core/app_constants.dart';
-import '../../core/responsive_utils.dart';
+import '../../../core/app_colors.dart';
+import '../../../core/app_constants.dart';
+import '../../../core/responsive_utils.dart';
 
 class InstructionsCard extends StatelessWidget {
   final bool isDesktop;

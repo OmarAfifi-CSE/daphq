@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
-import '../views/widgets/update_dialog.dart';
+import '../views/widgets/common/update_dialog.dart';
 import '../core/app_constants.dart';
 
 class UpdateService {

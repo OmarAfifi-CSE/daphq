@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../../core/responsive_utils.dart';
+import '../../../core/responsive_utils.dart';
 
 class AnimatedPressButton extends StatefulWidget {
   final Widget child;
@@ -33,9 +33,10 @@ class _AnimatedPressButtonState extends State<AnimatedPressButton>
       duration: const Duration(milliseconds: 150),
       reverseDuration: const Duration(milliseconds: 150),
     );
-    _scaleAnimation = Tween<double>(begin: 1.0, end: 0.95).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
+    _scaleAnimation = Tween<double>(
+      begin: 1.0,
+      end: 0.95,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
   }
 
   @override
@@ -70,7 +71,7 @@ class _AnimatedPressButtonState extends State<AnimatedPressButton>
 
   @override
   Widget build(BuildContext context) {
-    final double height = 50.0.rh(widget.isDesktop);
+    final double minHeight = 50.0.rh(widget.isDesktop);
     final double borderRadius = 15.0.rr(widget.isDesktop);
 
     return GestureDetector(
@@ -81,14 +82,15 @@ class _AnimatedPressButtonState extends State<AnimatedPressButton>
       child: AnimatedBuilder(
         animation: _scaleAnimation,
         builder: (context, child) {
-          return Transform.scale(
-            scale: _scaleAnimation.value,
-            child: child,
-          );
+          return Transform.scale(scale: _scaleAnimation.value, child: child);
         },
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 300),
-          height: height,
+          constraints: BoxConstraints(minHeight: minHeight),
+          padding: EdgeInsets.symmetric(
+            vertical: 8.rh(widget.isDesktop),
+            horizontal: 12.rw(widget.isDesktop),
+          ),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(borderRadius),
             gradient: _isEnabled
@@ -110,9 +112,7 @@ class _AnimatedPressButtonState extends State<AnimatedPressButton>
                   ]
                 : [],
           ),
-          child: Center(
-            child: widget.child,
-          ),
+          child: Center(child: widget.child),
         ),
       ),
     );

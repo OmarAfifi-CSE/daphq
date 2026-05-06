@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../cubits/transfer_cubit.dart';
-import '../../cubits/transfer_state.dart';
-import '../../core/app_colors.dart';
-import '../../core/responsive_utils.dart';
+import '../../../cubits/transfer_cubit.dart';
+import '../../../cubits/transfer_state.dart';
+import '../../../core/app_colors.dart';
+import '../../../core/responsive_utils.dart';
 
 class TransferProgressView extends StatelessWidget {
   final bool isDesktop;

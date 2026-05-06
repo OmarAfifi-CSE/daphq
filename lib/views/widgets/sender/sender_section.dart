@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:file_picker/file_picker.dart';
-import '../../cubits/transfer_cubit.dart';
-import '../../cubits/transfer_state.dart';
-import '../../core/app_colors.dart';
-import '../../core/app_constants.dart';
-import '../../core/responsive_utils.dart';
-import 'daphq_card.dart';
-import 'animated_press_button.dart';
-import 'custom_snackbar.dart';
-import 'section_title.dart';
+import '../../../cubits/transfer_cubit.dart';
+import '../../../cubits/transfer_state.dart';
+import '../../../core/app_colors.dart';
+import '../../../core/app_constants.dart';
+import '../../../core/responsive_utils.dart';
+import '../common/daphq_card.dart';
+import '../common/animated_press_button.dart';
+import '../common/custom_snackbar.dart';
+import '../common/section_title.dart';
+import 'nearby_devices_list.dart';
 
 class SenderSection extends StatefulWidget {
   final bool isDesktop;
@@ -47,13 +48,42 @@ class SenderSectionState extends State<SenderSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SectionTitle(title: AppConstants.senderMode, isDesktop: isDesktop),
-        SizedBox(height: 10.0.rh(isDesktop)),
+        Row(
+          children: [
+            Expanded(
+              child: SectionTitle(
+                title: AppConstants.senderMode,
+                isDesktop: isDesktop,
+              ),
+            ),
+            BlocBuilder<TransferCubit, TransferState>(
+              buildWhen: (previous, current) =>
+                  previous.isAdvancedMode != current.isAdvancedMode,
+              builder: (context, state) {
+                return TextButton.icon(
+                  onPressed: () =>
+                      context.read<TransferCubit>().toggleAdvancedMode(),
+                  icon: Icon(
+                    state.isAdvancedMode ? Icons.close : Icons.settings,
+                    size: 14.rx(isDesktop),
+                    color: AppColors.primary,
+                  ),
+                  label: Text(
+                    state.isAdvancedMode
+                        ? AppConstants.cancel
+                        : AppConstants.advancedMode,
+                    style: TextStyle(
+                      color: AppColors.primary,
+                      fontSize: 11.rx(isDesktop),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+        SizedBox(height: 8.0.rh(isDesktop)),
         BlocBuilder<TransferCubit, TransferState>(
-          buildWhen: (previous, current) =>
-              previous.isTransferring != current.isTransferring ||
-              previous.isReceiving != current.isReceiving ||
-              previous.targetIp != current.targetIp,
           builder: (context, state) {
             return AnimatedSize(
               duration: const Duration(milliseconds: 350),
@@ -62,78 +92,65 @@ class SenderSectionState extends State<SenderSection> {
               child: DaphqCard(
                 isDesktop: isDesktop,
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    TextField(
-                      controller: _ipController,
-                      cursorColor: AppColors.primary,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 14.0.rx(isDesktop),
-                        fontWeight: FontWeight.w500,
-                      ),
-                      decoration: InputDecoration(
-                        labelText: AppConstants.receiverIpLabel,
-                        labelStyle: TextStyle(
-                          color: Colors.white60,
+                    if (state.isAdvancedMode) ...[
+                      // Advanced Mode (Manual IP)
+                      TextField(
+                        controller: _ipController,
+                        cursorColor: AppColors.primary,
+                        style: TextStyle(
+                          color: Colors.white,
                           fontSize: 14.0.rx(isDesktop),
                         ),
-                        helperText: AppConstants.receiverIpHelper,
-                        helperStyle: TextStyle(
-                          color: Colors.white38,
-                          fontStyle: FontStyle.italic,
-                          fontSize: 12.0.rx(isDesktop),
-                        ),
-                        filled: true,
-                        fillColor: Colors.black.withAlpha(50),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(
-                            10.0.rr(isDesktop),
+                        decoration: InputDecoration(
+                          labelText: AppConstants.receiverIpLabel,
+                          labelStyle: TextStyle(
+                            color: Colors.white60,
+                            fontSize: 13.0.rx(isDesktop),
                           ),
-                          borderSide: const BorderSide(color: Colors.white12),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(
-                            10.0.rr(isDesktop),
+                          filled: true,
+                          fillColor: Colors.black.withAlpha(50),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(
+                              10.rr(isDesktop),
+                            ),
+                            borderSide: BorderSide.none,
                           ),
-                          borderSide: const BorderSide(
-                            color: AppColors.primary,
-                          ),
+                          contentPadding: EdgeInsets.all(12.rr(isDesktop)),
                         ),
-                        disabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(
-                            10.0.rr(isDesktop),
-                          ),
-                          borderSide: const BorderSide(color: Colors.white10),
-                        ),
+                        enabled: !state.isTransferring,
                       ),
-                      enabled: !state.isTransferring,
-                    ),
-                    SizedBox(height: 20.0.rh(isDesktop)),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildSendButton(
-                            context,
-                            Icons.file_copy,
-                            AppConstants.sendFile,
-                            false,
-                            state,
-                            isDesktop,
+                      SizedBox(height: 15.rh(isDesktop)),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildSendButton(
+                              context,
+                              Icons.file_copy,
+                              AppConstants.sendFile,
+                              false,
+                              state,
+                              isDesktop,
+                            ),
                           ),
-                        ),
-                        SizedBox(width: 15.0.rw(isDesktop)),
-                        Expanded(
-                          child: _buildSendButton(
-                            context,
-                            Icons.folder,
-                            AppConstants.sendFolder,
-                            true,
-                            state,
-                            isDesktop,
+                          SizedBox(width: 10.rw(isDesktop)),
+                          Expanded(
+                            child: _buildSendButton(
+                              context,
+                              Icons.folder,
+                              AppConstants.sendFolder,
+                              true,
+                              state,
+                              isDesktop,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
+                        ],
+                      ),
+                    ] else ...[
+                      // Simple Mode (Discovery)
+                      NearbyDevicesList(isDesktop: isDesktop),
+                    ],
                     AnimatedSwitcher(
                       duration: const Duration(milliseconds: 350),
                       switchInCurve: Curves.easeInOutCubic,
@@ -162,7 +179,11 @@ class SenderSectionState extends State<SenderSection> {
                               ),
                             );
                           },
-                      child: (state.isTransferring && !state.isReceiving)
+                      child:
+                          (state.isTransferring &&
+                              !state.model.status.toLowerCase().contains(
+                                "receiv",
+                              ))
                           ? Column(
                               key: const ValueKey('cancel_btn'),
                               children: [
@@ -227,22 +248,28 @@ class SenderSectionState extends State<SenderSection> {
       isDesktop: isDesktop,
       onPressed: state.isTransferring ? null : () => _pick(context, isFolder),
       gradientColors: const [AppColors.primary, AppColors.primaryLight],
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, color: Colors.white, size: 20.0.rx(isDesktop)),
-          SizedBox(width: 8.0.rw(isDesktop)),
-          Text(
-            text,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 14.0.rx(isDesktop),
-              fontWeight: FontWeight.bold,
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: 4.rw(isDesktop)),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: Colors.white, size: 18.0.rx(isDesktop)),
+            SizedBox(width: 4.0.rw(isDesktop)),
+            Flexible(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  text,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 13.0.rx(isDesktop),
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
