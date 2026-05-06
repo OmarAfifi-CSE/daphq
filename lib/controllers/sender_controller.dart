@@ -115,6 +115,10 @@ class SenderController {
                     readyCompleter.completeError(
                       "Transfer Rejected by Receiver.",
                     );
+                  } else {
+                    // If already transferring, trigger a cancellation
+                    _isCancelled = true;
+                    socket.destroy();
                   }
                 } else if (response["s"] == "r") {
                   if (!readyCompleter.isCompleted) {
@@ -177,16 +181,18 @@ class SenderController {
           await for (var chunk in reader) {
             if (_isCancelled) throw "Transfer Cancelled";
             try {
+              if (_isCancelled) throw "Transfer Cancelled";
               socket.add(chunk);
               bytesBuffered += chunk.length;
               if (bytesBuffered >= AppConstants.socketFlushThresholdBytes) {
                 await socket.flush(); // Prevent OOM by awaiting buffer flush
                 bytesBuffered = 0;
               }
-            } on SocketException {
-              throw "Network disconnected during transfer.";
-            } on StateError {
+            } catch (e) {
               if (_isCancelled) throw "Transfer Cancelled";
+              if (e is SocketException || e.toString().contains("reset by peer")) {
+                throw "Receiver disconnected during transfer.";
+              }
               rethrow;
             }
 

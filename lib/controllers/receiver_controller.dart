@@ -106,6 +106,16 @@ class ReceiverController {
       );
 
       await for (Socket client in _server!) {
+        // If we already have an active transfer, reject the new one immediately
+        if (_activeClient != null || _activeSink != null) {
+          try {
+            client.write("${jsonEncode({"status": "REJECTED", "reason": "BUSY"})}\n");
+            await client.flush();
+            client.destroy();
+          } catch (_) {}
+          continue;
+        }
+
         _activeClient = client;
         try {
           Stopwatch stopwatch = Stopwatch()..start();
@@ -337,7 +347,7 @@ class ReceiverController {
 
           // Check for premature connection drop
           if (metadata != null && received < totalExpectedBytes) {
-            throw "Connection dropped prematurely.";
+            throw "Transfer cancelled by the other device.";
           }
 
           stopwatch.stop();
@@ -416,14 +426,22 @@ class ReceiverController {
   /// Stops the receiver server and cancels any active transfer.
   void stop() {
     _isCancelled = true;
+
+    if (_activeClient != null) {
+      try {
+        _activeClient!.write("${jsonEncode({"status": "REJECTED"})}\n");
+        _activeClient!.flush().then((_) {
+          _activeClient?.destroy();
+          _activeClient = null;
+        });
+      } catch (_) {}
+    }
+
     _server?.close();
     _server = null;
 
     _activeSink?.close();
     _activeSink = null;
-
-    _activeClient?.destroy();
-    _activeClient = null;
   }
 
   /// Maps a [SocketException] to a user-friendly error message for receiver.
