@@ -18,6 +18,7 @@ class TransferState {
   final TransferModel model;
   final bool isTransferring;
   final bool isReceiving;
+  final bool isReceivingActive;
   final String? receiveFolder;
   final String targetIp;
 
@@ -39,6 +40,7 @@ class TransferState {
     required this.model,
     this.isTransferring = false,
     this.isReceiving = false,
+    this.isReceivingActive = false,
     this.receiveFolder,
     String? targetIp,
     this.discoveredDevices = const [],
@@ -57,6 +59,7 @@ class TransferState {
     TransferModel? model,
     bool? isTransferring,
     bool? isReceiving,
+    bool? isReceivingActive,
     String? receiveFolder,
     String? targetIp,
     List<DiscoveryModel>? discoveredDevices,
@@ -77,6 +80,7 @@ class TransferState {
       model: model ?? this.model,
       isTransferring: isTransferring ?? this.isTransferring,
       isReceiving: isReceiving ?? this.isReceiving,
+      isReceivingActive: isReceivingActive ?? this.isReceivingActive,
       receiveFolder: receiveFolder ?? this.receiveFolder,
       targetIp: targetIp ?? this.targetIp,
       discoveredDevices: discoveredDevices ?? this.discoveredDevices,

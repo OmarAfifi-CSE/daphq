@@ -244,7 +244,7 @@ class TransferCubit extends Cubit<TransferState> {
     emit(
       state.copyWith(
         isReceiving: false,
-        isTransferring: false,
+        isReceivingActive: false,
         clearFeedback: true,
         model: TransferModel(status: "Receiver Stopped"),
       ),
@@ -271,7 +271,7 @@ class TransferCubit extends Cubit<TransferState> {
     _receiver.startReceiver(
       saveDirectory: state.receiveFolder!,
       onUpdate: (model) {
-        bool isBusy = state.isTransferring;
+        bool isBusy = false;
         String s = model.status.toLowerCase();
         if (s.contains("ready & waiting") ||
             s.contains("complete") ||
@@ -284,7 +284,7 @@ class TransferCubit extends Cubit<TransferState> {
         }
 
         if (!isClosed) {
-          emit(state.copyWith(model: model, isTransferring: isBusy));
+          emit(state.copyWith(model: model, isReceivingActive: isBusy));
         }
         
         if (Platform.isAndroid && state.isReceiving) {
@@ -415,6 +415,9 @@ class TransferCubit extends Cubit<TransferState> {
       ),
     );
 
+    // Clear selection immediately so it doesn't pop back on error
+    emit(state.copyWith(clearSelection: true));
+
     try {
       await _sender.sendData(
         paths: itemsToSend,
@@ -442,7 +445,6 @@ class TransferCubit extends Cubit<TransferState> {
           state.copyWith(
             isTransferring: false,
             clearFeedback: true,
-            clearSelection: true,
             model: TransferModel(status: "Transfer Complete!"),
           ),
         );
