@@ -31,7 +31,8 @@ class DiscoveryService {
   bool isDiscoverable = true;
   bool _running = false;
   bool _isReopening = false;
-
+  
+  bool _watchdogActive = false;
   int _retryCount = 0;
   int _currentBackoffSeconds = 3;
 
@@ -57,7 +58,7 @@ class DiscoveryService {
     _broadcastTimer = Timer.periodic(
       const Duration(seconds: AppConstants.discoveryIntervalSeconds),
       (_) {
-        if (_running && isDiscoverable) {
+        if (_running && isDiscoverable && _socket != null) {
           _broadcastPresence(deviceName, isOnline: true);
         }
       },
@@ -89,6 +90,7 @@ class DiscoveryService {
 
   Future<void> stop() async {
     _running = false;
+    _watchdogActive = false;
     _updateStatus(ServiceStatus.idle);
     _reopenTimer?.cancel();
     _broadcastTimer?.cancel();
@@ -107,7 +109,7 @@ class DiscoveryService {
     String deviceName,
   ) async {
     if (!_running) return;
-    
+
     _discoveredDevices.clear();
     _devicesController.add([]);
     await _updateLocalIps();
@@ -116,6 +118,7 @@ class DiscoveryService {
     _reopenTimer = null;
     _watchdogTimer?.cancel();
     _watchdogTimer = null;
+    _watchdogActive = false;
     _isReopening = false;
     _retryCount = 0;
     _currentBackoffSeconds = 3;
@@ -177,6 +180,7 @@ class DiscoveryService {
       _isReopening = false;
       _retryCount = 0;
       _currentBackoffSeconds = 3;
+      _watchdogActive = false;
       _updateStatus(ServiceStatus.discovering);
 
       _broadcastPresence(deviceName, isOnline: true);
@@ -333,9 +337,11 @@ class DiscoveryService {
 
   void _startFailedStateWatchdog(String deviceName) {
     _watchdogTimer?.cancel();
+    _watchdogActive = true;
     _watchdogTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
-      if (!_running || _retryCount == 0) {
+      if (!_running || !_watchdogActive) {
         timer.cancel();
+        _watchdogActive = false;
         return;
       }
 
@@ -344,6 +350,7 @@ class DiscoveryService {
 
       if (!setEquals(oldIps, _localIps)) {
         timer.cancel();
+        _watchdogActive = false;
         forceReopen();
       }
     });
