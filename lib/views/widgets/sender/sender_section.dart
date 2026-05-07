@@ -155,6 +155,47 @@ class SenderSectionState extends State<SenderSection> {
                       // Simple Mode (Discovery)
                       NearbyDevicesList(isDesktop: isDesktop),
                     ],
+                    // Selection Banner
+                    if (state.selectedPaths.isNotEmpty && !state.isTransferring) ...[
+                      SizedBox(height: 15.rh(isDesktop)),
+                      Container(
+                        padding: EdgeInsets.symmetric(horizontal: 12.rw(isDesktop), vertical: 8.rh(isDesktop)),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withAlpha(20),
+                          borderRadius: BorderRadius.circular(10.rr(isDesktop)),
+                          border: Border.all(color: AppColors.primary.withAlpha(50)),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.check_circle_outline_rounded, color: AppColors.primary, size: 18.rx(isDesktop)),
+                            SizedBox(width: 10.rw(isDesktop)),
+                            Expanded(
+                              child: Text(
+                                "${state.selectedPaths.length} items ready to send",
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13.rx(isDesktop),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: () => context.read<TransferCubit>().clearSelection(),
+                              style: TextButton.styleFrom(
+                                padding: EdgeInsets.symmetric(horizontal: 10.rw(isDesktop)),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              child: Text(
+                                "Clear",
+                                style: TextStyle(color: AppColors.danger, fontSize: 12.rx(isDesktop)),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+
                     AnimatedSwitcher(
                       duration: const Duration(milliseconds: 350),
                       switchInCurve: Curves.easeInOutCubic,
@@ -183,11 +224,7 @@ class SenderSectionState extends State<SenderSection> {
                               ),
                             );
                           },
-                      child:
-                          (state.isTransferring &&
-                              !state.model.status.toLowerCase().contains(
-                                "receiv",
-                              ))
+                      child: state.isTransferring
                           ? Column(
                               key: const ValueKey('cancel_btn'),
                               children: [

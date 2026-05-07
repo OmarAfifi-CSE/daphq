@@ -32,6 +32,7 @@ class _UnifiedAddButtonState extends State<UnifiedAddButton> {
   void _showMobileMenu(BuildContext context, TransferCubit cubit) {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: AppColors.dialogBackground,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -39,14 +40,16 @@ class _UnifiedAddButtonState extends State<UnifiedAddButton> {
       builder: (context) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildMobileItem(context, 1, Icons.insert_drive_file_outlined, "All Files", "Browse any file", cubit),
-              _buildMobileItem(context, 2, Icons.folder_outlined, "Folders", "Select full directories", cubit),
-              _buildMobileItem(context, 3, Icons.image_outlined, "Images", "Gallery photos", cubit),
-              _buildMobileItem(context, 4, Icons.movie_outlined, "Videos", "Camera recordings", cubit),
-            ],
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildMobileItem(context, 1, Icons.insert_drive_file_outlined, "All Files", "Browse any file", cubit),
+                _buildMobileItem(context, 2, Icons.folder_outlined, "Folders", "Select full directories", cubit),
+                _buildMobileItem(context, 3, Icons.image_outlined, "Images", "Gallery photos", cubit),
+                _buildMobileItem(context, 4, Icons.movie_outlined, "Videos", "Camera recordings", cubit),
+              ],
+            ),
           ),
         ),
       ),
