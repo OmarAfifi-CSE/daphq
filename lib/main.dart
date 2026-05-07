@@ -9,6 +9,7 @@ import 'views/home_page.dart';
 import 'cubits/transfer_cubit.dart';
 import 'core/app_constants.dart';
 import 'core/app_colors.dart';
+import 'services/sharing_service.dart';
 
 @pragma('vm:entry-point')
 void startCallback() {
@@ -143,7 +144,7 @@ class DaphqApp extends StatelessWidget {
                   visualDensity: VisualDensity.adaptivePlatformDensity,
                   fontFamily: 'Roboto',
                 ),
-                home: const HomePage(),
+                home: const _AppInit(child: HomePage()),
               ),
             );
           },
@@ -151,4 +152,29 @@ class DaphqApp extends StatelessWidget {
       },
     );
   }
+}
+
+class _AppInit extends StatefulWidget {
+  final Widget child;
+  const _AppInit({required this.child});
+
+  @override
+  State<_AppInit> createState() => _AppInitState();
+}
+
+class _AppInitState extends State<_AppInit> {
+  @override
+  void initState() {
+    super.initState();
+    SharingService.init(context);
+  }
+
+  @override
+  void dispose() {
+    SharingService.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
