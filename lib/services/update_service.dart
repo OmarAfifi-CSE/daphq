@@ -42,9 +42,8 @@ class UpdateService {
           );
         }
       }
-    } catch (e) {
-      // Silently fail if network is down or API limits are reached
-      debugPrint('Error checking for updates: $e');
+    } catch (_) {
+      // Silently fail
     }
   }
 
@@ -83,8 +82,7 @@ class UpdateService {
         if (r < l) return false;
       }
       return false;
-    } catch (e) {
-      debugPrint('Error parsing versions: $e');
+    } catch (_) {
       return false;
     }
   }

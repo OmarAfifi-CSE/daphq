@@ -19,9 +19,9 @@ class UpdateDialog extends StatelessWidget {
 
   Future<void> _launchUpdateUrl() async {
     final Uri url = Uri.parse(downloadUrl);
-    if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
-      debugPrint('Could not launch $url');
-    }
+    try {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    } catch (_) {}
   }
 
   @override

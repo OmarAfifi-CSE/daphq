@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
@@ -19,17 +21,32 @@ import '../main.dart';
 class TransferCubit extends Cubit<TransferState> {
   final SenderController _sender = SenderController();
   final ReceiverController _receiver = ReceiverController();
-  final DiscoveryService _discovery = DiscoveryService();
-
+  final DiscoveryService discoveryService = DiscoveryService();
+  
   Completer<bool>? _authCompleter;
   Completer<bool>? _notifCompleter;
   StreamSubscription? _discoverySubscription;
+  StreamSubscription? _connectivitySubscription;
 
   TransferCubit() : super(TransferState(model: TransferModel())) {
     FlutterForegroundTask.addTaskDataCallback(_onReceiveTaskData);
+    _initConnectivityListener();
     _initDiscovery();
     _startReceiverAutomatically();
   }
+
+  void _initConnectivityListener() {
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((results) async {
+      if (isClosed) return;
+      
+      // If receiver was active, restart it to bind to new IP
+      if (state.isReceiving) {
+        startReceiver();
+      }
+    });
+  }
+
+  DiscoveryService get discovery => discoveryService;
 
   Future<void> _initDiscovery() async {
     String deviceName = 'Unknown Device';
@@ -57,13 +74,13 @@ class TransferCubit extends Cubit<TransferState> {
 
     emit(state.copyWith(deviceName: deviceName));
     
-    _discoverySubscription = _discovery.devicesStream.listen((devices) {
+    _discoverySubscription = discoveryService.devicesStream.listen((devices) {
       if (!isClosed) {
         emit(state.copyWith(discoveredDevices: devices));
       }
     });
 
-    _discovery.startDiscovery(deviceName);
+    discoveryService.startDiscovery(deviceName);
   }
 
   Future<void> _startReceiverAutomatically() async {
@@ -240,7 +257,7 @@ class TransferCubit extends Cubit<TransferState> {
 
   void stopReceiver() {
     _receiver.stop();
-    _discovery.triggerBroadcast(isOnline: false); // Signal other devices to remove us instantly
+    discoveryService.triggerBroadcast(isOnline: false); // Signal other devices to remove us instantly
     emit(
       state.copyWith(
         isReceiving: false,
@@ -258,7 +275,7 @@ class TransferCubit extends Cubit<TransferState> {
     if (!await _prepareRequirements()) return;
 
     emit(state.copyWith(isReceiving: true, isTransferring: false));
-    _discovery.triggerBroadcast(); // Signal other devices immediately
+    discoveryService.triggerBroadcast(); // Signal other devices immediately
     await _startForegroundService(
       AppConstants.appName,
       "Waiting for incoming files...",
@@ -324,6 +341,11 @@ class TransferCubit extends Cubit<TransferState> {
             notificationTitle: AppConstants.appName,
             notificationText: 'Receiver idle...',
           );
+        }
+        
+        // Ensure UI reflects that receiver is no longer active
+        if (!isClosed) {
+          emit(state.copyWith(isReceiving: false, isReceivingActive: false));
         }
       },
     );
@@ -486,7 +508,8 @@ class TransferCubit extends Cubit<TransferState> {
   Future<void> close() {
     FlutterForegroundTask.removeTaskDataCallback(_onReceiveTaskData);
     _discoverySubscription?.cancel();
-    _discovery.stop();
+    _connectivitySubscription?.cancel();
+    discoveryService.stop();
     _receiver.stop();
     _stopForegroundService();
     return super.close();

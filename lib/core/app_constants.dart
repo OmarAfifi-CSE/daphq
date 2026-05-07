@@ -88,4 +88,16 @@ class AppConstants {
   // --- Layout Constants ---
   static const double borderRadius = 15.0;
   static const double cardPadding = 12.0;
+
+  // --- Discovery Status ---
+  static const String discoveryConflictTitle = 'Windows Hotspot conflict detected';
+  static const String discoveryConflictHowTo = 'How to fix this?';
+  static const String discoveryConflictDesc = 'Windows ICS (Hotspot) is blocking the network port.';
+  static const String discoveryConflictStep1 = '1. Turn OFF Windows Hotspot.';
+  static const String discoveryConflictStep2 = '2. Wait 5 seconds (Cooldown).';
+  static const String discoveryConflictStep3 = '3. Turn Hotspot back ON.';
+  static const String discoveryConflictGotIt = 'Got it';
+  static const String discoveryConflictTryAgain = 'Try Again Now';
+  static const String discoveryStatusConnected = 'Connected';
+  static const String discoveryStatusSearching = 'Searching for network...';
 }

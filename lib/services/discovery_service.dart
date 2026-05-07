@@ -6,17 +6,24 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import '../models/discovery_model.dart';
 import '../core/app_constants.dart';
 
+enum ServiceStatus { idle, discovering, recovering, failed }
+
 class DiscoveryService {
+
   RawDatagramSocket? _socket;
 
   final StreamController<List<DiscoveryModel>> _devicesController =
       StreamController<List<DiscoveryModel>>.broadcast();
+
+  final StreamController<ServiceStatus> _statusController =
+      StreamController<ServiceStatus>.broadcast();
 
   final Map<String, DiscoveryModel> _discoveredDevices = {};
 
   Timer? _broadcastTimer;
   Timer? _cleanupTimer;
   Timer? _reopenTimer;
+  Timer? _watchdogTimer;
   StreamSubscription? _connectivitySubscription;
 
   Set<String> _localIps = {};
@@ -25,7 +32,16 @@ class DiscoveryService {
   bool _running = false;
   bool _isReopening = false;
 
+  int _retryCount = 0;
+  int _currentBackoffSeconds = 3;
+
   Stream<List<DiscoveryModel>> get devicesStream => _devicesController.stream;
+  Stream<ServiceStatus> get statusStream => _statusController.stream;
+
+  void _updateStatus(ServiceStatus status) {
+    if (_statusController.isClosed) return;
+    _statusController.add(status);
+  }
 
   // ── Public API ─────────────────────────────────────────
 
@@ -33,6 +49,7 @@ class DiscoveryService {
     if (_running) return;
     _running = true;
     _lastDeviceName = deviceName;
+    _updateStatus(ServiceStatus.discovering);
 
     await _updateLocalIps();
     await _openSocket(deviceName);
@@ -63,13 +80,22 @@ class DiscoveryService {
     }
   }
 
+  Future<void> forceReopen() async {
+    if (!_running || _lastDeviceName == null) return;
+    _retryCount = 0;
+    _currentBackoffSeconds = 3;
+    await _openSocket(_lastDeviceName!);
+  }
+
   Future<void> stop() async {
     _running = false;
+    _updateStatus(ServiceStatus.idle);
     _reopenTimer?.cancel();
     _broadcastTimer?.cancel();
     _cleanupTimer?.cancel();
+    _watchdogTimer?.cancel();
     await _connectivitySubscription?.cancel();
-    _reopenTimer = _broadcastTimer = _cleanupTimer = null;
+    _reopenTimer = _broadcastTimer = _cleanupTimer = _watchdogTimer = null;
     _connectivitySubscription = null;
     _safeCloseSocket();
   }
@@ -81,15 +107,18 @@ class DiscoveryService {
     String deviceName,
   ) async {
     if (!_running) return;
-    debugPrint('🔄 Network changed: $results');
-
+    
     _discoveredDevices.clear();
     _devicesController.add([]);
     await _updateLocalIps();
 
     _reopenTimer?.cancel();
     _reopenTimer = null;
+    _watchdogTimer?.cancel();
+    _watchdogTimer = null;
     _isReopening = false;
+    _retryCount = 0;
+    _currentBackoffSeconds = 3;
 
     await _openSocket(deviceName);
   }
@@ -103,7 +132,6 @@ class DiscoveryService {
 
   Future<void> _openSocket(String deviceName) async {
     if (_isReopening) {
-      debugPrint('⏳ Socket open already in progress — skipping');
       return;
     }
     _isReopening = true;
@@ -139,8 +167,7 @@ class DiscoveryService {
         },
         onError: (error) {
           if (!_running) return;
-          final code = (error is SocketException) ? error.osError?.errorCode : null;
-          debugPrint('⚠ Socket error [errno $code] — reopening in 4s...');
+          _updateStatus(ServiceStatus.recovering);
           _safeCloseSocket();
           _scheduleReopen(deviceName, delay: const Duration(seconds: 4));
         },
@@ -148,21 +175,39 @@ class DiscoveryService {
       );
 
       _isReopening = false;
-      debugPrint('✅ Socket opened on port ${AppConstants.discoveryPort}');
+      _retryCount = 0;
+      _currentBackoffSeconds = 3;
+      _updateStatus(ServiceStatus.discovering);
+
       _broadcastPresence(deviceName, isOnline: true);
     } on SocketException catch (e) {
       final code = e.osError?.errorCode;
       _safeCloseSocket();
       _isReopening = false;
-      final delay = code == 10013
-          ? const Duration(seconds: 6)
-          : const Duration(seconds: 3);
-      debugPrint('⚠ Bind failed [errno $code] — retry in ${delay.inSeconds}s');
+
+      Duration delay;
+      if (Platform.isWindows && code == 10013) {
+        _retryCount++;
+        if (_retryCount > 1) {
+          _updateStatus(ServiceStatus.failed);
+          if (Platform.isWindows) {
+            // Update baseline IPs before starting watchdog to avoid false triggers
+            _updateLocalIps().then((_) => _startFailedStateWatchdog(deviceName));
+          }
+          return;
+        }
+        _updateStatus(ServiceStatus.recovering);
+        delay = Duration(seconds: _currentBackoffSeconds);
+        _currentBackoffSeconds = (_currentBackoffSeconds * 2).clamp(3, 30);
+      } else {
+        delay = const Duration(seconds: 3);
+        _updateStatus(ServiceStatus.recovering);
+      }
       _scheduleReopen(deviceName, delay: delay);
     } catch (e) {
-      debugPrint('❌ Unexpected error: $e');
       _safeCloseSocket();
       _isReopening = false;
+      _updateStatus(ServiceStatus.recovering);
       _scheduleReopen(deviceName, delay: const Duration(seconds: 3));
     }
   }
@@ -282,5 +327,25 @@ class DiscoveryService {
           for (final a in i.addresses) a.address,
       };
     } catch (_) {}
+  }
+
+  // ── Watchdog ──────────────────────────────────────────
+
+  void _startFailedStateWatchdog(String deviceName) {
+    _watchdogTimer?.cancel();
+    _watchdogTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
+      if (!_running || _retryCount == 0) {
+        timer.cancel();
+        return;
+      }
+
+      final oldIps = Set<String>.from(_localIps);
+      await _updateLocalIps();
+
+      if (!setEquals(oldIps, _localIps)) {
+        timer.cancel();
+        forceReopen();
+      }
+    });
   }
 }

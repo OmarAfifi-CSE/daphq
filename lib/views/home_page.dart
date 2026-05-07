@@ -15,6 +15,7 @@ import '../cubits/transfer_cubit.dart';
 import '../cubits/transfer_state.dart';
 import 'widgets/receiver/auth_dialog.dart';
 import 'widgets/common/custom_snackbar.dart';
+import 'widgets/discovery_status_banner.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -211,8 +212,14 @@ class _HomePageState extends State<HomePage> {
           body: Container(
             color: AppColors.background,
             child: SafeArea(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
+              child: Column(
+                children: [
+                  DiscoveryStatusBanner(
+                    discoveryService: context.read<TransferCubit>().discovery,
+                  ),
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
                   bool isDesktopWide = constraints.maxWidth > 800;
                   final bool isDesktopOS =
                       Platform.isWindows ||
@@ -325,10 +332,12 @@ class _HomePageState extends State<HomePage> {
                 },
               ),
             ),
-          ),
+          ],
         ),
       ),
-    );
+    ),
+  ),
+));
   }
 
   Widget _animatedStagger({required int index, required Widget child}) {
