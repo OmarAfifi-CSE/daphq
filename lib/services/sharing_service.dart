@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:share_handler/share_handler.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -5,6 +6,8 @@ import '../cubits/transfer_cubit.dart';
 
 class SharingService {
   static void init(BuildContext context) async {
+    if (!Platform.isAndroid && !Platform.isIOS) return;
+
     final cubit = context.read<TransferCubit>();
     final handler = ShareHandlerPlatform.instance;
     
