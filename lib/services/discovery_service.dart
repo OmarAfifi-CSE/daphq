@@ -9,7 +9,6 @@ import '../core/app_constants.dart';
 enum ServiceStatus { idle, discovering, recovering, failed }
 
 class DiscoveryService {
-
   RawDatagramSocket? _socket;
 
   final StreamController<List<DiscoveryModel>> _devicesController =
@@ -31,13 +30,15 @@ class DiscoveryService {
   bool isDiscoverable = true;
   bool _running = false;
   bool _isReopening = false;
-  
+
   bool _watchdogActive = false;
   int _retryCount = 0;
   int _currentBackoffSeconds = 3;
 
   Stream<List<DiscoveryModel>> get devicesStream => _devicesController.stream;
   Stream<ServiceStatus> get statusStream => _statusController.stream;
+
+  // ── Status ─────────────────────────────────────────────
 
   void _updateStatus(ServiceStatus status) {
     if (_statusController.isClosed) return;
@@ -69,9 +70,9 @@ class DiscoveryService {
       (_) => _cleanupDevices(),
     );
 
-    _connectivitySubscription = Connectivity()
-        .onConnectivityChanged
-        .listen((results) => _onConnectivityChanged(results, deviceName));
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen(
+      (results) => _onConnectivityChanged(results, deviceName),
+    );
   }
 
   void triggerBroadcast({bool isOnline = true}) {
@@ -129,18 +130,17 @@ class DiscoveryService {
   // ── Socket Management ──────────────────────────────────
 
   void _safeCloseSocket() {
-    try { _socket?.close(); } catch (_) {}
+    try {
+      _socket?.close();
+    } catch (_) {}
     _socket = null;
   }
 
   Future<void> _openSocket(String deviceName) async {
-    if (_isReopening) {
-      return;
-    }
+    if (_isReopening) return;
     _isReopening = true;
 
     _safeCloseSocket();
-
     await Future.delayed(const Duration(milliseconds: 300));
 
     if (!_running) {
@@ -159,7 +159,11 @@ class DiscoveryService {
 
       await _updateLocalIps();
 
-      try { _socket!.joinMulticast(InternetAddress("224.0.0.1")); } catch (_) {}
+      if (!Platform.isAndroid) {
+        try {
+          _socket!.joinMulticast(InternetAddress("224.0.0.1"));
+        } catch (_) {}
+      }
 
       _socket!.listen(
         (RawSocketEvent event) {
@@ -170,11 +174,13 @@ class DiscoveryService {
         },
         onError: (error) {
           if (!_running) return;
+          if (Platform.isAndroid && error.toString().contains('errno = 101'))
+            return;
           _updateStatus(ServiceStatus.recovering);
           _safeCloseSocket();
           _scheduleReopen(deviceName, delay: const Duration(seconds: 4));
         },
-        cancelOnError: true,
+        cancelOnError: false,
       );
 
       _isReopening = false;
@@ -194,10 +200,7 @@ class DiscoveryService {
         _retryCount++;
         if (_retryCount > 1) {
           _updateStatus(ServiceStatus.failed);
-          if (Platform.isWindows) {
-            // Update baseline IPs before starting watchdog to avoid false triggers
-            _updateLocalIps().then((_) => _startFailedStateWatchdog(deviceName));
-          }
+          _updateLocalIps().then((_) => _startFailedStateWatchdog(deviceName));
           return;
         }
         _updateStatus(ServiceStatus.recovering);
@@ -259,15 +262,20 @@ class DiscoveryService {
 
   // ── Broadcasting ───────────────────────────────────────
 
-  Future<void> _broadcastPresence(String deviceName, {bool isOnline = true}) async {
+  Future<void> _broadcastPresence(
+    String deviceName, {
+    bool isOnline = true,
+  }) async {
     if (_socket == null) return;
 
     try {
-      final bytes = utf8.encode(jsonEncode({
-        'type': 'DAPHQ_DISCOVERY',
-        'name': deviceName,
-        'status': isOnline ? 'ONLINE' : 'OFFLINE',
-      }));
+      final bytes = utf8.encode(
+        jsonEncode({
+          'type': 'DAPHQ_DISCOVERY',
+          'name': deviceName,
+          'status': isOnline ? 'ONLINE' : 'OFFLINE',
+        }),
+      );
 
       final interfaces = await NetworkInterface.list(
         includeLoopback: false,
@@ -276,8 +284,11 @@ class DiscoveryService {
 
       for (final interface in interfaces) {
         final name = interface.name.toLowerCase();
-        if (name.contains('vbox') || name.contains('vmware') ||
-            name.contains('wsl')  || name.contains('veth')) continue;
+        if (name.contains('vbox') ||
+            name.contains('vmware') ||
+            name.contains('wsl') ||
+            name.contains('veth'))
+          continue;
 
         for (final addr in interface.addresses) {
           final parts = addr.address.split('.');
@@ -285,16 +296,49 @@ class DiscoveryService {
 
           final subnetBroadcast = '${parts[0]}.${parts[1]}.${parts[2]}.255';
 
-          try { _socket?.send(bytes, InternetAddress(subnetBroadcast),   AppConstants.discoveryPort); } catch (_) {}
-          try { _socket?.send(bytes, InternetAddress('255.255.255.255'), AppConstants.discoveryPort); } catch (_) {}
-          try { _socket?.send(bytes, InternetAddress('224.0.0.1'),       AppConstants.discoveryPort); } catch (_) {}
+          try {
+            _socket?.send(
+              bytes,
+              InternetAddress(subnetBroadcast),
+              AppConstants.discoveryPort,
+            );
+          } catch (_) {}
+
+          if (!Platform.isAndroid) {
+            try {
+              _socket?.send(
+                bytes,
+                InternetAddress('255.255.255.255'),
+                AppConstants.discoveryPort,
+              );
+            } catch (_) {}
+            try {
+              _socket?.send(
+                bytes,
+                InternetAddress('224.0.0.1'),
+                AppConstants.discoveryPort,
+              );
+            } catch (_) {}
+          }
 
           try {
-            final tmp = await RawDatagramSocket.bind(addr, 0)
-                .timeout(const Duration(milliseconds: 500));
+            final tmp = await RawDatagramSocket.bind(
+              addr,
+              0,
+            ).timeout(const Duration(milliseconds: 500));
             tmp.broadcastEnabled = true;
-            tmp.send(bytes, InternetAddress(subnetBroadcast),   AppConstants.discoveryPort);
-            tmp.send(bytes, InternetAddress('255.255.255.255'), AppConstants.discoveryPort);
+            tmp.send(
+              bytes,
+              InternetAddress(subnetBroadcast),
+              AppConstants.discoveryPort,
+            );
+            if (!Platform.isAndroid) {
+              tmp.send(
+                bytes,
+                InternetAddress('255.255.255.255'),
+                AppConstants.discoveryPort,
+              );
+            }
             tmp.close();
           } catch (_) {}
         }
