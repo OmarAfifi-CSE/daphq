@@ -100,4 +100,5 @@ class AppConstants {
   static const String discoveryConflictTryAgain = 'Try Again Now';
   static const String discoveryStatusConnected = 'Connected';
   static const String discoveryStatusSearching = 'Searching for network...';
+  static const String discoveryStatusNoConnection = 'No network connection';
 }

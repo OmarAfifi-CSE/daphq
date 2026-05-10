@@ -60,6 +60,7 @@ class _DiscoveryStatusBannerState extends State<DiscoveryStatusBanner> {
   Widget build(BuildContext context) {
     return StreamBuilder<ServiceStatus>(
       stream: widget.discoveryService.statusStream,
+      initialData: widget.discoveryService.status,
       builder: (context, snapshot) {
         final status = snapshot.data ?? ServiceStatus.idle;
 
@@ -154,6 +155,15 @@ class _DiscoveryStatusBannerState extends State<DiscoveryStatusBanner> {
           ),
           child: const Text(AppConstants.discoveryConflictHowTo),
         ),
+      );
+    }
+
+    if (status == ServiceStatus.noConnection) {
+      return _BannerContainer(
+        key: const ValueKey('no_connection'),
+        message: AppConstants.discoveryStatusNoConnection,
+        icon: Icons.signal_wifi_off_rounded,
+        color: AppColors.discoveryNoConnection,
       );
     }
 

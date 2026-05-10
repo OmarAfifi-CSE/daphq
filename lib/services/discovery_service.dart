@@ -6,7 +6,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import '../models/discovery_model.dart';
 import '../core/app_constants.dart';
 
-enum ServiceStatus { idle, discovering, recovering, failed }
+enum ServiceStatus { idle, discovering, recovering, failed, noConnection }
 
 class DiscoveryService {
   RawDatagramSocket? _socket;
@@ -17,12 +17,16 @@ class DiscoveryService {
   final StreamController<ServiceStatus> _statusController =
       StreamController<ServiceStatus>.broadcast();
 
+  ServiceStatus _status = ServiceStatus.idle;
+  ServiceStatus get status => _status;
+
   final Map<String, DiscoveryModel> _discoveredDevices = {};
 
   Timer? _broadcastTimer;
   Timer? _cleanupTimer;
   Timer? _reopenTimer;
   Timer? _watchdogTimer;
+  Timer? _connectivityPollTimer;
   StreamSubscription? _connectivitySubscription;
 
   Set<String> _localIps = {};
@@ -30,7 +34,6 @@ class DiscoveryService {
   bool isDiscoverable = true;
   bool _running = false;
   bool _isReopening = false;
-
   bool _watchdogActive = false;
   int _retryCount = 0;
   int _currentBackoffSeconds = 3;
@@ -38,28 +41,55 @@ class DiscoveryService {
   Stream<List<DiscoveryModel>> get devicesStream => _devicesController.stream;
   Stream<ServiceStatus> get statusStream => _statusController.stream;
 
-  // ── Status ─────────────────────────────────────────────
-
   void _updateStatus(ServiceStatus status) {
+    _status = status;
     if (_statusController.isClosed) return;
     _statusController.add(status);
+
+    if (status == ServiceStatus.noConnection) {
+      _startConnectivityPolling();
+    } else {
+      _connectivityPollTimer?.cancel();
+      _connectivityPollTimer = null;
+    }
   }
 
-  // ── Public API ─────────────────────────────────────────
+  void _startConnectivityPolling() {
+    _connectivityPollTimer?.cancel();
+    _connectivityPollTimer = Timer.periodic(const Duration(seconds: 3), (
+      timer,
+    ) async {
+      if (!_running || _status != ServiceStatus.noConnection) {
+        timer.cancel();
+        return;
+      }
+      if (await _hasLocalNetwork()) {
+        timer.cancel();
+        if (_lastDeviceName != null) {
+          await _openSocket(_lastDeviceName!);
+          _updateStatus(ServiceStatus.discovering);
+        }
+      }
+    });
+  }
 
   Future<void> startDiscovery(String deviceName) async {
     if (_running) return;
     _running = true;
     _lastDeviceName = deviceName;
-    _updateStatus(ServiceStatus.discovering);
 
     await _updateLocalIps();
-    await _openSocket(deviceName);
+
+    if (await _hasLocalNetwork()) {
+      await _openSocket(deviceName);
+    } else {
+      _updateStatus(ServiceStatus.noConnection);
+    }
 
     _broadcastTimer = Timer.periodic(
       const Duration(seconds: AppConstants.discoveryIntervalSeconds),
       (_) {
-        if (_running && isDiscoverable && _socket != null) {
+        if (_running && isDiscoverable) {
           _broadcastPresence(deviceName, isOnline: true);
         }
       },
@@ -71,7 +101,7 @@ class DiscoveryService {
     );
 
     _connectivitySubscription = Connectivity().onConnectivityChanged.listen(
-      (results) => _onConnectivityChanged(results, deviceName),
+      (_) => _onConnectivityChanged(deviceName),
     );
   }
 
@@ -103,12 +133,7 @@ class DiscoveryService {
     _safeCloseSocket();
   }
 
-  // ── Network Change ─────────────────────────────────────
-
-  Future<void> _onConnectivityChanged(
-    List<ConnectivityResult> results,
-    String deviceName,
-  ) async {
+  Future<void> _onConnectivityChanged(String deviceName) async {
     if (!_running) return;
 
     _discoveredDevices.clear();
@@ -124,10 +149,126 @@ class DiscoveryService {
     _retryCount = 0;
     _currentBackoffSeconds = 3;
 
+    if (!await _hasLocalNetwork()) {
+      _updateStatus(ServiceStatus.noConnection);
+      _safeCloseSocket();
+      return;
+    }
+
     await _openSocket(deviceName);
   }
 
-  // ── Socket Management ──────────────────────────────────
+  Future<bool> _hasLocalNetwork() async {
+    try {
+      final interfaces = await NetworkInterface.list(
+        includeLoopback: false,
+        type: InternetAddressType.IPv4,
+      );
+
+      if (!Platform.isWindows) {
+        return interfaces.any((iface) {
+          final name = iface.name.toLowerCase();
+          final isVirtual =
+              name.contains('vbox') ||
+              name.contains('vmware') ||
+              name.contains('wsl') ||
+              name.contains('veth') ||
+              name.contains('virtual') ||
+              name.contains('default switch') ||
+              name.contains('pseudo') ||
+              name.contains('teredo') ||
+              name.contains('bluetooth') ||
+              name.contains('tunnel') ||
+              name.contains('loopback') ||
+              name.contains('host-only') ||
+              name.contains('npcap') ||
+              name.contains('hyper-v') ||
+              name.contains('microsoft') ||
+              name.contains('wan miniport') ||
+              name.contains('agile') ||
+              name.contains('isatap') ||
+              name.contains('ras') ||
+              name.contains('vmnet') ||
+              name.contains('docker') ||
+              name.contains('tap') ||
+              name.contains('tun');
+          if (isVirtual) return false;
+          return iface.addresses.any((addr) {
+            final ip = addr.address;
+            return !addr.isLoopback &&
+                !ip.startsWith('169.254') &&
+                !ip.startsWith('127.') &&
+                !ip.startsWith('0.');
+          });
+        });
+      }
+
+      for (final iface in interfaces) {
+        final name = iface.name.toLowerCase();
+        final isVirtual =
+            name.contains('vbox') ||
+            name.contains('vmware') ||
+            name.contains('wsl') ||
+            name.contains('veth') ||
+            name.contains('virtual') ||
+            name.contains('default switch') ||
+            name.contains('pseudo') ||
+            name.contains('teredo') ||
+            name.contains('bluetooth') ||
+            name.contains('tunnel') ||
+            name.contains('loopback') ||
+            name.contains('host-only') ||
+            name.contains('npcap') ||
+            name.contains('hyper-v') ||
+            name.contains('microsoft') ||
+            name.contains('wan miniport') ||
+            name.contains('agile') ||
+            name.contains('isatap') ||
+            name.contains('ras') ||
+            name.contains('vmnet') ||
+            name.contains('docker') ||
+            name.contains('tap') ||
+            name.contains('tun');
+
+        if (isVirtual) continue;
+
+        for (final addr in iface.addresses) {
+          final ip = addr.address;
+          if (addr.isLoopback) continue;
+          if (ip.startsWith('169.254')) continue;
+          if (ip.startsWith('127.')) continue;
+          if (ip.startsWith('0.')) continue;
+
+          final parts = ip.split('.');
+          if (parts.length != 4) continue;
+          final gateway = '${parts[0]}.${parts[1]}.${parts[2]}.1';
+
+          try {
+            final sock = await Socket.connect(
+              gateway,
+              80,
+              sourceAddress: InternetAddress(ip),
+              timeout: const Duration(milliseconds: 800),
+            );
+            sock.destroy();
+            return true;
+          } on SocketException catch (e) {
+            final code = e.osError?.errorCode;
+            if (code == 111 || code == 10061 || code == 10060) {
+              return true;
+            }
+            continue;
+          } catch (_) {
+            continue;
+          }
+        }
+      }
+
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
 
   void _safeCloseSocket() {
     try {
@@ -227,17 +368,9 @@ class DiscoveryService {
     });
   }
 
-  // ── Packet Handling ────────────────────────────────────
-
   void _handlePacket(Datagram dg) {
-    if (!_localIps.contains(dg.address.address)) {
-      _updateLocalIps().then((_) {
-        if (_running && !_localIps.contains(dg.address.address)) {
-          _processPacket(dg);
-        }
-      });
-      return;
-    }
+    if (_localIps.contains(dg.address.address)) return;
+    _processPacket(dg);
   }
 
   void _processPacket(Datagram dg) {
@@ -259,8 +392,6 @@ class DiscoveryService {
       _devicesController.add(_discoveredDevices.values.toList());
     } catch (_) {}
   }
-
-  // ── Broadcasting ───────────────────────────────────────
 
   Future<void> _broadcastPresence(
     String deviceName, {
@@ -287,7 +418,11 @@ class DiscoveryService {
         if (name.contains('vbox') ||
             name.contains('vmware') ||
             name.contains('wsl') ||
-            name.contains('veth'))
+            name.contains('veth') ||
+            name.contains('virtual') ||
+            name.contains('default switch') ||
+            name.contains('pseudo') ||
+            name.contains('teredo'))
           continue;
 
         for (final addr in interface.addresses) {
@@ -346,9 +481,7 @@ class DiscoveryService {
     } catch (_) {}
   }
 
-  // ── Cleanup ────────────────────────────────────────────
-
-  void _cleanupDevices() {
+  void _cleanupDevices() async {
     final now = DateTime.now();
     bool changed = false;
     _discoveredDevices.removeWhere((ip, device) {
@@ -360,9 +493,14 @@ class DiscoveryService {
       return false;
     });
     if (changed) _devicesController.add(_discoveredDevices.values.toList());
-  }
 
-  // ── Helpers ────────────────────────────────────────────
+    if (_socket != null && _status == ServiceStatus.discovering) {
+      if (!await _hasLocalNetwork()) {
+        _updateStatus(ServiceStatus.noConnection);
+        _safeCloseSocket();
+      }
+    }
+  }
 
   Future<void> _updateLocalIps() async {
     try {
@@ -377,8 +515,6 @@ class DiscoveryService {
     } catch (_) {}
   }
 
-  // ── Watchdog ──────────────────────────────────────────
-
   void _startFailedStateWatchdog(String deviceName) {
     _watchdogTimer?.cancel();
     _watchdogActive = true;
@@ -389,10 +525,7 @@ class DiscoveryService {
         return;
       }
 
-      final oldIps = Set<String>.from(_localIps);
-      await _updateLocalIps();
-
-      if (!setEquals(oldIps, _localIps)) {
+      if (await _hasLocalNetwork()) {
         timer.cancel();
         _watchdogActive = false;
         forceReopen();
