@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
@@ -22,7 +21,7 @@ class TransferCubit extends Cubit<TransferState> {
   final SenderController _sender = SenderController();
   final ReceiverController _receiver = ReceiverController();
   final DiscoveryService discoveryService = DiscoveryService();
-  
+
   Completer<bool>? _authCompleter;
   Completer<bool>? _notifCompleter;
   StreamSubscription? _discoverySubscription;
@@ -36,9 +35,11 @@ class TransferCubit extends Cubit<TransferState> {
   }
 
   void _initConnectivityListener() {
-    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((results) async {
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((
+      results,
+    ) async {
       if (isClosed) return;
-      
+
       // If receiver was active, restart it to bind to new IP
       if (state.isReceiving) {
         startReceiver();
@@ -73,7 +74,7 @@ class TransferCubit extends Cubit<TransferState> {
     }
 
     emit(state.copyWith(deviceName: deviceName));
-    
+
     _discoverySubscription = discoveryService.devicesStream.listen((devices) {
       if (!isClosed) {
         emit(state.copyWith(discoveredDevices: devices));
@@ -86,7 +87,7 @@ class TransferCubit extends Cubit<TransferState> {
   Future<void> _startReceiverAutomatically() async {
     // Wait a bit for permissions to be handled in main.dart or _prepareRequirements
     await Future.delayed(const Duration(milliseconds: 1500));
-    
+
     if (state.isReceiving) return;
 
     String? defaultPath;
@@ -196,7 +197,6 @@ class TransferCubit extends Cubit<TransferState> {
     _triggerBatteryCheck(showedWarning);
     return true;
   }
-// ... rest of the file
 
   Future<void> _triggerBatteryCheck(bool showedWarning) async {
     bool isIgnoring = await Permission.ignoreBatteryOptimizations.isGranted;
@@ -257,13 +257,21 @@ class TransferCubit extends Cubit<TransferState> {
 
   void stopReceiver() {
     _receiver.stop();
-    discoveryService.triggerBroadcast(isOnline: false); // Signal other devices to remove us instantly
+    discoveryService.triggerBroadcast(
+      isOnline: false,
+    ); // Signal other devices to remove us instantly
     emit(
       state.copyWith(
         isReceiving: false,
         isReceivingActive: false,
         clearFeedback: true,
-        model: TransferModel(status: "Receiver Stopped"),
+        model: TransferModel(
+          status: "Receiver Stopped",
+          transferred: 0,
+          totalSize: 0,
+          progress: 0,
+          fileName: "",
+        ),
       ),
     );
     _stopForegroundService();
@@ -303,13 +311,15 @@ class TransferCubit extends Cubit<TransferState> {
         if (!isClosed) {
           emit(state.copyWith(model: model, isReceivingActive: isBusy));
         }
-        
+
         if (Platform.isAndroid && state.isReceiving) {
-          String title = isBusy ? 'Receiving: ${model.fileName}' : AppConstants.appName;
-          String text = isBusy 
+          String title = isBusy
+              ? 'Receiving: ${model.fileName}'
+              : AppConstants.appName;
+          String text = isBusy
               ? '${model.transferred.toStringAsFixed(2)} MB (${(model.progress * 100).toInt()}%) - ${model.speed.toStringAsFixed(1)} MB/s'
               : model.status;
-          
+
           FlutterForegroundTask.updateService(
             notificationTitle: title,
             notificationText: text,
@@ -342,7 +352,7 @@ class TransferCubit extends Cubit<TransferState> {
             notificationText: 'Receiver idle...',
           );
         }
-        
+
         // Ensure UI reflects that receiver is no longer active
         if (!isClosed) {
           emit(state.copyWith(isReceiving: false, isReceivingActive: false));
@@ -382,25 +392,34 @@ class TransferCubit extends Cubit<TransferState> {
   Future<void> pickItems(FileType type) async {
     try {
       String? initialDirectory;
-      
+
       // Smart folder opening for Desktop
       if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
-        final home = Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'];
+        final home =
+            Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'];
         if (home != null) {
           if (type == FileType.image) {
-            initialDirectory = p.join(home, Platform.isWindows ? 'Pictures' : 'Pictures');
+            initialDirectory = p.join(
+              home,
+              Platform.isWindows ? 'Pictures' : 'Pictures',
+            );
           } else if (type == FileType.video) {
-            initialDirectory = p.join(home, Platform.isWindows ? 'Videos' : 'Movies');
+            initialDirectory = p.join(
+              home,
+              Platform.isWindows ? 'Videos' : 'Movies',
+            );
           }
         }
       }
 
       final result = await FilePicker.pickFiles(
         allowMultiple: true,
-        type: (Platform.isWindows || Platform.isMacOS || Platform.isLinux) ? FileType.any : type,
+        type: (Platform.isWindows || Platform.isMacOS || Platform.isLinux)
+            ? FileType.any
+            : type,
         initialDirectory: initialDirectory,
       );
-      
+
       if (result != null) {
         addSelectedPaths(result.paths.whereType<String>().toList());
       }
@@ -422,7 +441,11 @@ class TransferCubit extends Cubit<TransferState> {
 
   Future<void> sendData({List<String>? paths}) async {
     final itemsToSend = paths ?? state.selectedPaths;
-    if (itemsToSend.isEmpty || state.isTransferring || state.targetIp.trim().isEmpty) return;
+    if (itemsToSend.isEmpty ||
+        state.isTransferring ||
+        state.targetIp.trim().isEmpty) {
+      return;
+    }
 
     if (!await _prepareRequirements()) return;
 
@@ -463,13 +486,7 @@ class TransferCubit extends Cubit<TransferState> {
       );
 
       if (!isClosed) {
-        emit(
-          state.copyWith(
-            isTransferring: false,
-            clearFeedback: true,
-            model: TransferModel(status: "Transfer Complete!"),
-          ),
-        );
+        emit(state.copyWith(isTransferring: false, clearFeedback: true));
       }
 
       if (state.isReceiving) {
@@ -494,7 +511,13 @@ class TransferCubit extends Cubit<TransferState> {
           state.copyWith(
             isTransferring: false,
             errorMessage: e.toString(),
-            model: TransferModel(status: "Error: $e"),
+            model: TransferModel(
+              status: "$e. Ready & Waiting...",
+              transferred: state.model.transferred,
+              totalSize: state.model.totalSize,
+              progress: state.model.progress,
+              fileName: state.model.fileName,
+            ),
           ),
         );
       }
@@ -521,7 +544,13 @@ class TransferCubit extends Cubit<TransferState> {
       state.copyWith(
         isTransferring: false,
         clearFeedback: true,
-        model: TransferModel(status: "Transfer Cancelled"),
+        model: TransferModel(
+          status: "Transfer Cancelled",
+          transferred: state.model.transferred,
+          totalSize: state.model.totalSize,
+          progress: state.model.progress,
+          fileName: state.model.fileName,
+        ),
       ),
     );
     if (state.isReceiving) {

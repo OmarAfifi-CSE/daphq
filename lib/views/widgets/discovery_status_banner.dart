@@ -78,8 +78,8 @@ class _DiscoveryStatusBannerState extends State<DiscoveryStatusBanner> {
 
   Widget _buildContent(ServiceStatus status) {
     if (_showConnected) {
-      return _BannerContainer(
-        key: const ValueKey('connected'),
+      return const _BannerContainer(
+        key: ValueKey('connected'),
         message: AppConstants.discoveryStatusConnected,
         icon: Icons.check_circle_rounded,
         color: AppColors.discoverySuccess,
@@ -87,8 +87,8 @@ class _DiscoveryStatusBannerState extends State<DiscoveryStatusBanner> {
     }
 
     if (status == ServiceStatus.recovering) {
-      return _BannerContainer(
-        key: const ValueKey('recovering'),
+      return const _BannerContainer(
+        key: ValueKey('recovering'),
         message: AppConstants.discoveryStatusSearching,
         icon: Icons.loop_rounded,
         isSpinning: true,
@@ -151,7 +151,7 @@ class _DiscoveryStatusBannerState extends State<DiscoveryStatusBanner> {
           },
           style: TextButton.styleFrom(
             foregroundColor: Colors.white,
-            backgroundColor: Colors.white.withOpacity(0.15),
+            backgroundColor: Colors.white.withValues(alpha: 0.15),
           ),
           child: const Text(AppConstants.discoveryConflictHowTo),
         ),
@@ -159,8 +159,8 @@ class _DiscoveryStatusBannerState extends State<DiscoveryStatusBanner> {
     }
 
     if (status == ServiceStatus.noConnection) {
-      return _BannerContainer(
-        key: const ValueKey('no_connection'),
+      return const _BannerContainer(
+        key: ValueKey('no_connection'),
         message: AppConstants.discoveryStatusNoConnection,
         icon: Icons.signal_wifi_off_rounded,
         color: AppColors.discoveryNoConnection,
@@ -211,6 +211,7 @@ class _BannerContainer extends StatelessWidget {
                 ),
               ),
             ),
+            // ignore: use_null_aware_elements
             if (trailing != null) trailing!,
           ],
         ),

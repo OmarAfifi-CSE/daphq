@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../models/discovery_model.dart';
 import '../core/app_constants.dart';
@@ -310,13 +309,16 @@ class DiscoveryService {
         (RawSocketEvent event) {
           if (event == RawSocketEvent.read) {
             final dg = _socket?.receive();
-            if (dg != null) _handlePacket(dg);
+            if (dg != null) {
+              _handlePacket(dg);
+            }
           }
         },
         onError: (error) {
           if (!_running) return;
-          if (Platform.isAndroid && error.toString().contains('errno = 101'))
+          if (Platform.isAndroid && error.toString().contains('errno = 101')) {
             return;
+          }
           _updateStatus(ServiceStatus.recovering);
           _safeCloseSocket();
           _scheduleReopen(deviceName, delay: const Duration(seconds: 4));
@@ -422,12 +424,15 @@ class DiscoveryService {
             name.contains('virtual') ||
             name.contains('default switch') ||
             name.contains('pseudo') ||
-            name.contains('teredo'))
+            name.contains('teredo')) {
           continue;
+        }
 
         for (final addr in interface.addresses) {
           final parts = addr.address.split('.');
-          if (parts.length != 4) continue;
+          if (parts.length != 4) {
+            continue;
+          }
 
           final subnetBroadcast = '${parts[0]}.${parts[1]}.${parts[2]}.255';
 
