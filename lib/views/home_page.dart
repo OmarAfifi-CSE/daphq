@@ -5,7 +5,7 @@ import 'package:window_manager/window_manager.dart';
 import '../core/app_colors.dart';
 import '../services/update_service.dart';
 import '../core/app_constants.dart';
-import 'widgets/common/instructions_card.dart';
+import 'widgets/common/info_dialog.dart';
 import 'widgets/common/transfer_progress_view.dart';
 import 'widgets/receiver/receiver_section.dart';
 import 'widgets/sender/sender_section.dart';
@@ -44,15 +44,14 @@ class _HomePageState extends State<HomePage> {
             (previous.errorMessage != current.errorMessage &&
                 current.errorMessage != null) ||
             (previous.showStorageSettingsDialog !=
-                current.showStorageSettingsDialog &&
+                    current.showStorageSettingsDialog &&
                 current.showStorageSettingsDialog) ||
             (previous.showNotificationWarningDialog !=
-                current.showNotificationWarningDialog &&
+                    current.showNotificationWarningDialog &&
                 current.showNotificationWarningDialog),
         listener: (context, state) {
           final cubit = context.read<TransferCubit>();
 
-          // 1. Handle Error Messages
           if (state.errorMessage != null) {
             CustomSnackBar.show(
               context,
@@ -62,7 +61,6 @@ class _HomePageState extends State<HomePage> {
             cubit.clearFeedback();
           }
 
-          // 2. Handle Battery Optimization Suggestion
           if (state.showBatteryOptimizationSnackBar) {
             CustomSnackBar.show(
               context,
@@ -78,7 +76,6 @@ class _HomePageState extends State<HomePage> {
             cubit.clearFeedback();
           }
 
-          // 3. Handle Permission Settings Dialogs (Storage / Notifications)
           if (state.showStorageSettingsDialog) {
             showDialog(
               context: context,
@@ -157,7 +154,6 @@ class _HomePageState extends State<HomePage> {
             cubit.clearFeedback();
           }
 
-          // 4. Handle Incoming Connection Authorization (Auth Request)
           if (state.authRequest != null) {
             showAuthDialog(
               context: context,
@@ -195,6 +191,22 @@ class _HomePageState extends State<HomePage> {
                             fontWeight: FontWeight.w500,
                           ),
                         ),
+                        const SizedBox(width: 20),
+                        Material(
+                          type: MaterialType.transparency,
+                          child: IconButton(
+                            onPressed: () => InfoDialog.show(context),
+                            icon: const Icon(
+                              Icons.help_outline_rounded,
+                              color: Colors.white70,
+                              size: 20,
+                            ),
+                            padding: EdgeInsets.zero,
+                            splashRadius: 20,
+                            constraints: const BoxConstraints(),
+                            tooltip: "How to use",
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -208,6 +220,16 @@ class _HomePageState extends State<HomePage> {
                   elevation: 0,
                   backgroundColor: Colors.transparent,
                   iconTheme: IconThemeData(color: Colors.white, size: 24.sp),
+                  actions: [
+                    IconButton(
+                      onPressed: () => InfoDialog.show(context),
+                      icon: const Icon(
+                        Icons.help_outline_rounded,
+                        color: Colors.white70,
+                      ),
+                      tooltip: "How to use",
+                    ),
+                  ],
                 ),
           body: Container(
             color: AppColors.background,
@@ -220,124 +242,116 @@ class _HomePageState extends State<HomePage> {
                   Expanded(
                     child: LayoutBuilder(
                       builder: (context, constraints) {
-                  bool isDesktopWide = constraints.maxWidth > 800;
-                  final bool isDesktopOS =
-                      Platform.isWindows ||
-                      Platform.isMacOS ||
-                      Platform.isLinux;
+                        bool isDesktopWide = constraints.maxWidth > 800;
+                        final bool isDesktopOS =
+                            Platform.isWindows ||
+                            Platform.isMacOS ||
+                            Platform.isLinux;
 
-                  if (isDesktopWide) {
-                    return Center(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 1100),
-                        child: Padding(
-                          padding: const EdgeInsets.all(20.0),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                flex: 1,
-                                child: SingleChildScrollView(
-                                  physics: const BouncingScrollPhysics(),
-                                  child: Column(
-                                    children: [
-                                      _animatedStagger(
-                                        index: 0,
-                                        child: InstructionsCard(
-                                          isDesktop: isDesktopOS,
+                        if (isDesktopWide) {
+                          return Center(
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 1100),
+                              child: Padding(
+                                padding: const EdgeInsets.all(20.0),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(
+                                      flex: 1,
+                                      child: SingleChildScrollView(
+                                        physics: const BouncingScrollPhysics(),
+                                        child: Column(
+                                          children: [
+                                            _animatedStagger(
+                                              index: 0,
+                                              child: TransferProgressView(
+                                                isDesktop: isDesktopOS,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
-                                      const SizedBox(height: 20),
-                                      _animatedStagger(
-                                        index: 1,
-                                        child: TransferProgressView(
-                                          isDesktop: isDesktopOS,
+                                    ),
+                                    const SizedBox(width: 30),
+                                    Expanded(
+                                      flex: 1,
+                                      child: SingleChildScrollView(
+                                        physics: const BouncingScrollPhysics(),
+                                        child: Column(
+                                          children: [
+                                            _animatedStagger(
+                                              index: 2,
+                                              child: ReceiverSection(
+                                                isDesktop: isDesktopOS,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 30),
+                                            _animatedStagger(
+                                              index: 3,
+                                              child: SenderSection(
+                                                isDesktop: isDesktopOS,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
-                                    ],
-                                  ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                              const SizedBox(width: 30),
-                              Expanded(
-                                flex: 1,
-                                child: SingleChildScrollView(
-                                  physics: const BouncingScrollPhysics(),
-                                  child: Column(
-                                    children: [
-                                      _animatedStagger(
-                                        index: 2,
-                                        child: ReceiverSection(
-                                          isDesktop: isDesktopOS,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 30),
-                                      _animatedStagger(
-                                        index: 3,
-                                        child: SenderSection(
-                                          isDesktop: isDesktopOS,
-                                        ),
-                                      ),
-                                    ],
+                            ),
+                          );
+                        }
+
+                        return Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 500),
+                            child: SingleChildScrollView(
+                              physics: isDesktopOS
+                                  ? const ClampingScrollPhysics()
+                                  : const BouncingScrollPhysics(),
+                              padding: isDesktopOS
+                                  ? const EdgeInsets.all(20.0)
+                                  : EdgeInsets.all(20.w),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  _animatedStagger(
+                                    index: 0,
+                                    child: TransferProgressView(
+                                      isDesktop: isDesktopOS,
+                                    ),
                                   ),
-                                ),
+                                  SizedBox(height: isDesktopOS ? 30.0 : 30.h),
+                                  _animatedStagger(
+                                    index: 1,
+                                    child: ReceiverSection(
+                                      isDesktop: isDesktopOS,
+                                    ),
+                                  ),
+                                  SizedBox(height: isDesktopOS ? 30.0 : 30.h),
+                                  _animatedStagger(
+                                    index: 2,
+                                    child: SenderSection(
+                                      isDesktop: isDesktopOS,
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ],
+                            ),
                           ),
-                        ),
-                      ),
-                    );
-                  }
-
-                  // Mobile / Narrow Layout
-                  return Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 500),
-                      child: SingleChildScrollView(
-                        physics: isDesktopOS
-                            ? const ClampingScrollPhysics()
-                            : const BouncingScrollPhysics(),
-                        padding: isDesktopOS
-                            ? const EdgeInsets.all(20.0)
-                            : EdgeInsets.all(20.w),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _animatedStagger(
-                              index: 0,
-                              child: InstructionsCard(isDesktop: isDesktopOS),
-                            ),
-                            SizedBox(height: isDesktopOS ? 20.0 : 20.h),
-                            _animatedStagger(
-                              index: 1,
-                              child: TransferProgressView(
-                                isDesktop: isDesktopOS,
-                              ),
-                            ),
-                            SizedBox(height: isDesktopOS ? 30.0 : 30.h),
-                            _animatedStagger(
-                              index: 2,
-                              child: ReceiverSection(isDesktop: isDesktopOS),
-                            ),
-                            SizedBox(height: isDesktopOS ? 30.0 : 30.h),
-                            _animatedStagger(
-                              index: 3,
-                              child: SenderSection(isDesktop: isDesktopOS),
-                            ),
-                          ],
-                        ),
-                      ),
+                        );
+                      },
                     ),
-                  );
-                },
+                  ),
+                ],
               ),
             ),
-          ],
+          ),
         ),
       ),
-    ),
-  ),
-));
+    );
   }
 
   Widget _animatedStagger({required int index, required Widget child}) {
@@ -346,7 +360,6 @@ class _HomePageState extends State<HomePage> {
       duration: const Duration(milliseconds: 500),
       curve: Curves.easeOutCubic,
       builder: (context, value, child) {
-        // Stagger logic: delay by 100ms per index
         final double delay = index * 0.15;
         final double adjustedValue = ((value - delay) / (1 - delay)).clamp(
           0.0,
