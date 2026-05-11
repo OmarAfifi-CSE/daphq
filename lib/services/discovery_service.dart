@@ -66,7 +66,6 @@ class DiscoveryService {
         timer.cancel();
         if (_lastDeviceName != null) {
           await _openSocket(_lastDeviceName!);
-          _updateStatus(ServiceStatus.discovering);
         }
       }
     });
@@ -319,6 +318,15 @@ class DiscoveryService {
           if (Platform.isAndroid && error.toString().contains('errno = 101')) {
             return;
           }
+          if (Platform.isWindows && error.toString().contains('errno = 1232')) {
+            _safeCloseSocket();
+            _isReopening = false;
+            _scheduleReopen(
+              deviceName,
+              delay: const Duration(milliseconds: 500),
+            );
+            return;
+          }
           _updateStatus(ServiceStatus.recovering);
           _safeCloseSocket();
           _scheduleReopen(deviceName, delay: const Duration(seconds: 4));
@@ -372,7 +380,12 @@ class DiscoveryService {
 
   void _handlePacket(Datagram dg) {
     if (_localIps.contains(dg.address.address)) return;
-    _processPacket(dg);
+
+    _updateLocalIps().then((_) {
+      if (!_running) return;
+      if (_localIps.contains(dg.address.address)) return;
+      _processPacket(dg);
+    });
   }
 
   void _processPacket(Datagram dg) {
@@ -530,11 +543,17 @@ class DiscoveryService {
         return;
       }
 
-      if (await _hasLocalNetwork()) {
+      try {
+        final test = await RawDatagramSocket.bind(
+          InternetAddress.anyIPv4,
+          AppConstants.discoveryPort,
+          reuseAddress: true,
+        );
+        test.close();
         timer.cancel();
         _watchdogActive = false;
         forceReopen();
-      }
+      } catch (_) {}
     });
   }
 }
