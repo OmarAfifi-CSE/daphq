@@ -237,7 +237,7 @@ class SenderController {
       // Wait for DONE status with timeout
       onUpdate(
         TransferModel(
-          status: "Finalizing transfer... Please wait for disk write.",
+          status: "Finalizing... Saving to disk",
           fileName: originalName,
           speed: 0,
           transferred: finalMB,

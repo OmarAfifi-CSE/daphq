@@ -295,6 +295,7 @@ class TransferCubit extends Cubit<TransferState> {
 
     _receiver.startReceiver(
       saveDirectory: state.receiveFolder!,
+      deviceName: state.deviceName,
       onUpdate: (model) {
         bool isBusy = false;
         String s = model.status.toLowerCase();

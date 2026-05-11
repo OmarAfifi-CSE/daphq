@@ -23,6 +23,7 @@ class ReceiverController {
   /// [onRequestAuth] is called to ask the user whether to accept a transfer.
   Future<void> startReceiver({
     required String saveDirectory,
+    required String deviceName,
     required Function(TransferModel) onUpdate,
     required Future<bool> Function(
       String senderIp,
@@ -101,7 +102,7 @@ class ReceiverController {
       if (_isCancelled) return;
       onUpdate(
         TransferModel(
-          status: "Receiver Ready\n(Port: ${AppConstants.transferPort})",
+          status: "Ready & Waiting as $deviceName",
         ),
       );
 
@@ -349,6 +350,15 @@ class ReceiverController {
 
           // Final cleanup for any streams left open
           if (currentSink != null) {
+            onUpdate(
+              TransferModel(
+                status: "Finalizing... Saving to disk",
+                transferred: received / 1024 / 1024,
+                totalSize: totalExpectedBytes / 1024 / 1024,
+                progress: 1.0,
+                fileName: originalName ?? "",
+              ),
+            );
             await currentSink.flush();
             await currentSink.close();
             currentSink = null;
