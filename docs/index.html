@@ -10,13 +10,21 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/style.css">
-    <link rel="icon" type="image/x-icon" href="assets/favicon.ico"> <!-- Needs favicon eventually -->
+    <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
+    <link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="assets/icon-512.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192-maskable.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="assets/icon-512-maskable.png">
+    <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
     <!-- Navigation -->
     <nav class="navbar">
         <div class="nav-container">
-            <div class="logo">
+            <div class="logo" style="display: flex; align-items: center; gap: 12px;">
+                <img src="assets/icon-192.png" alt="Daphq Logo" width="36" height="36" style="border-radius: 8px;">
                 <span class="logo-text">Daphq</span>
             </div>
             <div class="nav-links">
@@ -36,12 +44,16 @@
         </div>
         <div class="container hero-content">
             <div class="hero-text fade-up">
-                <div class="badge">v2.0 is Here!</div>
+                <div class="badge" id="version-badge">Latest Version is Here!</div>
                 <h1>Transfer Files at <span class="gradient-text">Lightning Speed</span></h1>
-                <p>Move gigabytes of data between your Windows and Android devices in seconds. No cloud, no size limits, 100% secure over your local Wi-Fi or Hotspot.</p>
+                <p>Move gigabytes of data between any combination of Windows and Android devices in seconds. No cloud, no size limits, 100% secure over your local Wi-Fi or Hotspot.</p>
                 <div class="hero-buttons">
-                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-primary" id="main-download-btn">Download for Windows</a>
-                    <a href="#download" class="btn btn-secondary">Other Platforms</a>
+                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-primary btn-large" id="main-download-btn">
+                        <i class="fab fa-windows"></i> Download for Windows
+                    </a>
+                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-secondary btn-large" id="hero-android-btn">
+                        <i class="fab fa-android"></i> Download for Android
+                    </a>
                 </div>
             </div>
             <div class="hero-image fade-up delay-1">
@@ -88,7 +100,7 @@
                 <div class="feature-card glass-card fade-up delay-2">
                     <div class="feature-icon">🛡️</div>
                     <h3>Robust Resiliency</h3>
-                    <p>Smart connection handling, instant dropout detection, and auto-recovery mechanisms built right in.</p>
+                    <p>Smart connection handling and instant network dropout detection to keep you informed if the transfer is interrupted.</p>
                 </div>
             </div>
         </div>
@@ -104,18 +116,21 @@
                 <div class="step fade-up">
                     <div class="step-number">01</div>
                     <h3>Connect</h3>
-                    <p>Ensure both your Windows PC and Android phone are connected to the same Wi-Fi network or Hotspot.</p>
+                    <p>Ensure both devices are on the same Wi-Fi or Hotspot.</p>
                 </div>
                 <div class="step fade-up delay-1">
                     <div class="step-number">02</div>
                     <h3>Discover</h3>
-                    <p>Open Daphq. The devices will automatically detect each other instantly without any configuration.</p>
+                    <p>Devices appear automatically when "Start Receiver" is active.</p>
                 </div>
                 <div class="step fade-up delay-2">
                     <div class="step-number">03</div>
                     <h3>Send</h3>
-                    <p>Select the device, pick your files or folders, and watch them fly across the room at maximum speed.</p>
+                    <p>Select a device, pick your files, and start the transfer.</p>
                 </div>
+            </div>
+            <div class="fade-up delay-2" style="text-align: center; margin-top: 32px;">
+                <span class="badge" style="border-color: #10B981; color: #10B981;">Pro Tip: Use 5GHz Wi-Fi or Hotspot for lightning-fast speeds.</span>
             </div>
         </div>
     </section>
@@ -127,11 +142,11 @@
                 <h2>Ready to upgrade your workflow?</h2>
                 <p>Download Daphq now and experience the fastest way to move data.</p>
                 <div class="download-buttons">
-                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-primary btn-large">
-                        <span class="icon">💻</span> Download for Windows
+                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-primary btn-large" id="download-windows">
+                        <i class="fab fa-windows"></i> Download for Windows
                     </a>
-                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-primary btn-large">
-                        <span class="icon">📱</span> Download for Android
+                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-primary btn-large" id="download-android">
+                        <i class="fab fa-android"></i> Download for Android
                     </a>
                 </div>
                 <p class="small-text">Requires Windows 10+ or Android 8.0+</p>
@@ -143,7 +158,10 @@
     <footer>
         <div class="container footer-content">
             <div class="footer-logo">
-                <span class="logo-text">Daphq</span>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <img src="assets/icon-192.png" alt="Daphq Logo" width="40" height="40" style="border-radius: 10px;">
+                    <span class="logo-text">Daphq</span>
+                </div>
                 <p>Lightning Fast Local File Transfer.</p>
             </div>
             <div class="footer-links">
