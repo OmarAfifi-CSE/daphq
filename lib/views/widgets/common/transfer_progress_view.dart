@@ -94,7 +94,7 @@ class TransferProgressView extends StatelessWidget {
                   Padding(
                     padding: EdgeInsets.only(top: 5.0.rh(isDesktop)),
                     child: Text(
-                      "${model.avgSpeed != null ? "Avg: ${model.avgSpeed} MB/s" : ""} ${model.totalTime != null ? " | Time: ${model.totalTime}s" : ""}",
+                      "${model.avgSpeed != null ? "Avg: ${model.avgSpeed} MB/s" : ""}${model.avgSpeed != null && model.totalTime != null ? " | " : ""}${_formatCompletedTime(model.totalTime)}",
                       style: TextStyle(
                         color: Colors.greenAccent.withAlpha(180),
                         fontSize: 16.0.rx(isDesktop),
@@ -211,7 +211,7 @@ class TransferProgressView extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        "${model.transferred.toStringAsFixed(1)}${model.totalSize > 0 ? " / ${model.totalSize.toStringAsFixed(1)}" : ""} MB",
+                        "${_formatSize(model.transferred)}${model.totalSize > 0 ? " / ${_formatSize(model.totalSize)}" : ""}",
                         style: TextStyle(
                           color: Colors.white38,
                           fontSize: 12.0.rx(isDesktop),
@@ -241,6 +241,26 @@ class TransferProgressView extends StatelessWidget {
 
   Color _getStatusColor(String status) {
     return AppColors.primary;
+  }
+
+  String _formatSize(double mb) {
+    if (mb >= 1024) {
+      return "${(mb / 1024).toStringAsFixed(2)} GB";
+    }
+    return "${mb.toStringAsFixed(1)} MB";
+  }
+
+  String _formatCompletedTime(String? totalTimeStr) {
+    if (totalTimeStr == null) return "";
+    double? seconds = double.tryParse(totalTimeStr);
+    if (seconds == null) return "Time: ${totalTimeStr}s";
+
+    if (seconds >= 60) {
+      int minutes = (seconds / 60).floor();
+      int remainingSeconds = (seconds % 60).toInt();
+      return "Time: ${minutes}m ${remainingSeconds}s";
+    }
+    return "Time: ${seconds.toStringAsFixed(1)}s";
   }
 
   String _formatEstimatedTime(double secondsRemaining) {
