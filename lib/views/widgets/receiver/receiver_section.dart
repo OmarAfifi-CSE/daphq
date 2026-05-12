@@ -23,7 +23,7 @@ class ReceiverSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SectionTitle(title: AppConstants.receiverMode, isDesktop: isDesktop),
-        SizedBox(height: 10.0.rh(isDesktop)),
+        SizedBox(height: 6.0.rh(isDesktop)),
         BlocBuilder<TransferCubit, TransferState>(
           buildWhen: (previous, current) =>
               previous.isReceiving != current.isReceiving ||
@@ -102,7 +102,7 @@ class ReceiverSection extends StatelessWidget {
                       ),
                     ],
                   ),
-                  SizedBox(height: 15.0.rh(isDesktop)),
+                  SizedBox(height: 12.0.rh(isDesktop)),
                   AnimatedPressButton(
                     isDesktop: isDesktop,
                     onPressed: state.isTransferring && !state.isReceiving

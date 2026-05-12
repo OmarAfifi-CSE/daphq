@@ -14,6 +14,7 @@ class InfoDialog extends StatelessWidget {
       backgroundColor: AppColors.dialogBackground,
       surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       title: const Row(
         children: [
           Icon(Icons.help_outline_rounded, color: Colors.white70),

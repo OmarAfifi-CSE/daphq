@@ -27,7 +27,7 @@ class DaphqCard extends StatelessWidget {
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0),
           child: Container(
-            padding: EdgeInsets.all(15.0.rw(isDesktop)),
+            padding: EdgeInsets.all(12.0.rw(isDesktop)),
             decoration: BoxDecoration(
               color: AppColors.cardOverlay,
               borderRadius: BorderRadius.circular(15.0.rr(isDesktop)),

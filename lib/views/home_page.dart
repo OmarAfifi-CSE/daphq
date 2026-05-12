@@ -249,7 +249,8 @@ class _HomePageState extends State<HomePage> {
                             Platform.isLinux;
 
                         if (isDesktopWide) {
-                          return Center(
+                          return Align(
+                            alignment: Alignment.topCenter,
                             child: ConstrainedBox(
                               constraints: const BoxConstraints(maxWidth: 1100),
                               child: Padding(
@@ -273,7 +274,7 @@ class _HomePageState extends State<HomePage> {
                                         ),
                                       ),
                                     ),
-                                    const SizedBox(width: 30),
+                                    const SizedBox(width: 20),
                                     Expanded(
                                       flex: 1,
                                       child: SingleChildScrollView(
@@ -286,7 +287,7 @@ class _HomePageState extends State<HomePage> {
                                                 isDesktop: isDesktopOS,
                                               ),
                                             ),
-                                            const SizedBox(height: 30),
+                                            const SizedBox(height: 20),
                                             _animatedStagger(
                                               index: 3,
                                               child: SenderSection(
@@ -304,7 +305,8 @@ class _HomePageState extends State<HomePage> {
                           );
                         }
 
-                        return Center(
+                        return Align(
+                          alignment: Alignment.topCenter,
                           child: ConstrainedBox(
                             constraints: const BoxConstraints(maxWidth: 500),
                             child: SingleChildScrollView(
@@ -323,14 +325,14 @@ class _HomePageState extends State<HomePage> {
                                       isDesktop: isDesktopOS,
                                     ),
                                   ),
-                                  SizedBox(height: isDesktopOS ? 30.0 : 30.h),
+                                  SizedBox(height: isDesktopOS ? 15.0 : 15.h),
                                   _animatedStagger(
                                     index: 1,
                                     child: ReceiverSection(
                                       isDesktop: isDesktopOS,
                                     ),
                                   ),
-                                  SizedBox(height: isDesktopOS ? 30.0 : 30.h),
+                                  SizedBox(height: isDesktopOS ? 15.0 : 15.h),
                                   _animatedStagger(
                                     index: 2,
                                     child: SenderSection(

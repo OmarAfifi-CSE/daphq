@@ -82,7 +82,7 @@ class SenderSectionState extends State<SenderSection> {
             ),
           ],
         ),
-        SizedBox(height: 8.0.rh(isDesktop)),
+        SizedBox(height: 6.0.rh(isDesktop)),
         BlocBuilder<TransferCubit, TransferState>(
           builder: (context, state) {
             return AnimatedSize(

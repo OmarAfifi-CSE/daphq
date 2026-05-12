@@ -40,10 +40,10 @@ class TransferProgressView extends StatelessWidget {
           duration: const Duration(milliseconds: 350),
           alignment: Alignment.topCenter,
           child: Container(
-            padding: EdgeInsets.all(25.0.rw(isDesktop)),
+            padding: EdgeInsets.all(20.0.rw(isDesktop)),
             decoration: BoxDecoration(
               color: AppColors.cardOverlay,
-              borderRadius: BorderRadius.circular(25.0.rr(isDesktop)),
+              borderRadius: BorderRadius.circular(20.0.rr(isDesktop)),
               border: Border.all(color: AppColors.cardBorder),
             ),
             child: Column(
@@ -74,7 +74,7 @@ class TransferProgressView extends StatelessWidget {
                       "${value.toStringAsFixed(1)} MB/s",
                       style: TextStyle(
                         color: Colors.white,
-                        fontSize: 42.0.rx(isDesktop),
+                        fontSize: 38.0.rx(isDesktop),
                         fontWeight: FontWeight.bold,
                         shadows: [
                           Shadow(
@@ -102,7 +102,9 @@ class TransferProgressView extends StatelessWidget {
                     ),
                   ),
 
-                SizedBox(height: 30.0.rh(isDesktop)),
+                hasProgress
+                    ? SizedBox(height: 15.0.rh(isDesktop))
+                    : SizedBox(height: 20.0.rh(isDesktop)),
 
                 // 4. Compact Progress Section (Unified)
                 if (hasProgress) ...[
@@ -136,7 +138,7 @@ class TransferProgressView extends StatelessWidget {
                             width: double.infinity,
                             decoration: BoxDecoration(
                               color: Colors.white10,
-                              borderRadius: BorderRadius.circular(4),
+                              borderRadius: BorderRadius.circular(5),
                             ),
                           ),
                           AnimatedContainer(
@@ -144,7 +146,7 @@ class TransferProgressView extends StatelessWidget {
                             height: 8,
                             width: progressWidth,
                             constraints: BoxConstraints(
-                              minWidth: model.progress > 0 ? 8 : 0,
+                              minWidth: model.progress > 0 ? 6 : 0,
                             ),
                             decoration: BoxDecoration(
                               gradient: const LinearGradient(
@@ -153,7 +155,7 @@ class TransferProgressView extends StatelessWidget {
                                   AppColors.primaryLight,
                                 ],
                               ),
-                              borderRadius: BorderRadius.circular(4),
+                              borderRadius: BorderRadius.circular(5),
                               boxShadow: [
                                 BoxShadow(
                                   color: AppColors.primary.withAlpha(100),
