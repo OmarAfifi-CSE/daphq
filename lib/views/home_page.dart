@@ -191,27 +191,12 @@ class _HomePageState extends State<HomePage> {
                             fontWeight: FontWeight.w500,
                           ),
                         ),
-                        const SizedBox(width: 20),
-                        Material(
-                          type: MaterialType.transparency,
-                          child: IconButton(
-                            onPressed: () => InfoDialog.show(context),
-                            icon: const Icon(
-                              Icons.help_outline_rounded,
-                              color: Colors.white70,
-                              size: 20,
-                            ),
-                            padding: EdgeInsets.zero,
-                            splashRadius: 20,
-                            constraints: const BoxConstraints(),
-                            tooltip: "How to use",
-                          ),
-                        ),
                       ],
                     ),
                   ),
                 )
               : AppBar(
+                  scrolledUnderElevation: 0,
                   title: Text(
                     AppConstants.appName,
                     style: TextStyle(color: Colors.white, fontSize: 20.sp),
@@ -224,7 +209,7 @@ class _HomePageState extends State<HomePage> {
                     IconButton(
                       onPressed: () => InfoDialog.show(context),
                       icon: const Icon(
-                        Icons.help_outline_rounded,
+                        Icons.info_outline_rounded,
                         color: Colors.white70,
                       ),
                       tooltip: "How to use",
@@ -315,7 +300,7 @@ class _HomePageState extends State<HomePage> {
                                   : const BouncingScrollPhysics(),
                               padding: isDesktopOS
                                   ? const EdgeInsets.all(20.0)
-                                  : EdgeInsets.all(20.w),
+                                  : EdgeInsets.fromLTRB(20.w, 0, 20.w, 20.w),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
@@ -351,6 +336,22 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
           ),
+          floatingActionButton:
+              (Platform.isWindows || Platform.isLinux || Platform.isMacOS)
+              ? FloatingActionButton.small(
+                  onPressed: () => InfoDialog.show(context),
+                  backgroundColor: AppColors.primary.withAlpha(50),
+                  elevation: 0,
+                  hoverElevation: 2,
+                  highlightElevation: 0,
+                  tooltip: "How to use",
+                  child: const Icon(
+                    Icons.info_outline_rounded,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                )
+              : null,
         ),
       ),
     );

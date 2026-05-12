@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../core/app_colors.dart';
+import '../../../core/app_constants.dart';
 
 class InfoDialog extends StatelessWidget {
   const InfoDialog({super.key});
@@ -17,10 +18,10 @@ class InfoDialog extends StatelessWidget {
       insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       title: const Row(
         children: [
-          Icon(Icons.help_outline_rounded, color: Colors.white70),
+          Icon(Icons.info_outline_rounded, color: Colors.white70),
           SizedBox(width: 12),
           Text(
-            "Information",
+            AppConstants.infoTitle,
             style: TextStyle(
               color: Colors.white,
               fontSize: 20,
@@ -36,24 +37,24 @@ class InfoDialog extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              "Follow these steps for a smooth transfer:",
+              AppConstants.infoIntro,
               style: TextStyle(color: Colors.white70, fontSize: 13),
             ),
             const SizedBox(height: 16),
             _stepItem(
               Icons.wifi_rounded,
-              "Connect",
-              "Both devices to the same network.",
+              AppConstants.infoStep1Title,
+              AppConstants.infoStep1Desc,
             ),
             _stepItem(
               Icons.devices_rounded,
-              "Discover",
-              "Nearby devices appear automatically.",
+              AppConstants.infoStep2Title,
+              AppConstants.infoStep2Desc,
             ),
             _stepItem(
               Icons.send_rounded,
-              "Transfer",
-              "Select a device and pick your files.",
+              AppConstants.infoStep3Title,
+              AppConstants.infoStep3Desc,
             ),
             const SizedBox(height: 20),
             Container(
@@ -75,7 +76,7 @@ class InfoDialog extends StatelessWidget {
                   SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      "Tip: Use 5GHz Wi-Fi for 10x faster speeds.",
+                      AppConstants.infoTip,
                       style: TextStyle(
                         color: AppColors.primaryLight,
                         fontSize: 13,
@@ -92,7 +93,10 @@ class InfoDialog extends StatelessWidget {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text("Got it", style: TextStyle(color: Colors.white70)),
+          child: const Text(
+            AppConstants.gotIt,
+            style: TextStyle(color: Colors.white70),
+          ),
         ),
       ],
     );

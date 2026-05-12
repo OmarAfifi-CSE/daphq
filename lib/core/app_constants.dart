@@ -78,12 +78,17 @@ class AppConstants {
   static const String openSettings = 'Open Settings';
   static const String cancel = 'Cancel';
 
-  // --- Instructions ---
-  static const String instructionsTitle = 'How to use for Max Speed';
-  static const String step1 = '1. Connect both devices to the same network (Wi-Fi or Hotspot).';
-  static const String step2 = '2. For max speed, one device should open a 5GHz Hotspot and the other connect to it.';
-  static const String step3 = "3. Daphq will automatically find other devices on the network.";
-  static const String step4 = "4. Select a device from the list to start sending files.";
+  // --- Instructions & Info ---
+  static const String infoTitle = 'How it Works';
+  static const String infoIntro = 'Share files in 3 simple steps:';
+  static const String infoStep1Title = 'Connect';
+  static const String infoStep1Desc = 'Make sure both devices are on the same Wi-Fi network.';
+  static const String infoStep2Title = 'Discover';
+  static const String infoStep2Desc = 'Devices will automatically appear in your dashboard.';
+  static const String infoStep3Title = 'Send';
+  static const String infoStep3Desc = 'Select a device, pick your files, and start sharing!';
+  static const String infoTip = 'Pro Tip: Use 5GHz Wi-Fi or Hotspot for lightning-fast speeds.';
+  static const String gotIt = 'Got it';
 
   // --- Layout Constants ---
   static const double borderRadius = 15.0;
