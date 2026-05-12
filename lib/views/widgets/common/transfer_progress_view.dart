@@ -89,7 +89,7 @@ class TransferProgressView extends StatelessWidget {
                   },
                 ),
 
-                // 3. Avg Speed & Time Info
+                // 3. Avg Speed & Time Info / Estimated Time
                 if (model.avgSpeed != null || model.totalTime != null)
                   Padding(
                     padding: EdgeInsets.only(top: 5.0.rh(isDesktop)),
@@ -99,6 +99,29 @@ class TransferProgressView extends StatelessWidget {
                         color: Colors.greenAccent.withAlpha(180),
                         fontSize: 16.0.rx(isDesktop),
                       ),
+                    ),
+                  )
+                else if (hasProgress && !isDone && !isFailed && model.speed > 0)
+                  Padding(
+                    padding: EdgeInsets.only(top: 5.0.rh(isDesktop)),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.timer_outlined,
+                          color: AppColors.primaryLight,
+                          size: 16.0.rx(isDesktop),
+                        ),
+                        SizedBox(width: 6.0.rw(isDesktop)),
+                        Text(
+                          "Est. time: ${_formatEstimatedTime((model.totalSize - model.transferred) / model.speed)}",
+                          style: TextStyle(
+                            color: AppColors.primaryLight,
+                            fontSize: 15.0.rx(isDesktop),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
 
@@ -218,5 +241,24 @@ class TransferProgressView extends StatelessWidget {
 
   Color _getStatusColor(String status) {
     return AppColors.primary;
+  }
+
+  String _formatEstimatedTime(double secondsRemaining) {
+    if (secondsRemaining.isInfinite ||
+        secondsRemaining.isNaN ||
+        secondsRemaining < 0) {
+      return "Calculating...";
+    }
+    if (secondsRemaining < 60) {
+      return "${secondsRemaining.toInt()}s";
+    } else if (secondsRemaining < 3600) {
+      final int minutes = (secondsRemaining / 60).toInt();
+      final int seconds = (secondsRemaining % 60).toInt();
+      return "${minutes}m ${seconds}s";
+    } else {
+      final int hours = (secondsRemaining / 3600).toInt();
+      final int minutes = ((secondsRemaining % 3600) / 60).toInt();
+      return "${hours}h ${minutes}m";
+    }
   }
 }
