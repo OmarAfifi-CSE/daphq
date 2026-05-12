@@ -1,14 +1,18 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Daphq - Lightning Fast Local Network File Transfer for Windows and Android. No size limits, secure, and blazing fast.">
+    <meta name="description"
+        content="Daphq - Lightning Fast Local Network File Transfer for Windows and Android. No size limits, secure, and blazing fast.">
     <title>Daphq - Lightning Fast Local File Transfer</title>
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@400;500&display=swap"
+        rel="stylesheet">
     <link rel="stylesheet" href="css/style.css">
     <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
     <link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192.png">
@@ -19,6 +23,7 @@
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
+
 <body>
     <!-- Neural Network Background -->
     <canvas id="network-canvas"></canvas>
@@ -45,12 +50,15 @@
             <div class="hero-text fade-up">
                 <div class="badge" id="version-badge">Latest Version is Here!</div>
                 <h1>Transfer Files at <span class="gradient-text">Lightning Speed</span></h1>
-                <p>Move gigabytes of data between any combination of Windows and Android devices in seconds. No cloud, no size limits, 100% secure over your local Wi-Fi or Hotspot.</p>
+                <p>Move gigabytes of data between any combination of Windows and Android devices in seconds. No cloud,
+                    no size limits, 100% secure over your local Wi-Fi or Hotspot.</p>
                 <div class="hero-buttons">
-                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-primary btn-large" id="main-download-btn">
+                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-primary btn-large"
+                        id="main-download-btn">
                         <i class="fab fa-windows"></i> Download for Windows
                     </a>
-                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-secondary btn-large" id="hero-android-btn">
+                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-secondary btn-large"
+                        id="hero-android-btn">
                         <i class="fab fa-android"></i> Download for Android
                     </a>
                 </div>
@@ -63,6 +71,28 @@
         </div>
     </header>
 
+    <!-- Brand Stats Bar -->
+    <div class="stats-bar">
+        <div class="container stats-container">
+            <!--
+            <div class="stat-item">
+                <i class="fab fa-github"></i>
+                <span id="github-stars">...</span> <span>Stars</span>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+                <i class="fas fa-code-branch"></i>
+                <span id="github-forks">...</span> <span>Forks</span>
+            </div>
+            <div class="stat-divider"></div>
+            -->
+            <div class="stat-item">
+                <i class="fas fa-user-shield"></i>
+                <span>100% Open Source</span>
+            </div>
+        </div>
+    </div>
+
     <!-- Features Section -->
     <section id="features" class="features">
         <div class="container">
@@ -74,17 +104,20 @@
                 <div class="feature-card glass-card fade-up">
                     <div class="feature-icon">⚡</div>
                     <h3>Blazing Fast</h3>
-                    <p>Utilizes raw TCP sockets over local network. Reach speeds up to 100+ MB/s depending on your router or hotspot.</p>
+                    <p>Utilizes raw TCP sockets over local network. Reach speeds up to 100+ MB/s depending on your
+                        router or hotspot.</p>
                 </div>
                 <div class="feature-card glass-card fade-up delay-1">
                     <div class="feature-icon">🔒</div>
                     <h3>100% Secure & Local</h3>
-                    <p>Your files never leave your network. No internet required, no servers, no tracking. Absolute privacy.</p>
+                    <p>Your files never leave your network. No internet required, no servers, no tracking. Absolute
+                        privacy.</p>
                 </div>
                 <div class="feature-card glass-card fade-up delay-2">
                     <div class="feature-icon">🔄</div>
                     <h3>Auto-Discovery</h3>
-                    <p>No IP addresses to type. Devices automatically find each other seamlessly on the same network.</p>
+                    <p>No IP addresses to type. Devices automatically find each other seamlessly on the same network.
+                    </p>
                 </div>
                 <div class="feature-card glass-card fade-up">
                     <div class="feature-icon">📁</div>
@@ -94,12 +127,14 @@
                 <div class="feature-card glass-card fade-up delay-1">
                     <div class="feature-icon">📱</div>
                     <h3>Cross-Platform</h3>
-                    <p>Native support for Windows 10/11 and Android devices. Smooth UI tailored for both desktop and mobile.</p>
+                    <p>Native support for Windows 10/11 and Android devices. Smooth UI tailored for both desktop and
+                        mobile.</p>
                 </div>
                 <div class="feature-card glass-card fade-up delay-2">
                     <div class="feature-icon">🛡️</div>
                     <h3>Robust Resiliency</h3>
-                    <p>Smart connection handling and instant network dropout detection to keep you informed if the transfer is interrupted.</p>
+                    <p>Smart connection handling and instant network dropout detection to keep you informed if the
+                        transfer is interrupted.</p>
                 </div>
             </div>
         </div>
@@ -129,7 +164,41 @@
                 </div>
             </div>
             <div class="fade-up delay-2" style="text-align: center; margin-top: 32px;">
-                <span class="badge" style="border-color: #10B981; color: #10B981;">Pro Tip: Use 5GHz Wi-Fi or Hotspot for lightning-fast speeds.</span>
+                <span class="badge" style="border-color: #10B981; color: #10B981;">Pro Tip: Use 5GHz Wi-Fi or Hotspot
+                    for lightning-fast speeds.</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- Comparison Section -->
+    <section class="comparison">
+        <div class="container">
+            <div class="section-header fade-up">
+                <h2>The New <span class="gradient-text">Standard</span></h2>
+                <p>How Daphq redefines the local transfer experience.</p>
+            </div>
+            <div class="comparison-grid fade-up">
+                <div class="comparison-card glass-card">
+                    <div class="comp-head">Metric</div>
+                    <div class="comp-row">Speed</div>
+                    <div class="comp-row">Privacy</div>
+                    <div class="comp-row">Limits</div>
+                    <div class="comp-row">Internet</div>
+                </div>
+                <div class="comparison-card glass-card featured">
+                    <div class="comp-head">Daphq</div>
+                    <div class="comp-row accent-text">100+ MB/s</div>
+                    <div class="comp-row accent-text">P2P (Private)</div>
+                    <div class="comp-row accent-text">Unlimited</div>
+                    <div class="comp-row accent-text">Not Needed</div>
+                </div>
+                <div class="comparison-card glass-card">
+                    <div class="comp-head">Cloud / Others</div>
+                    <div class="comp-row">Varies (Slow)</div>
+                    <div class="comp-row">Third-party</div>
+                    <div class="comp-row">Limited</div>
+                    <div class="comp-row">Required</div>
+                </div>
             </div>
         </div>
     </section>
@@ -141,10 +210,12 @@
                 <h2>Ready to upgrade your workflow?</h2>
                 <p>Download Daphq now and experience the fastest way to move data.</p>
                 <div class="download-buttons">
-                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-primary btn-large" id="download-windows">
+                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-primary btn-large"
+                        id="download-windows">
                         <i class="fab fa-windows"></i> Download for Windows
                     </a>
-                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-primary btn-large" id="download-android">
+                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-primary btn-large"
+                        id="download-android">
                         <i class="fab fa-android"></i> Download for Android
                     </a>
                 </div>
@@ -175,4 +246,5 @@
     <script src="js/network-bg.js"></script>
     <script src="js/main.js"></script>
 </body>
+
 </html>

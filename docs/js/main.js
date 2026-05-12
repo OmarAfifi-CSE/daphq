@@ -68,6 +68,18 @@ document.addEventListener('DOMContentLoaded', () => {
             if (versionBadge && data.tag_name) {
                 versionBadge.innerText = `${data.tag_name} is Here!`;
             }
+
+            // Update GitHub Stats (Disabled for now)
+            /*
+            const starsEl = document.getElementById('github-stars');
+            const forksEl = document.getElementById('github-forks');
+            const repoResponse = await fetch('https://api.github.com/repos/OmarAfifi-CSE/daphq');
+            if (repoResponse.ok) {
+                const repoData = await repoResponse.json();
+                if (starsEl) starsEl.innerText = repoData.stargazers_count;
+                if (forksEl) forksEl.innerText = repoData.forks_count;
+            }
+            */
             
             let apkUrl = '';
             let windowsUrl = '';

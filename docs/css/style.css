@@ -181,6 +181,40 @@ h1, h2, h3, h4, .logo-text {
     color: white;
 }
 
+/* Brand Stats Bar */
+.stats-bar {
+    padding: 30px 0;
+    border-bottom: 1px solid var(--glass-border);
+    margin-bottom: 40px;
+}
+
+.stats-container {
+    display: flex;
+    justify-content: center;
+    gap: 40px;
+    align-items: center;
+}
+
+.stat-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+    font-family: 'Outfit';
+    color: var(--text-main);
+}
+
+.stat-item i {
+    color: var(--primary);
+    font-size: 1.2rem;
+}
+
+.stat-divider {
+    width: 1px;
+    height: 20px;
+    background: var(--glass-border);
+}
+
 /* Hero Section */
 .hero {
     position: relative;
@@ -342,6 +376,62 @@ h1, h2, h3, h4, .logo-text {
 
 .step p {
     color: var(--text-muted);
+}
+
+/* Comparison Matrix */
+.comparison {
+    padding: 100px 0;
+}
+
+.comparison-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0;
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+.comparison-card {
+    border-radius: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.comparison-card:first-child { border-radius: 16px 0 0 16px; }
+.comparison-card:last-child { border-radius: 0 16px 16px 0; }
+
+.comparison-card.featured {
+    transform: scale(1.05);
+    z-index: 10;
+    border-color: var(--primary);
+    background: rgba(61, 90, 254, 0.05);
+    border-radius: 16px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+}
+
+.comp-head {
+    padding: 24px;
+    font-family: 'Outfit';
+    font-weight: 800;
+    font-size: 1.25rem;
+    text-align: center;
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.comp-row {
+    padding: 20px;
+    text-align: center;
+    border-bottom: 1px solid var(--glass-border);
+    font-size: 0.95rem;
+    color: var(--text-muted);
+}
+
+.comp-row:last-child { border-bottom: none; }
+
+.accent-text {
+    color: var(--primary);
+    font-weight: 700;
 }
 
 /* CTA */
