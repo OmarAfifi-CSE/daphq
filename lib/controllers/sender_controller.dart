@@ -253,6 +253,7 @@ class SenderController {
           transferred: finalMB,
           totalSize: finalMB,
           avgSpeed: avg.toStringAsFixed(2),
+          progress: 1.0,
         ),
       );
 
