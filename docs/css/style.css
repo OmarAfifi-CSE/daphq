@@ -470,42 +470,42 @@ h1, h2, h3, h4, .logo-text {
 
 /* Footer */
 footer {
-    padding: 64px 0 32px;
+    padding: 32px 0;
     border-top: 1px solid var(--glass-border);
 }
 
-.footer-content {
+.footer-container {
     display: flex;
     justify-content: space-between;
-    margin-bottom: 48px;
+    align-items: center;
 }
 
-.footer-logo p {
-    color: var(--text-muted);
-    margin-top: 8px;
-}
-
-.footer-links {
+.footer-left {
     display: flex;
-    gap: 32px;
+    align-items: center;
+    gap: 12px;
 }
 
-.footer-links a {
+.footer-center p {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.footer-right {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+}
+
+.footer-right a {
     color: var(--text-muted);
     text-decoration: none;
     transition: color 0.3s;
-}
-
-.footer-links a:hover {
-    color: white;
-}
-
-.footer-bottom {
-    text-align: center;
-    color: var(--text-muted);
     font-size: 0.9rem;
-    padding-top: 32px;
-    border-top: 1px solid var(--glass-border);
+}
+
+.footer-right a:hover {
+    color: white;
 }
 
 /* Animations */
@@ -564,9 +564,9 @@ footer {
         flex-direction: column;
     }
     
-    .footer-content {
+    .footer-container {
         flex-direction: column;
-        gap: 32px;
+        gap: 24px;
         text-align: center;
     }
     

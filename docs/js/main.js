@@ -1,4 +1,10 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // Force scroll to top on refresh
+    if ('scrollRestoration' in history) {
+        history.scrollRestoration = 'manual';
+    }
+    window.scrollTo(0, 0);
+
     // 0. Initialize Neural Network Background
     if (typeof NetworkBackground !== 'undefined') {
         new NetworkBackground('network-canvas');
