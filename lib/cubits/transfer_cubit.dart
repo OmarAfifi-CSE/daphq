@@ -40,9 +40,7 @@ class TransferCubit extends Cubit<TransferState> {
     ) async {
       if (isClosed) return;
 
-      final List<ConnectivityResult> resultList = results is List
-          ? results as List<ConnectivityResult>
-          : [results as ConnectivityResult];
+      final List<ConnectivityResult> resultList = results;
 
       final bool isDisconnected = resultList.isNotEmpty &&
           resultList.every((r) => r == ConnectivityResult.none);
