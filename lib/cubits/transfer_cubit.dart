@@ -465,9 +465,18 @@ class TransferCubit extends Cubit<TransferState> {
     emit(state.copyWith(clearSelection: true));
 
     try {
+      String targetDeviceName = "the other device";
+      try {
+        targetDeviceName = state.discoveredDevices
+            .firstWhere((d) => d.ip == state.targetIp.trim())
+            .name;
+      } catch (_) {}
+
       await _sender.sendData(
         paths: itemsToSend,
         targetIp: state.targetIp.trim(),
+        targetDeviceName: targetDeviceName,
+        senderDeviceName: state.deviceName,
         onUpdate: (model) {
           if (!isClosed) emit(state.copyWith(model: model));
           if (Platform.isAndroid && state.isTransferring) {

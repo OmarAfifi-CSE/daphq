@@ -13,6 +13,7 @@ class SenderController {
   Socket? _activeSocket;
   bool _isCancelled = false;
   bool _wasRejectedByReceiver = false;
+  String? _currentTargetDeviceName;
 
   /// Sends a file or folder to the receiver at [targetIp].
   ///
@@ -20,10 +21,13 @@ class SenderController {
   Future<void> sendData({
     required List<String> paths,
     required String targetIp,
+    required String targetDeviceName,
+    required String senderDeviceName,
     required Function(TransferModel) onUpdate,
   }) async {
     _isCancelled = false;
     _wasRejectedByReceiver = false;
+    _currentTargetDeviceName = targetDeviceName;
     Socket? socket;
     Stopwatch stopwatch = Stopwatch()..start();
     int sentBytes = 0;
@@ -81,6 +85,7 @@ class SenderController {
       Map<String, dynamic> metadata = {
         "fileName": originalName,
         "fileSize": totalSizeBytes,
+        "senderDeviceName": senderDeviceName,
         "isFolder":
             paths.length > 1 || FileSystemEntity.isDirectorySync(paths[0]),
         "files": fileList
@@ -115,7 +120,7 @@ class SenderController {
                 if (response["status"] == "REJECTED") {
                   if (!readyCompleter.isCompleted) {
                     readyCompleter.completeError(
-                      "Transfer Rejected by Receiver.",
+                      "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}",
                     );
                   } else {
                     // If already transferring, trigger a cancellation
@@ -283,11 +288,21 @@ class SenderController {
     } catch (e) {
       if (_isCancelled || e.toString().contains("Transfer Cancelled")) {
         String status = _wasRejectedByReceiver
-            ? "Transfer Rejected by Receiver"
+            ? "Transfer cancelled by ${_currentTargetDeviceName ?? 'Receiver'}"
             : "Transfer Cancelled";
         onUpdate(
           TransferModel(
             status: status,
+            transferred: sentBytes / 1024 / 1024,
+            totalSize: totalSizeBytes / 1024 / 1024,
+            progress: totalSizeBytes > 0 ? sentBytes / totalSizeBytes : 0.0,
+            fileName: originalName ?? "",
+          ),
+        );
+      } else if (e.toString().contains("Receiver disconnected")) {
+        onUpdate(
+          TransferModel(
+            status: "Transfer cancelled by ${_currentTargetDeviceName ?? 'the other device'}",
             transferred: sentBytes / 1024 / 1024,
             totalSize: totalSizeBytes / 1024 / 1024,
             progress: totalSizeBytes > 0 ? sentBytes / totalSizeBytes : 0.0,
@@ -361,7 +376,7 @@ class SenderController {
         osError == 10054 ||
         osError == 32 ||
         msg.contains("connection reset by peer")) {
-      return "Transfer cancelled by the other device.";
+      return "Transfer cancelled by ${_currentTargetDeviceName ?? 'the other device'}.";
     } else {
       return "Network Error: Please ensure network/Hotspot is connected.";
     }

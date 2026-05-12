@@ -16,6 +16,7 @@ class ReceiverController {
   Socket? _activeClient;
   IOSink? _activeSink;
   bool _isCancelled = false;
+  String? _currentSenderDeviceName;
 
   /// Starts a TCP server and waits for incoming file transfers.
   ///
@@ -157,6 +158,8 @@ class ReceiverController {
                 String jsonStr = utf8.decode(headerBuffer);
                 metadata = jsonDecode(jsonStr);
                 originalName = metadata?["fileName"];
+                _currentSenderDeviceName =
+                    metadata?["senderDeviceName"] ?? "the other device";
 
                 offset = newlineIndex + 1;
 
@@ -367,7 +370,7 @@ class ReceiverController {
 
           // Check for premature connection drop
           if (metadata != null && received < totalExpectedBytes) {
-            throw "Transfer cancelled by the other device.";
+            throw "Transfer cancelled by ${_currentSenderDeviceName ?? 'the other device'}.";
           }
 
           stopwatch.stop();
@@ -453,7 +456,9 @@ class ReceiverController {
             osError == 32 ||
             msg.contains("connection reset by peer")) {
           onUpdate(
-            TransferModel(status: "Transfer cancelled by the other device."),
+            TransferModel(
+                status:
+                    "Transfer cancelled by ${_currentSenderDeviceName ?? 'the other device'}."),
           );
         } else {
           onUpdate(
@@ -503,7 +508,7 @@ class ReceiverController {
         osError == 10054 ||
         osError == 32 ||
         msg.contains("connection reset by peer")) {
-      return "Transfer cancelled by sender. Ready & Waiting...";
+      return "Transfer cancelled by ${_currentSenderDeviceName ?? 'sender'}. Ready & Waiting...";
     } else {
       return "Network lost. Ready & Waiting...";
     }
