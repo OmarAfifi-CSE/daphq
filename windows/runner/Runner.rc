@@ -97,6 +97,7 @@ BEGIN
             VALUE "OriginalFilename", "Daphq.exe" "\0"
             VALUE "ProductName", "Daphq" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
+            VALUE "OfficialWebsite", "https://omarafifi-cse.github.io/daphq/" "\0"
         END
     END
     BLOCK "VarFileInfo"
