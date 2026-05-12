@@ -79,14 +79,14 @@ class AppConstants {
   static const String cancel = 'Cancel';
 
   // --- Instructions & Info ---
-  static const String infoTitle = 'How it Works';
-  static const String infoIntro = 'Share files in 3 simple steps:';
+  static const String infoTitle = 'Ready to Transfer?';
+  static const String infoIntro = 'Follow these tips for a lightning-fast experience:';
   static const String infoStep1Title = 'Connect';
-  static const String infoStep1Desc = 'Make sure both devices are on the same Wi-Fi network.';
+  static const String infoStep1Desc = 'Ensure both devices are on the same Wi-Fi or Hotspot.';
   static const String infoStep2Title = 'Discover';
-  static const String infoStep2Desc = 'Devices will automatically appear in your dashboard.';
+  static const String infoStep2Desc = 'Devices appear automatically when "Start Receiver" is active.';
   static const String infoStep3Title = 'Send';
-  static const String infoStep3Desc = 'Select a device, pick your files, and start sharing!';
+  static const String infoStep3Desc = 'Select a device, pick your files, and start the transfer.';
   static const String infoTip = 'Pro Tip: Use 5GHz Wi-Fi or Hotspot for lightning-fast speeds.';
   static const String gotIt = 'Got it';
 
