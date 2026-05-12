@@ -1,4 +1,9 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // 0. Initialize Neural Network Background
+    if (typeof NetworkBackground !== 'undefined') {
+        new NetworkBackground('network-canvas');
+    }
+
     // 1. Navbar Scroll Effect
     const navbar = document.querySelector('.navbar');
     

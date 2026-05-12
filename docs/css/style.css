@@ -30,6 +30,16 @@ body {
     overflow-x: hidden;
 }
 
+#network-canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    opacity: 0.6;
+}
+
 h1, h2, h3, h4, .logo-text {
     font-family: 'Outfit', sans-serif;
 }
@@ -181,31 +191,6 @@ h1, h2, h3, h4, .logo-text {
     overflow: hidden;
 }
 
-.hero-bg {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: -1;
-}
-
-.hero-bg img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    opacity: 0.6;
-}
-
-.hero-overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(to bottom, transparent, var(--bg-main));
-}
-
 .hero-content {
     display: grid;
     grid-template-columns: 1.3fr 1fr;
@@ -274,7 +259,6 @@ h1, h2, h3, h4, .logo-text {
 /* Features */
 .features {
     padding: 100px 0;
-    background-color: var(--bg-main);
 }
 
 .section-header {
@@ -326,7 +310,6 @@ h1, h2, h3, h4, .logo-text {
 /* How It Works */
 .how-it-works {
     padding: 100px 0;
-    background-color: var(--bg-secondary);
 }
 
 .steps-container {
@@ -397,7 +380,6 @@ h1, h2, h3, h4, .logo-text {
 
 /* Footer */
 footer {
-    background-color: var(--bg-secondary);
     padding: 64px 0 32px;
     border-top: 1px solid var(--glass-border);
 }

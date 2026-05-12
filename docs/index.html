@@ -20,6 +20,9 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
+    <!-- Neural Network Background -->
+    <canvas id="network-canvas"></canvas>
+
     <!-- Navigation -->
     <nav class="navbar">
         <div class="nav-container">
@@ -38,10 +41,6 @@
 
     <!-- Hero Section -->
     <header class="hero">
-        <div class="hero-bg">
-            <img src="assets/hero-bg.png" alt="Abstract Data Stream Background">
-            <div class="hero-overlay"></div>
-        </div>
         <div class="container hero-content">
             <div class="hero-text fade-up">
                 <div class="badge" id="version-badge">Latest Version is Here!</div>
@@ -174,6 +173,7 @@
         </div>
     </footer>
 
+    <script src="js/network-bg.js"></script>
     <script src="js/main.js"></script>
 </body>
 </html>
