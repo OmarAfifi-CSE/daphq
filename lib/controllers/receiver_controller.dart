@@ -16,6 +16,7 @@ class ReceiverController {
   Socket? _activeClient;
   IOSink? _activeSink;
   bool _isCancelled = false;
+  String? _cancelReason;
   String? _currentSenderDeviceName;
 
   /// Starts a TCP server and waits for incoming file transfers.
@@ -35,6 +36,7 @@ class ReceiverController {
     required VoidCallback onDone,
   }) async {
     _isCancelled = false;
+    _cancelReason = null;
     try {
       if (_server != null) {
         await _server!.close();
@@ -140,7 +142,7 @@ class ReceiverController {
           int bytesSinceUpdate = 0;
           DateTime lastTime = DateTime.now();
 
-          await for (var chunk in client) {
+          await for (var chunk in client.timeout(const Duration(seconds: 5))) {
             int offset = 0;
 
             // Parse JSON header
@@ -400,7 +402,7 @@ class ReceiverController {
           if (_isCancelled) {
             onUpdate(
               TransferModel(
-                status: "Transfer Cancelled.",
+                status: _cancelReason ?? "Transfer Cancelled.",
                 transferred: received / 1024 / 1024,
                 totalSize: totalExpectedBytes / 1024 / 1024,
                 progress: totalExpectedBytes > 0
@@ -413,6 +415,19 @@ class ReceiverController {
             onUpdate(
               TransferModel(
                 status: _mapReceiverSocketError(e),
+                transferred: received / 1024 / 1024,
+                totalSize: totalExpectedBytes / 1024 / 1024,
+                progress: totalExpectedBytes > 0
+                    ? received / totalExpectedBytes
+                    : 0.0,
+                fileName: originalName ?? "",
+              ),
+            );
+          } else if (e is TimeoutException) {
+            onUpdate(
+              TransferModel(
+                status:
+                    "Transfer cancelled by ${_currentSenderDeviceName ?? 'sender'} (Connection Timeout).",
                 transferred: received / 1024 / 1024,
                 totalSize: totalExpectedBytes / 1024 / 1024,
                 progress: totalExpectedBytes > 0
@@ -447,7 +462,7 @@ class ReceiverController {
       onDone();
     } catch (e) {
       if (_isCancelled) {
-        onUpdate(TransferModel(status: "Transfer Cancelled"));
+        onUpdate(TransferModel(status: _cancelReason ?? "Transfer Cancelled"));
       } else if (e is SocketException) {
         final msg = e.message.toLowerCase();
         final osError = e.osError?.errorCode;
@@ -468,6 +483,12 @@ class ReceiverController {
             ),
           );
         }
+      } else if (e is TimeoutException) {
+        onUpdate(
+          TransferModel(
+              status:
+                  "Transfer cancelled by ${_currentSenderDeviceName ?? 'sender'} (Connection Timeout)."),
+        );
       } else {
         onUpdate(TransferModel(status: "Error: $e"));
       }
@@ -480,8 +501,9 @@ class ReceiverController {
   }
 
   /// Stops the receiver server and cancels any active transfer.
-  void stop() {
+  void stop({String? reason}) {
     _isCancelled = true;
+    _cancelReason = reason;
 
     if (_activeClient != null) {
       try {

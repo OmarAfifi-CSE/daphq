@@ -12,6 +12,7 @@ import '../core/app_constants.dart';
 class SenderController {
   Socket? _activeSocket;
   bool _isCancelled = false;
+  String? _cancelReason;
   bool _wasRejectedByReceiver = false;
   String? _currentTargetDeviceName;
 
@@ -26,6 +27,7 @@ class SenderController {
     required Function(TransferModel) onUpdate,
   }) async {
     _isCancelled = false;
+    _cancelReason = null;
     _wasRejectedByReceiver = false;
     _currentTargetDeviceName = targetDeviceName;
     Socket? socket;
@@ -192,7 +194,10 @@ class SenderController {
               socket.add(chunk);
               bytesBuffered += chunk.length;
               if (bytesBuffered >= AppConstants.socketFlushThresholdBytes) {
-                await socket.flush(); // Prevent OOM by awaiting buffer flush
+                await socket.flush().timeout(
+                  const Duration(seconds: 5),
+                  onTimeout: () => throw "Transfer Timeout",
+                ); // Prevent OOM by awaiting buffer flush
                 bytesBuffered = 0;
               }
             } catch (e) {
@@ -289,7 +294,7 @@ class SenderController {
       if (_isCancelled || e.toString().contains("Transfer Cancelled")) {
         String status = _wasRejectedByReceiver
             ? "Transfer cancelled by ${_currentTargetDeviceName ?? 'Receiver'}"
-            : "Transfer Cancelled";
+            : _cancelReason ?? "Transfer Cancelled";
         onUpdate(
           TransferModel(
             status: status,
@@ -299,10 +304,12 @@ class SenderController {
             fileName: originalName ?? "",
           ),
         );
-      } else if (e.toString().contains("Receiver disconnected")) {
+      } else if (e.toString().contains("Receiver disconnected") ||
+          e.toString().contains("Transfer Timeout")) {
         onUpdate(
           TransferModel(
-            status: "Transfer cancelled by ${_currentTargetDeviceName ?? 'the other device'}",
+            status:
+                "Transfer cancelled by ${_currentTargetDeviceName ?? 'the other device'}",
             transferred: sentBytes / 1024 / 1024,
             totalSize: totalSizeBytes / 1024 / 1024,
             progress: totalSizeBytes > 0 ? sentBytes / totalSizeBytes : 0.0,
@@ -348,8 +355,9 @@ class SenderController {
   }
 
   /// Cancels an active send operation.
-  void cancel() {
+  void cancel({String? reason}) {
     _isCancelled = true;
+    _cancelReason = reason;
     _activeSocket?.destroy();
     _activeSocket = null;
   }
@@ -370,7 +378,10 @@ class SenderController {
       return "Device not found. Please double-check the IP address and ensure both devices are on the exact same Wi-Fi/Hotspot.";
     } else if (osError == 101 ||
         osError == 10051 ||
-        msg.contains("network is unreachable")) {
+        osError == 10053 ||
+        osError == 10050 ||
+        msg.contains("network is unreachable") ||
+        msg.contains("software caused connection abort")) {
       return "No network connection. Please turn on Wi-Fi/Hotspot.";
     } else if (osError == 104 ||
         osError == 10054 ||

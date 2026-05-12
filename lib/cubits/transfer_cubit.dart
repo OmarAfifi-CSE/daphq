@@ -40,6 +40,19 @@ class TransferCubit extends Cubit<TransferState> {
     ) async {
       if (isClosed) return;
 
+      final List<ConnectivityResult> resultList = results is List
+          ? results as List<ConnectivityResult>
+          : [results as ConnectivityResult];
+
+      final bool isDisconnected = resultList.isNotEmpty &&
+          resultList.every((r) => r == ConnectivityResult.none);
+
+      if (isDisconnected) {
+        if (state.isTransferring) {
+          cancelSending(reason: "No network connection. Transfer cancelled.");
+        }
+      }
+
       // If receiver was active, restart it to bind to new IP
       if (state.isReceiving) {
         startReceiver();
@@ -255,8 +268,8 @@ class TransferCubit extends Cubit<TransferState> {
     emit(state.copyWith(clearFeedback: true));
   }
 
-  void stopReceiver() {
-    _receiver.stop();
+  void stopReceiver({String? reason}) {
+    _receiver.stop(reason: reason);
     discoveryService.triggerBroadcast(
       isOnline: false,
     ); // Signal other devices to remove us instantly
@@ -266,7 +279,7 @@ class TransferCubit extends Cubit<TransferState> {
         isReceivingActive: false,
         clearFeedback: true,
         model: TransferModel(
-          status: "Receiver Stopped",
+          status: reason ?? "Receiver Stopped",
           transferred: 0,
           totalSize: 0,
           progress: 0,
@@ -548,14 +561,14 @@ class TransferCubit extends Cubit<TransferState> {
     return super.close();
   }
 
-  void cancelSending() {
-    _sender.cancel();
+  void cancelSending({String? reason}) {
+    _sender.cancel(reason: reason);
     emit(
       state.copyWith(
         isTransferring: false,
         clearFeedback: true,
         model: TransferModel(
-          status: "Transfer Cancelled",
+          status: reason ?? "Transfer Cancelled",
           transferred: state.model.transferred,
           totalSize: state.model.totalSize,
           progress: state.model.progress,
