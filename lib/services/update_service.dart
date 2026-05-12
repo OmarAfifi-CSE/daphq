@@ -10,15 +10,39 @@ class UpdateService {
   /// Checks for updates and shows a dialog if a newer version is available.
   static Future<void> checkForUpdates(BuildContext context) async {
     try {
-      final response = await http.get(Uri.parse(AppConstants.githubApiUrl)).timeout(
-            const Duration(seconds: 10),
-          );
+      final response = await http
+          .get(Uri.parse(AppConstants.githubApiUrl))
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = json.decode(response.body);
         final String remoteVersionTag = data['tag_name'] as String;
-        final String releaseNotes = data['body'] ?? 'No release notes available.';
-        final String downloadUrl = data['html_url'] as String;
+        final String releaseNotes =
+            data['body'] ?? 'No release notes available.';
+
+        // Smart URL detection based on platform
+        String downloadUrl = AppConstants.websiteUrl; // Default fallback
+        final List<dynamic> assets = data['assets'] ?? [];
+
+        if (Platform.isAndroid) {
+          // Look for APK
+          for (var asset in assets) {
+            final String name = asset['name']?.toString().toLowerCase() ?? '';
+            if (name.endsWith('.apk')) {
+              downloadUrl = asset['browser_download_url'];
+              break;
+            }
+          }
+        } else if (Platform.isWindows) {
+          // Look for Windows installer/archive
+          for (var asset in assets) {
+            final String name = asset['name']?.toString().toLowerCase() ?? '';
+            if (name.endsWith('.exe')) {
+              downloadUrl = asset['browser_download_url'];
+              break;
+            }
+          }
+        }
 
         // Strip non-numeric prefix like 'v'
         final String remoteVersion = _cleanVersion(remoteVersionTag);
@@ -28,7 +52,7 @@ class UpdateService {
 
         if (_isRemoteGreater(localVersion, remoteVersion)) {
           if (!context.mounted) return;
-          final bool isDesktopOS = 
+          final bool isDesktopOS =
               Platform.isWindows || Platform.isMacOS || Platform.isLinux;
           showDialog(
             context: context,
@@ -67,8 +91,14 @@ class UpdateService {
   /// Compares standard semantic versions. Returns true if remote > local.
   static bool _isRemoteGreater(String local, String remote) {
     try {
-      List<int> localParts = local.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-      List<int> remoteParts = remote.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+      List<int> localParts = local
+          .split('.')
+          .map((e) => int.tryParse(e) ?? 0)
+          .toList();
+      List<int> remoteParts = remote
+          .split('.')
+          .map((e) => int.tryParse(e) ?? 0)
+          .toList();
 
       int maxLength = localParts.length > remoteParts.length
           ? localParts.length

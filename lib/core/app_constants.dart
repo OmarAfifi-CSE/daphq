@@ -14,6 +14,9 @@ class AppConstants {
   /// GitHub API endpoint for release checking.
   static const String githubApiUrl = 'https://api.github.com/repos/OmarAfifi-CSE/daphq/releases/latest';
 
+  /// Official Website URL for downloads and updates.
+  static const String websiteUrl = 'https://omarafifi-cse.github.io/daphq/';
+
   /// Foreground Service ID.
   static const int foregroundServiceId = 100;
 

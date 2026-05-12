@@ -59,7 +59,7 @@ class UpdateDialog extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'Version $newVersion is now available on GitHub.',
+                'Version $newVersion is now available.',
                 style: TextStyle(color: Colors.white70, fontSize: 14.0.rx(isDesktop)),
               ),
               SizedBox(height: 16.0.rh(isDesktop)),
