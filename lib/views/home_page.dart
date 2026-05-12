@@ -300,7 +300,7 @@ class _HomePageState extends State<HomePage> {
                                   : const BouncingScrollPhysics(),
                               padding: isDesktopOS
                                   ? const EdgeInsets.all(20.0)
-                                  : EdgeInsets.fromLTRB(20.w, 0, 20.w, 20.w),
+                                  : EdgeInsets.fromLTRB(20.w, 10.w, 20.w, 20.w),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
@@ -340,14 +340,14 @@ class _HomePageState extends State<HomePage> {
               (Platform.isWindows || Platform.isLinux || Platform.isMacOS)
               ? FloatingActionButton.small(
                   onPressed: () => InfoDialog.show(context),
-                  backgroundColor: AppColors.primary.withAlpha(50),
+                  backgroundColor: AppColors.primary.withAlpha(25),
                   elevation: 0,
                   hoverElevation: 2,
                   highlightElevation: 0,
                   tooltip: "How to use",
-                  child: const Icon(
+                  child: Icon(
                     Icons.info_outline_rounded,
-                    color: Colors.white,
+                    color: AppColors.primaryLight.withAlpha(90),
                     size: 20,
                   ),
                 )
