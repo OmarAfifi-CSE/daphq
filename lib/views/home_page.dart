@@ -250,13 +250,13 @@ class _HomePageState extends State<HomePage> {
 
                         if (isDesktopWide) {
                           return Align(
-                            alignment: Alignment.topCenter,
+                            alignment: Alignment.center,
                             child: ConstrainedBox(
                               constraints: const BoxConstraints(maxWidth: 1100),
                               child: Padding(
                                 padding: const EdgeInsets.all(20.0),
                                 child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  crossAxisAlignment: CrossAxisAlignment.center,
                                   children: [
                                     Expanded(
                                       flex: 1,
