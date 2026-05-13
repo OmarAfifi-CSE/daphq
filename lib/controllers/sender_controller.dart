@@ -42,21 +42,25 @@ class SenderController {
       List<Map<String, dynamic>> fileList = [];
 
       for (String path in paths) {
-        if (FileSystemEntity.isDirectorySync(path)) {
+        if (await FileSystemEntity.isDirectory(path)) {
           final dir = Directory(path);
-          final files = dir.listSync(recursive: true).whereType<File>();
-
-          for (var f in files) {
-            final relPath = p
-                .relative(f.path, from: dir.parent.path)
-                .replaceAll(r'\', '/');
-            final size = f.lengthSync();
-            fileList.add({"absPath": f.path, "path": relPath, "size": size});
-            totalSizeBytes += size;
+          await for (var entity in dir.list(recursive: true)) {
+            if (entity is File) {
+              final relPath = p
+                  .relative(entity.path, from: dir.parent.path)
+                  .replaceAll(r'\', '/');
+              final size = await entity.length();
+              fileList.add({
+                "absPath": entity.path,
+                "path": relPath,
+                "size": size,
+              });
+              totalSizeBytes += size;
+            }
           }
         } else {
           final file = File(path);
-          final size = file.lengthSync();
+          final size = await file.length();
           final fileName = p.basename(file.path);
           fileList.add({"absPath": file.path, "path": fileName, "size": size});
           totalSizeBytes += size;
