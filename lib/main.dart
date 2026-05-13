@@ -42,6 +42,11 @@ class MyTaskHandler extends TaskHandler {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+  ]);
+
   FlutterForegroundTask.initCommunicationPort();
 
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
