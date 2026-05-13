@@ -1,10 +1,12 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'views/home_page.dart';
 import 'cubits/transfer_cubit.dart';
 import 'core/app_constants.dart';
@@ -41,6 +43,10 @@ class MyTaskHandler extends TaskHandler {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   FlutterForegroundTask.initCommunicationPort();
+
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    systemNavigationBarColor: AppColors.background,
+  ));
 
   if (Platform.isAndroid) {
     await requestAllPermissions();
@@ -91,11 +97,21 @@ void main() async {
 }
 
 Future<void> requestAllPermissions() async {
-  await [Permission.storage, Permission.notification].request();
+  if (Platform.isAndroid) {
+    final deviceInfo = DeviceInfoPlugin();
+    final androidInfo = await deviceInfo.androidInfo;
+    final sdkInt = androidInfo.version.sdkInt;
 
-  // Full file access (required for Android 11+)
-  if (await Permission.manageExternalStorage.isDenied) {
-    await Permission.manageExternalStorage.request();
+    if (sdkInt >= 30) {
+      // Android 11+ : Only need Manage External Storage + Notification
+      await [Permission.notification].request();
+      if (await Permission.manageExternalStorage.isDenied) {
+        await Permission.manageExternalStorage.request();
+      }
+    } else {
+      // Older Android: Need standard Storage + Notification
+      await [Permission.storage, Permission.notification].request();
+    }
   }
 }
 
