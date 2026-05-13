@@ -326,11 +326,27 @@ h1, h2, h3, h4, .logo-text {
     border-color: var(--primary-glow);
 }
 
-.feature-icon {
-    font-size: 2.5rem;
+.feature-icon-wrapper {
+    width: 60px;
+    height: 60px;
+    background: linear-gradient(135deg, rgba(0, 112, 243, 0.2), rgba(0, 112, 243, 0.05));
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     margin-bottom: 24px;
+    font-size: 1.5rem;
+    color: var(--primary);
+    border: 1px solid rgba(0, 112, 243, 0.3);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+    transition: all 0.3s ease;
 }
 
+.feature-card:hover .feature-icon-wrapper {
+    transform: scale(1.1) rotate(5deg);
+    background: linear-gradient(135deg, rgba(0, 112, 243, 0.4), rgba(0, 112, 243, 0.1));
+    box-shadow: 0 0 20px rgba(0, 112, 243, 0.3);
+}
 .feature-card h3 {
     font-size: 1.25rem;
     margin-bottom: 12px;
