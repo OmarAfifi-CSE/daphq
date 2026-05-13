@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../core/app_colors.dart';
+import '../../../core/app_colors.dart';
 
 class CustomSnackBar {
   static OverlayEntry? _entry;
@@ -12,6 +12,9 @@ class CustomSnackBar {
     Duration duration = const Duration(seconds: 4),
     SnackBarAction? action,
   }) {
+    // If the same message is already showing, don't trigger a full re-show logic
+    if (_dataNotifier.value?.message == message) return;
+
     _dataNotifier.value = SnackBarData(
       message: message,
       backgroundColor: backgroundColor,

@@ -33,4 +33,10 @@ class AppColors {
 
   /// Snackbar background
   static const Color snackBarBackground = Color(0xFF2B2D42);
+
+  /// Discovery Status Colors
+  static const Color discoverySuccess = Color(0xFF10B981);
+  static const Color discoveryRecovering = Color(0xFF3B82F6);
+  static const Color discoveryFailed = Color(0xFFB45309);
+  static const Color discoveryNoConnection = Color(0xFF475569);
 }

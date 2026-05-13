@@ -9,6 +9,7 @@ import 'views/home_page.dart';
 import 'cubits/transfer_cubit.dart';
 import 'core/app_constants.dart';
 import 'core/app_colors.dart';
+import 'services/sharing_service.dart';
 
 @pragma('vm:entry-point')
 void startCallback() {
@@ -24,10 +25,8 @@ class MyTaskHandler extends TaskHandler {
 
   @override
   void onNotificationButtonPressed(String id) {
-    FlutterForegroundTask.sendDataToMain(
-      id == 'stopReceivingButton' ? 'STOP_RECEIVING' : 'CANCEL_SENDING',
-    );
-    FlutterForegroundTask.stopService();
+    // Send message to main task to trigger clean stop in Cubit
+    FlutterForegroundTask.sendDataToMain(id);
   }
 
   @override
@@ -123,29 +122,29 @@ class DaphqApp extends StatelessWidget {
           minTextAdapt: true,
           splitScreenMode: true,
           builder: (context, child) {
-            return MaterialApp(
-              title: 'Daphq',
-              debugShowCheckedModeBanner: false,
-              theme: ThemeData(
-                brightness: Brightness.dark,
-                scaffoldBackgroundColor: AppColors.background,
-                primaryColor: AppColors.primary,
-                colorScheme: const ColorScheme.dark(
-                  primary: AppColors.primary,
-                  surface: AppColors.appBarBackground,
+            return BlocProvider(
+              create: (_) => TransferCubit(),
+              child: MaterialApp(
+                title: 'Daphq',
+                debugShowCheckedModeBanner: false,
+                theme: ThemeData(
+                  brightness: Brightness.dark,
+                  scaffoldBackgroundColor: AppColors.background,
+                  primaryColor: AppColors.primary,
+                  colorScheme: const ColorScheme.dark(
+                    primary: AppColors.primary,
+                    surface: AppColors.appBarBackground,
+                  ),
+                  textSelectionTheme: TextSelectionThemeData(
+                    cursorColor: AppColors.primary,
+                    selectionColor: AppColors.primary.withAlpha(100),
+                    selectionHandleColor: AppColors.primary,
+                  ),
+                  useMaterial3: true,
+                  visualDensity: VisualDensity.adaptivePlatformDensity,
+                  fontFamily: 'Roboto',
                 ),
-                textSelectionTheme: TextSelectionThemeData(
-                  cursorColor: AppColors.primary,
-                  selectionColor: AppColors.primary.withAlpha(100),
-                  selectionHandleColor: AppColors.primary,
-                ),
-                useMaterial3: true,
-                visualDensity: VisualDensity.adaptivePlatformDensity,
-                fontFamily: 'Roboto',
-              ),
-              home: BlocProvider(
-                create: (_) => TransferCubit(),
-                child: const HomePage(),
+                home: const _AppInit(child: HomePage()),
               ),
             );
           },
@@ -153,4 +152,29 @@ class DaphqApp extends StatelessWidget {
       },
     );
   }
+}
+
+class _AppInit extends StatefulWidget {
+  final Widget child;
+  const _AppInit({required this.child});
+
+  @override
+  State<_AppInit> createState() => _AppInitState();
+}
+
+class _AppInitState extends State<_AppInit> {
+  @override
+  void initState() {
+    super.initState();
+    SharingService.init(context);
+  }
+
+  @override
+  void dispose() {
+    SharingService.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }

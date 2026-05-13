@@ -1,4 +1,5 @@
 import '../models/transfer_model.dart';
+import '../models/discovery_model.dart';
 import '../core/app_constants.dart';
 
 class AuthRequest {
@@ -17,8 +18,14 @@ class TransferState {
   final TransferModel model;
   final bool isTransferring;
   final bool isReceiving;
+  final bool isReceivingActive;
   final String? receiveFolder;
   final String targetIp;
+
+  // Discovery fields
+  final List<DiscoveryModel> discoveredDevices;
+  final String deviceName;
+  final bool isAdvancedMode;
 
   // UI Feedback properties
   final String? errorMessage;
@@ -27,42 +34,58 @@ class TransferState {
   final bool showNotificationWarningDialog;
   final bool showBatteryOptimizationSnackBar;
   final AuthRequest? authRequest;
+  final List<String> selectedPaths;
 
   TransferState({
     required this.model,
     this.isTransferring = false,
     this.isReceiving = false,
+    this.isReceivingActive = false,
     this.receiveFolder,
     String? targetIp,
+    this.discoveredDevices = const [],
+    this.deviceName = 'Unknown Device',
+    this.isAdvancedMode = false,
     this.errorMessage,
     this.warningMessage,
     this.showStorageSettingsDialog = false,
     this.showNotificationWarningDialog = false,
     this.showBatteryOptimizationSnackBar = false,
     this.authRequest,
+    this.selectedPaths = const [],
   }) : targetIp = targetIp ?? AppConstants.defaultTargetIp;
 
   TransferState copyWith({
     TransferModel? model,
     bool? isTransferring,
     bool? isReceiving,
+    bool? isReceivingActive,
     String? receiveFolder,
     String? targetIp,
+    List<DiscoveryModel>? discoveredDevices,
+    String? deviceName,
+    bool? isAdvancedMode,
     String? errorMessage,
     String? warningMessage,
     bool? showStorageSettingsDialog,
     bool? showNotificationWarningDialog,
     bool? showBatteryOptimizationSnackBar,
     AuthRequest? authRequest,
+    List<String>? selectedPaths,
     bool clearFeedback = false,
     bool clearAuthRequest = false,
+    bool clearSelection = false,
   }) {
     return TransferState(
       model: model ?? this.model,
       isTransferring: isTransferring ?? this.isTransferring,
       isReceiving: isReceiving ?? this.isReceiving,
+      isReceivingActive: isReceivingActive ?? this.isReceivingActive,
       receiveFolder: receiveFolder ?? this.receiveFolder,
       targetIp: targetIp ?? this.targetIp,
+      discoveredDevices: discoveredDevices ?? this.discoveredDevices,
+      deviceName: deviceName ?? this.deviceName,
+      isAdvancedMode: isAdvancedMode ?? this.isAdvancedMode,
       errorMessage: clearFeedback ? null : (errorMessage ?? this.errorMessage),
       warningMessage: clearFeedback
           ? null
@@ -79,6 +102,7 @@ class TransferState {
           : (showBatteryOptimizationSnackBar ??
                 this.showBatteryOptimizationSnackBar),
       authRequest: clearAuthRequest ? null : (authRequest ?? this.authRequest),
+      selectedPaths: clearSelection ? const [] : (selectedPaths ?? this.selectedPaths),
     );
   }
 }

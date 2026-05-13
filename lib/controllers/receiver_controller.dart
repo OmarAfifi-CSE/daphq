@@ -16,6 +16,8 @@ class ReceiverController {
   Socket? _activeClient;
   IOSink? _activeSink;
   bool _isCancelled = false;
+  String? _cancelReason;
+  String? _currentSenderDeviceName;
 
   /// Starts a TCP server and waits for incoming file transfers.
   ///
@@ -23,6 +25,7 @@ class ReceiverController {
   /// [onRequestAuth] is called to ask the user whether to accept a transfer.
   Future<void> startReceiver({
     required String saveDirectory,
+    required String deviceName,
     required Function(TransferModel) onUpdate,
     required Future<bool> Function(
       String senderIp,
@@ -33,6 +36,7 @@ class ReceiverController {
     required VoidCallback onDone,
   }) async {
     _isCancelled = false;
+    _cancelReason = null;
     try {
       if (_server != null) {
         await _server!.close();
@@ -62,7 +66,7 @@ class ReceiverController {
           break; // Success
         } catch (e) {
           lastError = e;
-          
+
           // Fallback strategy: Try binding to specific available interfaces
           try {
             final interfaces = await NetworkInterface.list(
@@ -101,30 +105,44 @@ class ReceiverController {
       if (_isCancelled) return;
       onUpdate(
         TransferModel(
-          status: "Receiver Ready\n(Port: ${AppConstants.transferPort})",
+          status: "Ready & Waiting as $deviceName",
         ),
       );
 
       await for (Socket client in _server!) {
+        // If we already have an active transfer, reject the new one immediately
+        if (_activeClient != null || _activeSink != null) {
+          try {
+            client.write(
+              "${jsonEncode({"status": "REJECTED", "reason": "BUSY"})}\n",
+            );
+            await client.flush();
+            client.destroy();
+          } catch (_) {}
+          continue;
+        }
+
         _activeClient = client;
+        Map<String, dynamic>? metadata;
+        int totalExpectedBytes = 0;
+        int received = 0;
+        String? originalName;
+
         try {
           Stopwatch stopwatch = Stopwatch()..start();
           bool isRejected = false;
           Completer<void> backgroundWriteCompleter = Completer<void>();
 
           List<int> headerBuffer = [];
-          Map<String, dynamic>? metadata;
-          int totalExpectedBytes = 0;
 
           int currentFileIndex = 0;
           int bytesReadForCurrentFile = 0;
           IOSink? currentSink;
 
-          int received = 0;
           int bytesSinceUpdate = 0;
           DateTime lastTime = DateTime.now();
 
-          await for (var chunk in client) {
+          await for (var chunk in client.timeout(const Duration(seconds: 5))) {
             int offset = 0;
 
             // Parse JSON header
@@ -132,13 +150,18 @@ class ReceiverController {
               int newlineIndex = chunk.indexOf(10); // \n
               if (newlineIndex != -1) {
                 headerBuffer.addAll(chunk.sublist(0, newlineIndex));
-                
+
                 if (headerBuffer.length > 1024 * 1024) {
-                  throw const FileSystemException("Security Exception: Header exceeded 1MB limit. Possible Out-Of-Memory attack.");
+                  throw const FileSystemException(
+                    "Security Exception: Header exceeded 1MB limit. Possible Out-Of-Memory attack.",
+                  );
                 }
-                
+
                 String jsonStr = utf8.decode(headerBuffer);
                 metadata = jsonDecode(jsonStr);
+                originalName = metadata?["fileName"];
+                _currentSenderDeviceName =
+                    metadata?["senderDeviceName"] ?? "the other device";
 
                 offset = newlineIndex + 1;
 
@@ -204,7 +227,9 @@ class ReceiverController {
               } else {
                 headerBuffer.addAll(chunk);
                 if (headerBuffer.length > 1024 * 1024) {
-                  throw const FileSystemException("Security Exception: Header exceeded 1MB limit. Possible Out-Of-Memory attack.");
+                  throw const FileSystemException(
+                    "Security Exception: Header exceeded 1MB limit. Possible Out-Of-Memory attack.",
+                  );
                 }
                 continue;
               }
@@ -268,6 +293,7 @@ class ReceiverController {
                       transferred: received / 1024 / 1024,
                       fileName: p.basename(fileMeta["path"]),
                       status: "Receiving Data...",
+                      totalSize: totalExpectedBytes / 1024 / 1024,
                       progress: totalExpectedBytes > 0
                           ? received / totalExpectedBytes
                           : 0.0,
@@ -329,6 +355,15 @@ class ReceiverController {
 
           // Final cleanup for any streams left open
           if (currentSink != null) {
+            onUpdate(
+              TransferModel(
+                status: "Finalizing... Saving to disk",
+                transferred: received / 1024 / 1024,
+                totalSize: totalExpectedBytes / 1024 / 1024,
+                progress: 1.0,
+                fileName: originalName ?? "",
+              ),
+            );
             await currentSink.flush();
             await currentSink.close();
             currentSink = null;
@@ -337,7 +372,7 @@ class ReceiverController {
 
           // Check for premature connection drop
           if (metadata != null && received < totalExpectedBytes) {
-            throw "Connection dropped prematurely.";
+            throw "Transfer cancelled by ${_currentSenderDeviceName ?? 'the other device'}.";
           }
 
           stopwatch.stop();
@@ -345,14 +380,16 @@ class ReceiverController {
 
           onUpdate(
             TransferModel(
-              status: "Transfer Complete! Ready & Waiting...",
+              status: "Transfer Complete!",
               transferred: finalMB,
+              totalSize: finalMB,
+              progress: 1.0,
               avgSpeed: (finalMB / (stopwatch.elapsedMilliseconds / 1000))
                   .toStringAsFixed(2),
               totalTime: (stopwatch.elapsedMilliseconds / 1000).toStringAsFixed(
                 1,
               ),
-              fileName: "All files saved.",
+              fileName: originalName ?? "Multiple Items",
             ),
           );
 
@@ -364,12 +401,53 @@ class ReceiverController {
         } catch (e) {
           if (_isCancelled) {
             onUpdate(
-              TransferModel(status: "Transfer Cancelled. Ready & Waiting..."),
+              TransferModel(
+                status: _cancelReason ?? "Transfer Cancelled.",
+                transferred: received / 1024 / 1024,
+                totalSize: totalExpectedBytes / 1024 / 1024,
+                progress: totalExpectedBytes > 0
+                    ? received / totalExpectedBytes
+                    : 0.0,
+                fileName: originalName ?? "",
+              ),
             );
           } else if (e is SocketException) {
-            onUpdate(TransferModel(status: _mapReceiverSocketError(e)));
+            onUpdate(
+              TransferModel(
+                status: _mapReceiverSocketError(e),
+                transferred: received / 1024 / 1024,
+                totalSize: totalExpectedBytes / 1024 / 1024,
+                progress: totalExpectedBytes > 0
+                    ? received / totalExpectedBytes
+                    : 0.0,
+                fileName: originalName ?? "",
+              ),
+            );
+          } else if (e is TimeoutException) {
+            onUpdate(
+              TransferModel(
+                status:
+                    "Transfer cancelled by ${_currentSenderDeviceName ?? 'sender'} (Connection Timeout).",
+                transferred: received / 1024 / 1024,
+                totalSize: totalExpectedBytes / 1024 / 1024,
+                progress: totalExpectedBytes > 0
+                    ? received / totalExpectedBytes
+                    : 0.0,
+                fileName: originalName ?? "",
+              ),
+            );
           } else {
-            onUpdate(TransferModel(status: "Error: $e. Ready & Waiting..."));
+            onUpdate(
+              TransferModel(
+                status: "$e. Ready & Waiting...",
+                transferred: received / 1024 / 1024,
+                totalSize: totalExpectedBytes / 1024 / 1024,
+                progress: totalExpectedBytes > 0
+                    ? received / totalExpectedBytes
+                    : 0.0,
+                fileName: originalName ?? "",
+              ),
+            );
           }
         } finally {
           try {
@@ -384,7 +462,7 @@ class ReceiverController {
       onDone();
     } catch (e) {
       if (_isCancelled) {
-        onUpdate(TransferModel(status: "Transfer Cancelled"));
+        onUpdate(TransferModel(status: _cancelReason ?? "Transfer Cancelled"));
       } else if (e is SocketException) {
         final msg = e.message.toLowerCase();
         final osError = e.osError?.errorCode;
@@ -393,15 +471,24 @@ class ReceiverController {
             osError == 32 ||
             msg.contains("connection reset by peer")) {
           onUpdate(
-            TransferModel(status: "Transfer cancelled by the other device."),
+            TransferModel(
+                status:
+                    "Transfer cancelled by ${_currentSenderDeviceName ?? 'the other device'}."),
           );
         } else {
           onUpdate(
             TransferModel(
-              status: "Network Error: Please check network or Hotspot connection.",
+              status:
+                  "Network Error: Please check network or Hotspot connection.",
             ),
           );
         }
+      } else if (e is TimeoutException) {
+        onUpdate(
+          TransferModel(
+              status:
+                  "Transfer cancelled by ${_currentSenderDeviceName ?? 'sender'} (Connection Timeout)."),
+        );
       } else {
         onUpdate(TransferModel(status: "Error: $e"));
       }
@@ -414,16 +501,25 @@ class ReceiverController {
   }
 
   /// Stops the receiver server and cancels any active transfer.
-  void stop() {
+  void stop({String? reason}) {
     _isCancelled = true;
+    _cancelReason = reason;
+
+    if (_activeClient != null) {
+      try {
+        _activeClient!.write("${jsonEncode({"status": "REJECTED"})}\n");
+        _activeClient!.flush().then((_) {
+          _activeClient?.destroy();
+          _activeClient = null;
+        });
+      } catch (_) {}
+    }
+
     _server?.close();
     _server = null;
 
     _activeSink?.close();
     _activeSink = null;
-
-    _activeClient?.destroy();
-    _activeClient = null;
   }
 
   /// Maps a [SocketException] to a user-friendly error message for receiver.
@@ -434,9 +530,9 @@ class ReceiverController {
         osError == 10054 ||
         osError == 32 ||
         msg.contains("connection reset by peer")) {
-      return "Transfer cancelled by the other device. Ready & Waiting...";
+      return "Transfer cancelled by ${_currentSenderDeviceName ?? 'sender'}. Ready & Waiting...";
     } else {
-      return "Network Error: Please check network or Hotspot connection. Ready & Waiting...";
+      return "Network lost. Ready & Waiting...";
     }
   }
 

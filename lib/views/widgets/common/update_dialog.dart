@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../../core/app_colors.dart';
-import '../../core/responsive_utils.dart';
+import '../../../core/app_colors.dart';
+import '../../../core/responsive_utils.dart';
 
 class UpdateDialog extends StatelessWidget {
   final String newVersion;
@@ -19,9 +19,9 @@ class UpdateDialog extends StatelessWidget {
 
   Future<void> _launchUpdateUrl() async {
     final Uri url = Uri.parse(downloadUrl);
-    if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
-      debugPrint('Could not launch $url');
-    }
+    try {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    } catch (_) {}
   }
 
   @override
@@ -59,7 +59,7 @@ class UpdateDialog extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'Version $newVersion is now available on GitHub.',
+                'Version $newVersion is now available.',
                 style: TextStyle(color: Colors.white70, fontSize: 14.0.rx(isDesktop)),
               ),
               SizedBox(height: 16.0.rh(isDesktop)),

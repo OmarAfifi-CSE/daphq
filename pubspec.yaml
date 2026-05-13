@@ -1,8 +1,9 @@
 name: daphq
 description: "A high-performance, raw TCP-based file transfer utility for seamless cross-platform data synchronization."
+homepage: https://omarafifi-cse.github.io/daphq/
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 2.0.0+2
 
 environment:
   sdk: ^3.11.4
@@ -20,6 +21,10 @@ dependencies:
   http: ^1.6.0
   package_info_plus: ^9.0.1
   url_launcher: ^6.3.2
+  path_provider: ^2.1.5
+  device_info_plus: ^12.4.0
+  share_handler: ^0.0.25
+  connectivity_plus: ^7.1.1
 
 dev_dependencies:
   flutter_test:

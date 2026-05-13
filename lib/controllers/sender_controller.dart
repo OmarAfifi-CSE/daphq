@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'dart:convert';
-import 'dart:ui';
 import 'dart:async';
 import 'package:path/path.dart' as p;
 import '../models/transfer_model.dart';
@@ -13,61 +12,66 @@ import '../core/app_constants.dart';
 class SenderController {
   Socket? _activeSocket;
   bool _isCancelled = false;
+  String? _cancelReason;
+  bool _wasRejectedByReceiver = false;
+  String? _currentTargetDeviceName;
 
   /// Sends a file or folder to the receiver at [targetIp].
   ///
   /// Calls [onUpdate] with progress updates and [onDone] when finished.
   Future<void> sendData({
-    required String path,
+    required List<String> paths,
     required String targetIp,
-    required bool isFolder,
+    required String targetDeviceName,
+    required String senderDeviceName,
     required Function(TransferModel) onUpdate,
-    required VoidCallback onDone,
   }) async {
+    _isCancelled = false;
+    _cancelReason = null;
+    _wasRejectedByReceiver = false;
+    _currentTargetDeviceName = targetDeviceName;
+    Socket? socket;
     Stopwatch stopwatch = Stopwatch()..start();
+    int sentBytes = 0;
+    double totalSizeBytes = 0;
+    String? originalName;
     try {
       onUpdate(TransferModel(status: "Analyzing Files..."));
 
+      // 1. Prepare file list from multiple paths
       List<Map<String, dynamic>> fileList = [];
-      int totalBytesToSend = 0;
 
-      if (isFolder) {
-        var dir = Directory(path);
-        if (!dir.existsSync()) throw "Folder not found!";
+      for (String path in paths) {
+        if (FileSystemEntity.isDirectorySync(path)) {
+          final dir = Directory(path);
+          final files = dir.listSync(recursive: true).whereType<File>();
 
-        var entities = dir.listSync(recursive: true).whereType<File>();
-        for (var f in entities) {
-          int size = f.lengthSync();
-          // Normalize path separators for cross-platform compatibility
-          String normalizedPath = p
-              .relative(f.path, from: p.dirname(path))
-              .replaceAll(r'\', '/');
-          fileList.add({
-            "path": normalizedPath,
-            "size": size,
-            "absPath": f.path,
-          });
-          totalBytesToSend += size;
+          for (var f in files) {
+            final relPath = p
+                .relative(f.path, from: dir.parent.path)
+                .replaceAll(r'\', '/');
+            final size = f.lengthSync();
+            fileList.add({"absPath": f.path, "path": relPath, "size": size});
+            totalSizeBytes += size;
+          }
+        } else {
+          final file = File(path);
+          final size = file.lengthSync();
+          final fileName = p.basename(file.path);
+          fileList.add({"absPath": file.path, "path": fileName, "size": size});
+          totalSizeBytes += size;
         }
-      } else {
-        var f = File(path);
-        if (!f.existsSync()) throw "File not found!";
-        int size = f.lengthSync();
-        fileList.add({
-          "path": p.basename(path),
-          "size": size,
-          "absPath": f.path,
-        });
-        totalBytesToSend += size;
       }
 
-      if (totalBytesToSend == 0) {
+      if (fileList.isEmpty) throw "No files found in selection.";
+
+      if (totalSizeBytes == 0) {
         throw "Error: The selected item is empty (0.0 MB).";
       }
 
       // Connect to receiver
       onUpdate(TransferModel(status: "Connecting..."));
-      final socket = await Socket.connect(
+      socket = await Socket.connect(
         targetIp,
         AppConstants.transferPort,
         timeout: const Duration(seconds: AppConstants.connectionTimeoutSeconds),
@@ -76,11 +80,16 @@ class SenderController {
       socket.setOption(SocketOption.tcpNoDelay, true);
 
       // Send file metadata (JSON header)
-      String originalName = isFolder ? p.basename(path) : p.basename(path);
+      originalName = paths.length == 1
+          ? p.basename(paths[0])
+          : "${p.basename(paths[0])} and ${paths.length - 1} more";
+
       Map<String, dynamic> metadata = {
         "fileName": originalName,
-        "fileSize": totalBytesToSend,
-        "isFolder": isFolder,
+        "fileSize": totalSizeBytes,
+        "senderDeviceName": senderDeviceName,
+        "isFolder":
+            paths.length > 1 || FileSystemEntity.isDirectorySync(paths[0]),
         "files": fileList
             .map((e) => {"path": e["path"], "size": e["size"]})
             .toList(),
@@ -113,8 +122,13 @@ class SenderController {
                 if (response["status"] == "REJECTED") {
                   if (!readyCompleter.isCompleted) {
                     readyCompleter.completeError(
-                      "Transfer Rejected by Receiver.",
+                      "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}",
                     );
+                  } else {
+                    // If already transferring, trigger a cancellation
+                    _isCancelled = true;
+                    _wasRejectedByReceiver = true;
+                    socket?.destroy();
                   }
                 } else if (response["s"] == "r") {
                   if (!readyCompleter.isCompleted) {
@@ -163,7 +177,6 @@ class SenderController {
       }
 
       // Stream file data
-      int sentBytes = 0;
       DateTime lastUpdate = DateTime.now();
       int bytesSinceUpdate = 0;
       int bytesBuffered = 0;
@@ -177,16 +190,22 @@ class SenderController {
           await for (var chunk in reader) {
             if (_isCancelled) throw "Transfer Cancelled";
             try {
+              if (_isCancelled) throw "Transfer Cancelled";
               socket.add(chunk);
               bytesBuffered += chunk.length;
               if (bytesBuffered >= AppConstants.socketFlushThresholdBytes) {
-                await socket.flush(); // Prevent OOM by awaiting buffer flush
+                await socket.flush().timeout(
+                  const Duration(seconds: 5),
+                  onTimeout: () => throw "Transfer Timeout",
+                ); // Prevent OOM by awaiting buffer flush
                 bytesBuffered = 0;
               }
-            } on SocketException {
-              throw "Network disconnected during transfer.";
-            } on StateError {
+            } catch (e) {
               if (_isCancelled) throw "Transfer Cancelled";
+              if (e is SocketException ||
+                  e.toString().contains("reset by peer")) {
+                throw "Receiver disconnected during transfer.";
+              }
               rethrow;
             }
 
@@ -205,8 +224,9 @@ class SenderController {
                   transferred: sentBytes / 1024 / 1024,
                   fileName: p.basename(f["path"]),
                   status: "Pumping Data...",
-                  progress: totalBytesToSend > 0
-                      ? sentBytes / totalBytesToSend
+                  totalSize: totalSizeBytes / 1024 / 1024,
+                  progress: totalSizeBytes > 0
+                      ? sentBytes / totalSizeBytes
                       : 0.0,
                 ),
               );
@@ -221,17 +241,19 @@ class SenderController {
 
       // Stop the stopwatch immediately after bytes are sent for accurate speed
       stopwatch.stop();
-      double finalMB = totalBytesToSend / 1024 / 1024;
+      double finalMB = totalSizeBytes / 1024 / 1024;
       double avg = finalMB / (stopwatch.elapsedMilliseconds / 1000);
 
       // Wait for DONE status with timeout
       onUpdate(
         TransferModel(
-          status: "Finalizing transfer... Please wait for disk write.",
+          status: "Finalizing... Saving to disk",
           fileName: originalName,
           speed: 0,
           transferred: finalMB,
+          totalSize: finalMB,
           avgSpeed: avg.toStringAsFixed(2),
+          progress: 1.0,
         ),
       );
 
@@ -239,14 +261,17 @@ class SenderController {
         await doneCompleter.future.timeout(
           const Duration(seconds: 30),
           onTimeout: () {
-            if (sentBytes >= totalBytesToSend) {
+            if (sentBytes >= totalSizeBytes) {
               return; // Ignore timeout if all bytes were sent
             }
             throw "Timeout waiting for Receiver to finalize disk write.";
           },
         );
       } catch (e) {
-        if (sentBytes < totalBytesToSend) {
+        // If the receiver cancelled/rejected during the finalization phase, we should still report it
+        if (_isCancelled) throw "Transfer Cancelled";
+
+        if (sentBytes < totalSizeBytes) {
           rethrow;
         }
       }
@@ -255,33 +280,75 @@ class SenderController {
 
       onUpdate(
         TransferModel(
-          status: "SUCCESSFULLY SENT!",
+          status: "Transfer Complete!",
           transferred: finalMB,
+          totalSize: finalMB,
           avgSpeed: avg.toStringAsFixed(2),
           totalTime: (stopwatch.elapsedMilliseconds / 1000).toStringAsFixed(1),
-          fileName: isFolder ? p.basename(path) : fileList.first["path"],
+          fileName: paths.length == 1 ? p.basename(paths[0]) : "Multiple Items",
+          progress: 1.0,
         ),
       );
-      onDone();
     } on PathAccessException {
       onUpdate(TransferModel(status: "Error: Permission Denied"));
-      onDone();
     } catch (e) {
-      if (_isCancelled) {
-        onUpdate(TransferModel(status: "Transfer Cancelled"));
+      if (_isCancelled || e.toString().contains("Transfer Cancelled")) {
+        String status = _wasRejectedByReceiver
+            ? "Transfer cancelled by ${_currentTargetDeviceName ?? 'Receiver'}"
+            : _cancelReason ?? "Transfer Cancelled";
+        onUpdate(
+          TransferModel(
+            status: status,
+            transferred: sentBytes / 1024 / 1024,
+            totalSize: totalSizeBytes / 1024 / 1024,
+            progress: totalSizeBytes > 0 ? sentBytes / totalSizeBytes : 0.0,
+            fileName: originalName ?? "",
+          ),
+        );
+      } else if (e.toString().contains("Receiver disconnected") ||
+          e.toString().contains("Transfer Timeout")) {
+        onUpdate(
+          TransferModel(
+            status:
+                "Transfer cancelled by ${_currentTargetDeviceName ?? 'the other device'}",
+            transferred: sentBytes / 1024 / 1024,
+            totalSize: totalSizeBytes / 1024 / 1024,
+            progress: totalSizeBytes > 0 ? sentBytes / totalSizeBytes : 0.0,
+            fileName: originalName ?? "",
+          ),
+        );
       } else if (e is SocketException) {
-        onUpdate(TransferModel(status: _mapSocketError(e)));
+        onUpdate(
+          TransferModel(
+            status: _mapSocketError(e),
+            transferred: sentBytes / 1024 / 1024,
+            totalSize: totalSizeBytes / 1024 / 1024,
+            progress: totalSizeBytes > 0 ? sentBytes / totalSizeBytes : 0.0,
+            fileName: originalName ?? "",
+          ),
+        );
       } else if (e is TimeoutException) {
         onUpdate(
           TransferModel(
             status:
                 "Device not found. Please double-check the IP address and ensure both devices are on the exact same Wi-Fi/Hotspot.",
+            transferred: sentBytes / 1024 / 1024,
+            totalSize: totalSizeBytes / 1024 / 1024,
+            progress: totalSizeBytes > 0 ? sentBytes / totalSizeBytes : 0.0,
+            fileName: originalName ?? "",
           ),
         );
       } else {
-        onUpdate(TransferModel(status: "Error: $e"));
+        onUpdate(
+          TransferModel(
+            status: "Error: $e",
+            transferred: sentBytes / 1024 / 1024,
+            totalSize: totalSizeBytes / 1024 / 1024,
+            progress: totalSizeBytes > 0 ? sentBytes / totalSizeBytes : 0.0,
+            fileName: originalName ?? "",
+          ),
+        );
       }
-      onDone();
     } finally {
       _activeSocket = null;
       _isCancelled = false;
@@ -289,8 +356,9 @@ class SenderController {
   }
 
   /// Cancels an active send operation.
-  void cancel() {
+  void cancel({String? reason}) {
     _isCancelled = true;
+    _cancelReason = reason;
     _activeSocket?.destroy();
     _activeSocket = null;
   }
@@ -311,13 +379,16 @@ class SenderController {
       return "Device not found. Please double-check the IP address and ensure both devices are on the exact same Wi-Fi/Hotspot.";
     } else if (osError == 101 ||
         osError == 10051 ||
-        msg.contains("network is unreachable")) {
+        osError == 10053 ||
+        osError == 10050 ||
+        msg.contains("network is unreachable") ||
+        msg.contains("software caused connection abort")) {
       return "No network connection. Please turn on Wi-Fi/Hotspot.";
     } else if (osError == 104 ||
         osError == 10054 ||
         osError == 32 ||
         msg.contains("connection reset by peer")) {
-      return "Transfer cancelled by the other device.";
+      return "Transfer cancelled by ${_currentTargetDeviceName ?? 'the other device'}.";
     } else {
       return "Network Error: Please ensure network/Hotspot is connected.";
     }

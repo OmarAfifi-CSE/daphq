@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description"
+        content="Daphq - Lightning Fast Local Network File Transfer for Windows and Android. No size limits, secure, and blazing fast.">
+    <title>Daphq - Lightning Fast Local File Transfer</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@400;500&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
+    <link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="assets/icon-512.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192-maskable.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="assets/icon-512-maskable.png">
+    <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+
+<body>
+    <!-- Neural Network Background -->
+    <canvas id="network-canvas"></canvas>
+
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="logo" style="display: flex; align-items: center; gap: 12px; cursor: pointer;"
+                onclick="window.scrollTo({top: 0, behavior: 'smooth'})">
+                <img src="assets/icon-192.png" alt="Daphq Logo" width="36" height="36" style="border-radius: 8px;">
+                <span class="logo-text">Daphq</span>
+            </div>
+            <div class="nav-links">
+                <a href="#">Home</a>
+                <a href="#features">Features</a>
+                <a href="#how-it-works">How it Works</a>
+                <a href="https://github.com/OmarAfifi-CSE/daphq" target="_blank" class="github-link">GitHub</a>
+            </div>
+            <a href="#download" class="btn btn-nav">Download Now</a>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <header class="hero">
+        <div class="container hero-content">
+            <div class="hero-text fade-up">
+                <div class="badge" id="version-badge">Latest Version is Here!</div>
+                <h1>Transfer Files at <span class="gradient-text">Lightning Speed</span></h1>
+                <p>Move gigabytes of data between any combination of Windows and Android devices in seconds. No cloud,
+                    no size limits, 100% secure over your local Wi-Fi or Hotspot.</p>
+                <div class="hero-buttons">
+                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-primary btn-large"
+                        id="main-download-btn">
+                        <i class="fab fa-windows"></i> Download for Windows
+                    </a>
+                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-secondary btn-large"
+                        id="hero-android-btn">
+                        <i class="fab fa-android"></i> Download for Android
+                    </a>
+                </div>
+            </div>
+            <div class="hero-image fade-up delay-1">
+                <div class="glass-card mockup-container">
+                    <img src="assets/mockup.png" alt="Daphq App Mockup" class="floating">
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Brand Stats Bar -->
+    <div class="stats-bar">
+        <div class="container stats-container">
+            <!--
+            <div class="stat-item">
+                <i class="fab fa-github"></i>
+                <span id="github-stars">...</span> <span>Stars</span>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+                <i class="fas fa-code-branch"></i>
+                <span id="github-forks">...</span> <span>Forks</span>
+            </div>
+            <div class="stat-divider"></div>
+            -->
+            <div class="stat-item">
+                <i class="fas fa-user-shield"></i>
+                <span>100% Open Source</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Features Section -->
+    <section id="features" class="features">
+        <div class="container">
+            <div class="section-header fade-up">
+                <h2>Built for <span class="gradient-text">Performance</span></h2>
+                <p>Experience the ultimate file transfer utility designed for speed and reliability.</p>
+            </div>
+            <div class="features-grid">
+                <div class="feature-card glass-card fade-up">
+                    <div class="feature-icon-wrapper">
+                        <i class="fas fa-bolt"></i>
+                    </div>
+                    <h3>Extreme Throughput</h3>
+                    <p>Engineered with raw TCP sockets to saturate your network limits. Experience blazing speeds up to
+                        100+ MB/s.</p>
+                </div>
+                <div class="feature-card glass-card fade-up delay-1">
+                    <div class="feature-icon-wrapper">
+                        <i class="fas fa-shield-halved"></i>
+                    </div>
+                    <h3>Zero-Cloud Privacy</h3>
+                    <p>Pure Peer-to-Peer architecture. Your files never leave your network. No internet required, no servers, and zero tracking.</p>
+                </div>
+                <div class="feature-card glass-card fade-up delay-2">
+                    <div class="feature-icon-wrapper">
+                        <i class="fas fa-tower-broadcast"></i>
+                    </div>
+                    <h3>Intelligent Discovery</h3>
+                    <p>Connectivity-aware engine with instant watchdog recovery and IP caching for seamless device
+                        pairing.</p>
+                </div>
+                <div class="feature-card glass-card fade-up">
+                    <div class="feature-icon-wrapper">
+                        <i class="fas fa-infinity"></i>
+                    </div>
+                    <h3>Atomic Directory Sync</h3>
+                    <p>Send 4K movies, massive folders, or thousands of photos with exact hierarchy reconstruction.</p>
+                </div>
+                <div class="feature-card glass-card fade-up delay-1">
+                    <div class="feature-icon-wrapper">
+                        <i class="fas fa-mobile-screen-button"></i>
+                    </div>
+                    <h3>Uninterruptible Service</h3>
+                    <p>Native excellence for Windows and Android. Foreground services keep transfers alive in the background.</p>
+                </div>
+                <div class="feature-card glass-card fade-up delay-2">
+                    <div class="feature-icon-wrapper">
+                        <i class="fas fa-chart-line"></i>
+                    </div>
+                    <h3>Advanced Analytics</h3>
+                    <p>Deep insight into your transfers with instantaneous throughput tracking, average speeds, and
+                        precise ETA metrics.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- How It Works Section -->
+    <section id="how-it-works" class="how-it-works">
+        <div class="container">
+            <div class="section-header fade-up">
+                <h2>As Simple as <span class="gradient-text">1, 2, 3</span></h2>
+            </div>
+            <div class="steps-container">
+                <div class="step fade-up">
+                    <div class="step-number">01</div>
+                    <h3>Connect</h3>
+                    <p>Ensure both devices are on the same Wi-Fi or Hotspot.</p>
+                </div>
+                <div class="step fade-up delay-1">
+                    <div class="step-number">02</div>
+                    <h3>Discover</h3>
+                    <p>Devices appear automatically when "Start Receiver" is active.</p>
+                </div>
+                <div class="step fade-up delay-2">
+                    <div class="step-number">03</div>
+                    <h3>Send</h3>
+                    <p>Select a device, pick your files, and start the transfer.</p>
+                </div>
+            </div>
+            <div class="fade-up delay-2" style="text-align: center; margin-top: 32px;">
+                <span class="badge" style="border-color: #10B981; color: #10B981;">Pro Tip: Use 5GHz Wi-Fi or Hotspot
+                    for lightning-fast speeds.</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- Comparison Section -->
+    <section class="comparison">
+        <div class="container">
+            <div class="section-header fade-up">
+                <h2>The New <span class="gradient-text">Standard</span></h2>
+                <p>How Daphq redefines the local transfer experience.</p>
+            </div>
+            <div class="comparison-grid fade-up">
+                <div class="comparison-card glass-card">
+                    <div class="comp-head">Metric</div>
+                    <div class="comp-row">Speed</div>
+                    <div class="comp-row">Privacy</div>
+                    <div class="comp-row">Limits</div>
+                    <div class="comp-row">Internet</div>
+                </div>
+                <div class="comparison-card glass-card featured">
+                    <div class="comp-head">Daphq</div>
+                    <div class="comp-row accent-text">100+ MB/s</div>
+                    <div class="comp-row accent-text">P2P (Private)</div>
+                    <div class="comp-row accent-text">Unlimited</div>
+                    <div class="comp-row accent-text">Not Needed</div>
+                </div>
+                <div class="comparison-card glass-card">
+                    <div class="comp-head">Cloud / Others</div>
+                    <div class="comp-row">Varies (Slow)</div>
+                    <div class="comp-row">Third-party</div>
+                    <div class="comp-row">Limited</div>
+                    <div class="comp-row">Required</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Download Section -->
+    <section id="download" class="download-cta">
+        <div class="container">
+            <div class="cta-card glass-card fade-up">
+                <h2>Ready to upgrade your workflow?</h2>
+                <p>Download Daphq now and experience the fastest way to move data.</p>
+                <div class="download-buttons">
+                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-primary btn-large"
+                        id="download-windows">
+                        <i class="fab fa-windows"></i> Download for Windows
+                    </a>
+                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-primary btn-large"
+                        id="download-android">
+                        <i class="fab fa-android"></i> Download for Android
+                    </a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container footer-container">
+            <div class="footer-left">
+                <img src="assets/icon-192.png" alt="Daphq Logo" width="28" height="28" style="border-radius: 6px;">
+                <span class="logo-text" style="font-size: 1.2rem;">Daphq</span>
+            </div>
+            <div class="footer-center">
+                <p>&copy; 2026 Omar Afifi. All rights reserved.</p>
+            </div>
+            <div class="footer-right">
+                <a href="https://github.com/OmarAfifi-CSE/daphq" target="_blank"><i class="fab fa-github"></i></a>
+                <a href="https://github.com/OmarAfifi-CSE/daphq/issues" target="_blank">Issues</a>
+            </div>
+        </div>
+    </footer>
+
+    <script src="js/network-bg.js"></script>
+    <script src="js/main.js"></script>
+</body>
+
+</html>
