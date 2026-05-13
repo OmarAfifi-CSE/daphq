@@ -42,7 +42,8 @@ class TransferCubit extends Cubit<TransferState> {
 
       final List<ConnectivityResult> resultList = results;
 
-      final bool isDisconnected = resultList.isNotEmpty &&
+      final bool isDisconnected =
+          resultList.isNotEmpty &&
           resultList.every((r) => r == ConnectivityResult.none);
 
       if (isDisconnected) {
@@ -344,12 +345,13 @@ class TransferCubit extends Cubit<TransferState> {
           );
         }
       },
-      onRequestAuth: (senderIp, count, size) {
+      onRequestAuth: (senderIp, senderName, count, size) {
         _authCompleter = Completer<bool>();
         emit(
           state.copyWith(
             authRequest: AuthRequest(
               senderIp: senderIp,
+              senderName: senderName,
               fileCount: count,
               totalSizeMB: size,
             ),

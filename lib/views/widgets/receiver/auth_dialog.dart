@@ -7,8 +7,9 @@ import '../../../core/app_colors.dart';
 Future<bool> showAuthDialog({
   required BuildContext context,
   required String senderIp,
+  required String senderName,
   required int fileCount,
-  required double totalSizeMB,
+  required String formattedSize,
 }) async {
   return await showDialog<bool>(
         context: context,
@@ -20,13 +21,16 @@ Future<bool> showAuthDialog({
           ),
           backgroundColor: AppColors.dialogBackground,
           content: Text(
-            "Sender: $senderIp\nFiles: $fileCount\nTotal Size: ${totalSizeMB.toStringAsFixed(2)} MB\n\nDo you want to accept?",
+            "From: $senderName\nIP: $senderIp\nFiles: $fileCount\nTotal Size: $formattedSize\n\nDo you want to accept?",
             style: const TextStyle(color: Colors.white70),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text("Reject", style: TextStyle(color: Colors.redAccent)),
+              child: const Text(
+                "Reject",
+                style: TextStyle(color: Colors.redAccent),
+              ),
             ),
             ElevatedButton(
               onPressed: () => Navigator.pop(context, true),

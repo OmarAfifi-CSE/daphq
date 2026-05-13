@@ -4,14 +4,24 @@ import '../core/app_constants.dart';
 
 class AuthRequest {
   final String senderIp;
+  final String senderName;
   final int fileCount;
   final double totalSizeMB;
 
   AuthRequest({
     required this.senderIp,
+    required this.senderName,
     required this.fileCount,
     required this.totalSizeMB,
   });
+
+  String get formattedSize {
+    if (totalSizeMB >= 1024) {
+      return "${(totalSizeMB / 1024).toStringAsFixed(2)} GB";
+    } else {
+      return "${totalSizeMB.toStringAsFixed(1)} MB";
+    }
+  }
 }
 
 class TransferState {
@@ -102,7 +112,9 @@ class TransferState {
           : (showBatteryOptimizationSnackBar ??
                 this.showBatteryOptimizationSnackBar),
       authRequest: clearAuthRequest ? null : (authRequest ?? this.authRequest),
-      selectedPaths: clearSelection ? const [] : (selectedPaths ?? this.selectedPaths),
+      selectedPaths: clearSelection
+          ? const []
+          : (selectedPaths ?? this.selectedPaths),
     );
   }
 }

@@ -158,8 +158,9 @@ class _HomePageState extends State<HomePage> {
             showAuthDialog(
               context: context,
               senderIp: state.authRequest!.senderIp,
+              senderName: state.authRequest!.senderName,
               fileCount: state.authRequest!.fileCount,
-              totalSizeMB: state.authRequest!.totalSizeMB,
+              formattedSize: state.authRequest!.formattedSize,
             ).then((accepted) {
               cubit.resolveAuth(accepted);
             });

@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'dart:typed_data';
 import 'dart:async';
 import 'package:path/path.dart' as p;
+import 'package:storage_space/storage_space.dart';
 import '../models/transfer_model.dart';
 import '../core/app_constants.dart';
 
@@ -29,6 +30,7 @@ class ReceiverController {
     required Function(TransferModel) onUpdate,
     required Future<bool> Function(
       String senderIp,
+      String senderDeviceName,
       int fileCount,
       double totalSizeMB,
     )
@@ -142,7 +144,7 @@ class ReceiverController {
           DateTime lastTime = DateTime.now();
 
           await for (var chunk in client.timeout(
-            Duration(seconds: AppConstants.transferTimeoutSeconds),
+            const Duration(seconds: AppConstants.transferTimeoutSeconds),
           )) {
             int offset = 0;
 
@@ -174,8 +176,35 @@ class ReceiverController {
                 );
                 double totalSizeMB = totalExpectedBytes / 1024 / 1024;
 
+                // 1. Free Space Check
+                try {
+                  StorageSpace freeSpace = await getStorageSpace(
+                    lowOnSpaceThreshold: 0,
+                    fractionDigits: 1,
+                  );
+                  if (freeSpace.free < totalExpectedBytes) {
+                    client.write(
+                      "${jsonEncode({"status": "REJECTED", "reason": "OUT_OF_SPACE"})}\n",
+                    );
+                    await client.flush();
+                    client.destroy();
+                    isRejected = true;
+                    onUpdate(
+                      TransferModel(
+                        status:
+                            "Error: Insufficient space (${freeSpace.freeSize} available).",
+                      ),
+                    );
+                    break;
+                  }
+                } catch (e) {
+                  // If space check fails for some reason (e.g. platform error),
+                  // we proceed to auth as a fallback rather than blocking the transfer.
+                }
+
                 bool isAccepted = await onRequestAuth(
                   client.remoteAddress.address,
+                  _currentSenderDeviceName ?? "Unknown Device",
                   files.length,
                   totalSizeMB,
                 );

@@ -121,13 +121,18 @@ class SenderController {
                 Map<String, dynamic> response = jsonDecode(line);
                 if (response["status"] == "REJECTED") {
                   if (!readyCompleter.isCompleted) {
-                    readyCompleter.completeError(
-                      "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}",
-                    );
+                    String errorMsg = response["reason"] == "OUT_OF_SPACE"
+                        ? "Receiver has insufficient storage space."
+                        : "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}";
+                    readyCompleter.completeError(errorMsg);
                   } else {
                     // If already transferring, trigger a cancellation
+                    String errorMsg = response["reason"] == "OUT_OF_SPACE"
+                        ? "Receiver has insufficient storage space."
+                        : "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}";
                     _isCancelled = true;
                     _wasRejectedByReceiver = true;
+                    _cancelReason = errorMsg;
                     socket?.destroy();
                   }
                 } else if (response["s"] == "r") {
@@ -195,7 +200,7 @@ class SenderController {
               bytesBuffered += chunk.length;
               if (bytesBuffered >= AppConstants.socketFlushThresholdBytes) {
                 await socket.flush().timeout(
-                  Duration(seconds: AppConstants.transferTimeoutSeconds),
+                  const Duration(seconds: AppConstants.transferTimeoutSeconds),
                   onTimeout: () => throw "Transfer Timeout",
                 ); // Prevent OOM by awaiting buffer flush
                 bytesBuffered = 0;
