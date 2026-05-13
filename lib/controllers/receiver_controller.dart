@@ -103,11 +103,7 @@ class ReceiverController {
       }
 
       if (_isCancelled) return;
-      onUpdate(
-        TransferModel(
-          status: "Ready & Waiting as $deviceName",
-        ),
-      );
+      onUpdate(TransferModel(status: "Ready & Waiting as $deviceName"));
 
       await for (Socket client in _server!) {
         // If we already have an active transfer, reject the new one immediately
@@ -123,6 +119,9 @@ class ReceiverController {
         }
 
         _activeClient = client;
+        try {
+          _activeClient!.setOption(SocketOption.tcpNoDelay, true);
+        } catch (_) {}
         Map<String, dynamic>? metadata;
         int totalExpectedBytes = 0;
         int received = 0;
@@ -142,7 +141,9 @@ class ReceiverController {
           int bytesSinceUpdate = 0;
           DateTime lastTime = DateTime.now();
 
-          await for (var chunk in client.timeout(const Duration(seconds: 5))) {
+          await for (var chunk in client.timeout(
+            Duration(seconds: AppConstants.transferTimeoutSeconds),
+          )) {
             int offset = 0;
 
             // Parse JSON header
@@ -246,7 +247,7 @@ class ReceiverController {
                   String savePath = p.join(saveDirectory, fileMeta["path"]);
                   File f = File(savePath);
                   // Create subdirectories recursively
-                  f.parent.createSync(recursive: true);
+                  await f.parent.create(recursive: true);
 
                   currentSink = f.openWrite();
                   _activeSink = currentSink;
@@ -472,8 +473,9 @@ class ReceiverController {
             msg.contains("connection reset by peer")) {
           onUpdate(
             TransferModel(
-                status:
-                    "Transfer cancelled by ${_currentSenderDeviceName ?? 'the other device'}."),
+              status:
+                  "Transfer cancelled by ${_currentSenderDeviceName ?? 'the other device'}.",
+            ),
           );
         } else {
           onUpdate(
@@ -486,8 +488,9 @@ class ReceiverController {
       } else if (e is TimeoutException) {
         onUpdate(
           TransferModel(
-              status:
-                  "Transfer cancelled by ${_currentSenderDeviceName ?? 'sender'} (Connection Timeout)."),
+            status:
+                "Transfer cancelled by ${_currentSenderDeviceName ?? 'sender'} (Connection Timeout).",
+          ),
         );
       } else {
         onUpdate(TransferModel(status: "Error: $e"));

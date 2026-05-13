@@ -195,7 +195,7 @@ class SenderController {
               bytesBuffered += chunk.length;
               if (bytesBuffered >= AppConstants.socketFlushThresholdBytes) {
                 await socket.flush().timeout(
-                  const Duration(seconds: 5),
+                  Duration(seconds: AppConstants.transferTimeoutSeconds),
                   onTimeout: () => throw "Transfer Timeout",
                 ); // Prevent OOM by awaiting buffer flush
                 bytesBuffered = 0;
