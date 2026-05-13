@@ -5,6 +5,7 @@
 
 <p align="center">
   <b>Blazing Fast, Cross-Platform File Transfer Application over Local Wi-Fi & Hotspots.</b><br/>
+  🌐 <b>Official Website: <a href="https://omarafifi-cse.github.io/daphq/">omarafifi-cse.github.io/daphq/</a></b><br/>
   Developed by <b>Omar Afifi</b>
 </p>
 
@@ -20,7 +21,7 @@
 
 ## 🚀 Introduction
 
-**Daphq** is a robust, cross-platform file transfer utility engineered to deliver unparalleled speed and reliability over local area networks (LAN), Wi-Fi, and Mobile Hotspots. Designed with performance and low-level network optimization in mind, Daphq bypasses the bloated overhead of conventional HTTP-based transfers, utilizing raw TCP streams to push network hardware to its absolute limits.
+**Daphq** is a robust, cross-platform file transfer utility engineered to deliver unparalleled speed and reliability over local area networks (LAN), Wi-Fi, and Mobile Hotspots. With the release of **v2.0.0**, Daphq introduces a completely rebuilt discovery engine and advanced sharing capabilities. Designed with performance and low-level network optimization in mind, Daphq bypasses the bloated overhead of conventional HTTP-based transfers, utilizing raw TCP streams to push network hardware to its absolute limits.
 
 Whether you're syncing massive folders across your devices or sharing gigabytes of data on the fly, Daphq ensures a seamless, memory-efficient, and secure operation.
 
@@ -31,6 +32,7 @@ Daphq is built with a modern, reactive, and highly scalable architecture:
 - **Framework**: Developed using **Flutter (Dart)** for true cross-platform compatibility (Currently: Android, Windows).
 - **State Management**: Implements the **BLoC (Business Logic Component) / Cubit** pattern (`flutter_bloc`). This cleanly decouples the UI from complex network logic, ensuring the application remains highly responsive even under intense data loads.
 - **Background Execution**: Leverages `flutter_foreground_task` on Android to maintain uninterrupted background data synchronization, strictly adhering to modern Android 14/15 Foreground Service data-sync requirements.
+- **Network Discovery**: A custom-built UDP discovery service that actively monitors connectivity, caches IPs, and uses a watchdog mechanism for instant recovery during IP changes or network dropouts.
 - **Window Management**: Uses `window_manager` for native-feeling desktop experiences, providing flicker-free layouts and optimal UX on desktop environments.
 
 ## ⚡ Performance & Networking Efficiency
@@ -66,12 +68,14 @@ Daphq's performance has been rigorously tested to ensure it pushes hardware to i
 
 ## ✨ Key Features
 
-- **Blistering Speeds**: Maximize your router or hotspot throughput with unthrottled TCP sockets.
-- **Complete Folder Preservation**: Select a folder, and Daphq will recursively traverse and reconstruct the exact directory tree on the receiving device.
-- **Cross-Platform Compatibility**: Move files effortlessly between Windows, macOS, Linux, and Android.
-- **Safe & Secure Authorization**: Receivers must explicitly authorize incoming transfers, viewing the file count and total payload size before a single byte is written.
-- **Uninterruptible Background Transfers**: (Android) Switch apps or turn off your screen; the Foreground Service keeps your socket alive and displays real-time speeds in your notification drawer.
-- **Live Speed Analytics**: Precise real-time tracking of transfer speeds (MB/s), total time elapsed, and current payload progress.
+- **Extreme Throughput (TCP)**: Bypasses HTTP/REST overhead using raw TCP sockets with `tcpNoDelay` for near-zero protocol latency (Speeds up to 100+ MB/s).
+- **System-Wide Sharing**: (Android) Share files directly from any app (Gallery, Files, etc.) to Daphq using the native Android share menu.
+- **Atomic Directory Sync**: Recursively traverse and reconstruct exact directory trees with intelligent collision management and auto-renaming.
+- **Batch Transfer Support**: Select, stage, and transfer multiple files or entire directories simultaneously with a single click.
+- **Smart Discovery Engine**: Connectivity-aware engine with instant watchdog recovery and IP caching for near-instant device pairing.
+- **Uninterruptible Background Sync**: (Android) Foreground Services keep transfers alive even when the app is closed or the screen is off.
+- **Secure Authorization**: Receivers have full control—view the payload size and file count before explicitly authorizing any transfer.
+- **Advanced Analytics & ETA**: Precise real-time tracking of transfer speeds (MB/s), total payload progress, and estimated time remaining.
 
 ## 📸 Screenshots
 
