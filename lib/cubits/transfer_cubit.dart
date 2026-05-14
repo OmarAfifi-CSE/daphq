@@ -384,7 +384,7 @@ class TransferCubit extends Cubit<TransferState> {
 
         // Ensure UI reflects that receiver is no longer active
         if (!isClosed) {
-          emit(state.copyWith(isReceiving: false, isReceivingActive: false));
+          emit(state.copyWith(isReceivingActive: false));
         }
       },
     );

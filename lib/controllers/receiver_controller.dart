@@ -499,7 +499,6 @@ class ReceiverController {
       }
     } on PathAccessException {
       onUpdate(TransferModel(status: "Error: Permission Denied"));
-      onDone();
     } catch (e) {
       if (_isCancelled) {
         onUpdate(TransferModel(status: _cancelReason ?? "Transfer Cancelled"));
@@ -534,11 +533,11 @@ class ReceiverController {
       } else {
         onUpdate(TransferModel(status: "Error: $e"));
       }
-      onDone();
     } finally {
       _activeClient = null;
       _activeSink = null;
       _isCancelled = false;
+      onDone(); // Only call onDone when the method truly finishes (server closed)
     }
   }
 
