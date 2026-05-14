@@ -15,6 +15,8 @@ import 'package:file_picker/file_picker.dart';
 import '../models/transfer_model.dart';
 import 'transfer_state.dart';
 import '../core/app_constants.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter/services.dart';
 import '../main.dart';
 
 class TransferCubit extends Cubit<TransferState> {
@@ -110,7 +112,7 @@ class TransferCubit extends Cubit<TransferState> {
       } else {
         final downloadsDir = await getDownloadsDirectory();
         if (downloadsDir != null) {
-          defaultPath = Directory("${downloadsDir.path}/Daphq").path;
+          defaultPath = p.join(downloadsDir.path, "Daphq");
         }
       }
     } catch (_) {}
@@ -257,6 +259,11 @@ class TransferCubit extends Cubit<TransferState> {
 
   void setReceiveFolder(String path) {
     emit(state.copyWith(receiveFolder: path));
+    // If receiver is already running, restart it with the new folder
+    // but only if there is no active transfer happening right now.
+    if (state.isReceiving && !state.isReceivingActive) {
+      startReceiver();
+    }
   }
 
   void setTargetIp(String ip) {
@@ -322,7 +329,15 @@ class TransferCubit extends Cubit<TransferState> {
         }
 
         if (!isClosed) {
-          emit(state.copyWith(model: model, isReceivingActive: isBusy));
+          emit(
+            state.copyWith(
+              model: model,
+              isReceivingActive: isBusy,
+              isLastTransferIncoming: isBusy
+                  ? true
+                  : state.isLastTransferIncoming,
+            ),
+          );
         }
 
         if (Platform.isAndroid && state.isReceiving) {
@@ -463,7 +478,7 @@ class TransferCubit extends Cubit<TransferState> {
 
     if (!await _prepareRequirements()) return;
 
-    emit(state.copyWith(isTransferring: true));
+    emit(state.copyWith(isTransferring: true, isLastTransferIncoming: false));
 
     await _startForegroundService(
       AppConstants.appName,
@@ -591,6 +606,33 @@ class TransferCubit extends Cubit<TransferState> {
       }
     } else {
       _stopForegroundService();
+    }
+  }
+
+  Future<void> openReceivedFolder() async {
+    final folder = state.receiveFolder;
+    if (folder == null) return;
+
+    try {
+      if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+        final uri = Uri.file(folder);
+        await launchUrl(uri);
+      } else if (Platform.isAndroid) {
+        // Use native MethodChannel for Android to avoid library issues
+        const platform = MethodChannel('com.omarafifi.daphq/file_manager');
+        await platform.invokeMethod('openFolder', {'path': folder});
+      }
+    } catch (e) {
+      if (Platform.isAndroid) {
+        emit(
+          state.copyWith(
+            errorMessage:
+                "Could not open folder automatically. Please check: $folder",
+          ),
+        );
+      } else {
+        emit(state.copyWith(errorMessage: "Error opening folder: $e"));
+      }
     }
   }
 }

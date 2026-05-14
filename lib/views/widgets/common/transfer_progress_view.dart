@@ -219,6 +219,53 @@ class TransferProgressView extends StatelessWidget {
                       ),
                     ],
                   ),
+                  if (state.isLastTransferIncoming && isDone) ...[
+                    SizedBox(height: 15.0.rh(isDesktop)),
+                    Align(
+                      alignment: Alignment.center,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: isDesktop
+                              ? 220
+                              : MediaQuery.sizeOf(context).width,
+                          maxHeight: 80.0.rh(isDesktop),
+                        ),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: () => context
+                                .read<TransferCubit>()
+                                .openReceivedFolder(),
+                            icon: Icon(
+                              Icons.folder_open_rounded,
+                              size: 18.0.rx(isDesktop),
+                            ),
+                            label: Text(
+                              "Open Received Folder",
+                              style: TextStyle(fontSize: 14.0.rx(isDesktop)),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary.withAlpha(40),
+                              foregroundColor: Colors.white,
+                              padding: EdgeInsets.symmetric(
+                                vertical: isDesktop ? 20 : 12.0.rh(isDesktop),
+                                horizontal: 16,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(
+                                  12.0.rr(isDesktop),
+                                ),
+                                side: const BorderSide(
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                              elevation: 0,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ] else ...[
                   // Minimal Placeholder when no progress
                   const Divider(color: Colors.white10),

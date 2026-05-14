@@ -29,6 +29,7 @@ class TransferState {
   final bool isTransferring;
   final bool isReceiving;
   final bool isReceivingActive;
+  final bool isLastTransferIncoming;
   final String? receiveFolder;
   final String targetIp;
 
@@ -51,6 +52,7 @@ class TransferState {
     this.isTransferring = false,
     this.isReceiving = false,
     this.isReceivingActive = false,
+    this.isLastTransferIncoming = false,
     this.receiveFolder,
     String? targetIp,
     this.discoveredDevices = const [],
@@ -70,6 +72,7 @@ class TransferState {
     bool? isTransferring,
     bool? isReceiving,
     bool? isReceivingActive,
+    bool? isLastTransferIncoming,
     String? receiveFolder,
     String? targetIp,
     List<DiscoveryModel>? discoveredDevices,
@@ -91,6 +94,8 @@ class TransferState {
       isTransferring: isTransferring ?? this.isTransferring,
       isReceiving: isReceiving ?? this.isReceiving,
       isReceivingActive: isReceivingActive ?? this.isReceivingActive,
+      isLastTransferIncoming:
+          isLastTransferIncoming ?? this.isLastTransferIncoming,
       receiveFolder: receiveFolder ?? this.receiveFolder,
       targetIp: targetIp ?? this.targetIp,
       discoveredDevices: discoveredDevices ?? this.discoveredDevices,
