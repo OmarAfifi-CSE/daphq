@@ -69,7 +69,7 @@ Daphq's performance has been rigorously tested to ensure it pushes hardware to i
 ## ✨ Key Features
 
 - **Extreme Throughput (TCP)**: Bypasses HTTP/REST overhead using raw TCP sockets with `tcpNoDelay` for near-zero protocol latency (Speeds up to 100+ MB/s).
-- **System-Wide Sharing**: (Android) Share files directly from any app (Gallery, Files, etc.) to Daphq using the native Android share menu.
+- **System-Wide Sharing**: Share files directly from any app. Includes native **Android Share Menu** integration and a **Windows Context Menu** ("Send via Daphq") shell extension for seamless desktop file sharing.
 - **Atomic Directory Sync**: Recursively traverse and reconstruct exact directory trees with intelligent collision management and auto-renaming.
 - **Batch Transfer Support**: Select, stage, and transfer multiple files or entire directories simultaneously with a single click.
 - **Smart Discovery Engine**: Connectivity-aware engine with instant watchdog recovery and IP caching for near-instant device pairing.
