@@ -225,21 +225,26 @@ class ReceiverController {
                 } else {
                   try {
                     String originalName = metadata["fileName"];
+                    // CRITICAL: Sanitize for the current OS (e.g., removing ':' on Windows)
+                    String sanitizedName = _sanitizeFileName(originalName);
+
                     String finalFileName = _generateUniquePath(
                       saveDirectory,
-                      originalName,
+                      sanitizedName,
                     );
 
                     if (finalFileName != originalName) {
                       if (metadata["isFolder"] == true) {
                         for (var fMeta in files) {
                           List<String> segments = p.split(fMeta["path"]);
-                          if (segments.isNotEmpty) {
-                            segments[0] = finalFileName;
-                            fMeta["path"] = p
-                                .joinAll(segments)
-                                .replaceAll(r'\', '/');
+                          // Sanitize each segment to be safe
+                          for (int i = 0; i < segments.length; i++) {
+                            segments[i] = _sanitizeFileName(segments[i]);
                           }
+                          segments[0] = finalFileName;
+                          fMeta["path"] = p
+                              .joinAll(segments)
+                              .replaceAll(r'\', '/');
                         }
                       } else {
                         if (files.isNotEmpty) {
@@ -481,6 +486,11 @@ class ReceiverController {
           }
         } finally {
           try {
+            // CRITICAL: Ensure the file sink is closed on connection drop
+            if (_activeSink != null) {
+              await _activeSink?.flush();
+              await _activeSink?.close();
+            }
             client.destroy();
           } catch (_) {}
           _activeClient = null;
@@ -550,6 +560,7 @@ class ReceiverController {
     _server?.close();
     _server = null;
 
+    // CRITICAL: Close the active file sink to release file locks
     _activeSink?.close();
     _activeSink = null;
   }
@@ -566,6 +577,32 @@ class ReceiverController {
     } else {
       return "Network lost. Ready & Waiting...";
     }
+  }
+
+  /// Sanitizes a filename by removing illegal characters for the current platform.
+  String _sanitizeFileName(String name) {
+    // Basic sanitization for all platforms (remove path separators)
+    String sanitized = name.replaceAll(RegExp(r'[/\\]'), '_');
+
+    if (Platform.isWindows) {
+      // Windows illegal characters: < > : " / \ | ? *
+      sanitized = sanitized.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+      // Reserved names (CON, PRN, etc.)
+      final reserved = RegExp(
+        r'^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$',
+        caseSensitive: false,
+      );
+      if (reserved.hasMatch(sanitized)) {
+        sanitized = "file_$sanitized";
+      }
+    }
+
+    // Ensure the name isn't empty or just dots
+    if (sanitized.isEmpty || sanitized.trim().replaceAll('.', '').isEmpty) {
+      sanitized = "received_file_${DateTime.now().millisecondsSinceEpoch}";
+    }
+
+    return sanitized;
   }
 
   /// Generates a unique path by appending (1), (2), etc. if the file or directory exists.

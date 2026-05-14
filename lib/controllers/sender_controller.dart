@@ -359,6 +359,9 @@ class SenderController {
         );
       }
     } finally {
+      try {
+        socket?.destroy();
+      } catch (_) {}
       _activeSocket = null;
       _isCancelled = false;
     }
