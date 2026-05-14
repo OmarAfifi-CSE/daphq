@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -12,6 +13,7 @@ import 'cubits/transfer_cubit.dart';
 import 'core/app_constants.dart';
 import 'core/app_colors.dart';
 import 'services/sharing_service.dart';
+import 'services/desktop_integration_service.dart';
 
 @pragma('vm:entry-point')
 void startCallback() {
@@ -27,7 +29,6 @@ class MyTaskHandler extends TaskHandler {
 
   @override
   void onNotificationButtonPressed(String id) {
-    // Send message to main task to trigger clean stop in Cubit
     FlutterForegroundTask.sendDataToMain(id);
   }
 
@@ -40,9 +41,15 @@ class MyTaskHandler extends TaskHandler {
   void onRepeatEvent(DateTime timestamp) {}
 }
 
-void main() async {
+void main(List<String> args) async {
+  // Check for single instance immediately on Windows
+  if (Platform.isWindows) {
+    bool isPrimary = await DesktopIntegrationService.handleSingleInstance(args);
+    if (!isPrimary) return; // Kill the process before it loads anything
+  }
+
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
   ]);
@@ -99,6 +106,13 @@ void main() async {
   }
 
   runApp(const DaphqApp());
+
+  // Add initial args if any
+  if (args.isNotEmpty && Platform.isWindows) {
+    Future.delayed(const Duration(milliseconds: 500), () {
+      DesktopIntegrationService.addInitialArgs(args);
+    });
+  }
 }
 
 Future<void> requestAllPermissions() async {
@@ -108,13 +122,11 @@ Future<void> requestAllPermissions() async {
     final sdkInt = androidInfo.version.sdkInt;
 
     if (sdkInt >= 30) {
-      // Android 11+ : Only need Manage External Storage + Notification
       await [Permission.notification].request();
       if (await Permission.manageExternalStorage.isDenied) {
         await Permission.manageExternalStorage.request();
       }
     } else {
-      // Older Android: Need standard Storage + Notification
       await [Permission.storage, Permission.notification].request();
     }
   }
@@ -129,7 +141,6 @@ class DaphqApp extends StatelessWidget {
       builder: (context, constraints) {
         Size baseSize;
         if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-          // Fixed design size for desktop to avoid weird stretching
           baseSize = const Size(
             AppConstants.windowWidth,
             AppConstants.windowHeight,
@@ -184,14 +195,23 @@ class _AppInit extends StatefulWidget {
 }
 
 class _AppInitState extends State<_AppInit> {
+  StreamSubscription? _externalFilesSubscription;
+
   @override
   void initState() {
     super.initState();
     SharingService.init(context);
+
+    _externalFilesSubscription = DesktopIntegrationService.fileStream.listen((paths) {
+      if (mounted) {
+        context.read<TransferCubit>().addExternalFiles(paths);
+      }
+    });
   }
 
   @override
   void dispose() {
+    _externalFilesSubscription?.cancel();
     SharingService.dispose();
     super.dispose();
   }

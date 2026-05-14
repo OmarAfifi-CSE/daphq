@@ -127,6 +127,28 @@ class TransferCubit extends Cubit<TransferState> {
     emit(state.copyWith(isAdvancedMode: !state.isAdvancedMode));
   }
 
+  void addExternalFiles(List<String> paths) {
+    if (paths.isEmpty) return;
+    
+    final List<String> cleanedPaths = [];
+    for (var path in paths) {
+      // Clean path: remove quotes that might be added by Windows shell escaping (e.g. "C:\" -> C:")
+      var p = path.trim();
+      if (p.startsWith('"')) p = p.substring(1);
+      if (p.endsWith('"')) p = p.substring(0, p.length - 1);
+      cleanedPaths.add(p);
+    }
+
+    // Check if the path exists as either a file or a directory
+    final validPaths = cleanedPaths.where((p) => FileSystemEntity.typeSync(p) != FileSystemEntityType.notFound).toList();
+    
+    if (validPaths.isNotEmpty) {
+      emit(state.copyWith(
+        selectedPaths: {...state.selectedPaths, ...validPaths}.toList(),
+      ));
+    }
+  }
+
   void _onReceiveTaskData(dynamic message) {
     if (message == 'stopReceivingButton') {
       stopReceiver();
