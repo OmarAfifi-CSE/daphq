@@ -10,11 +10,11 @@
 </p>
 
 <p align="center">
-  <a href="#core-architecture">Architecture</a> •
-  <a href="#performance--networking-efficiency">Performance</a> •
-  <a href="#key-features">Features</a> •
-  <a href="#under-the-hood">Under The Hood</a> •
-  <a href="#license">License</a>
+  <a href="#%EF%B8%8F-core-architecture">Architecture</a> •
+  <a href="#-performance--networking-efficiency">Performance</a> •
+  <a href="#-key-features">Features</a> •
+  <a href="#-under-the-hood-technical-audit-highlights">Under The Hood</a> •
+  <a href="#-license">License</a>
 </p>
 
 ---
