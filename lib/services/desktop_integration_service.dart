@@ -31,14 +31,15 @@ class DesktopIntegrationService {
         file.createSync(recursive: true);
       }
       _lockFile = file.openSync(mode: FileMode.append);
-      _lockFile!.lockSync(FileLock.exclusive); // Throws if another instance holds the lock
+      _lockFile!.lockSync(
+        FileLock.exclusive,
+      ); // Throws if another instance holds the lock
 
       // If we reach here, we successfully locked the file. We are PRIMARY.
       // Also create the Win32 Mutex so the Shell Extension DLL can detect us via OpenMutexW.
       _createWin32Mutex();
       _startQueueWatcher(queuePath);
       return true;
-
     } catch (e) {
       // Exception thrown -> lock is held by another instance -> We are SECONDARY.
       if (args.isNotEmpty) {
@@ -109,9 +110,11 @@ class DesktopIntegrationService {
   static void _createWin32Mutex() {
     try {
       final kernel32 = DynamicLibrary.open('kernel32.dll');
-      final createMutex = kernel32.lookupFunction<
-          IntPtr Function(Pointer<Void>, Int32, Pointer<Utf16>),
-          int Function(Pointer<Void>, int, Pointer<Utf16>)>('CreateMutexW');
+      final createMutex = kernel32
+          .lookupFunction<
+            IntPtr Function(Pointer<Void>, Int32, Pointer<Utf16>),
+            int Function(Pointer<Void>, int, Pointer<Utf16>)
+          >('CreateMutexW');
       final name = 'Global\\Daphq_Unique_Mutex_Lock'.toNativeUtf16();
       createMutex(nullptr, 1, name);
       // Intentionally not freeing name or closing handle — held for process lifetime.

@@ -21,11 +21,15 @@ class TransferProgressView extends StatelessWidget {
             p.status != c.status ||
             p.transferred != c.transferred ||
             p.totalSize != c.totalSize ||
-            p.fileName != c.fileName;
+            p.fileName != c.fileName ||
+            p.analyzeCount != c.analyzeCount;
       },
       builder: (context, state) {
         final model = state.model;
-        final bool hasProgress = model.totalSize > 0 || model.progress > 0;
+        final bool hasProgress =
+            model.totalSize > 0 ||
+            model.progress > 0 ||
+            model.analyzeCount != null;
         final status = model.status.toLowerCase();
         final bool isDone =
             status.contains("complete") || status.contains("success");
@@ -64,30 +68,56 @@ class TransferProgressView extends StatelessWidget {
                 ),
                 SizedBox(height: 10.0.rh(isDesktop)),
 
-                // 2. Huge Speed Display
-                TweenAnimationBuilder<double>(
-                  tween: Tween<double>(begin: 0, end: model.speed),
-                  duration: const Duration(milliseconds: 500),
-                  curve: Curves.easeOutCubic,
-                  builder: (context, value, child) {
-                    return Text(
-                      "${value.toStringAsFixed(1)} MB/s",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 38.0.rx(isDesktop),
-                        fontWeight: FontWeight.bold,
-                        shadows: [
-                          Shadow(
-                            color: AppColors.primary.withAlpha(
-                              model.speed > 0 ? 150 : 0,
-                            ),
-                            blurRadius: 20,
+                // 2. Speed Display — or File Count during analyze phase
+                if (model.analyzeCount != null)
+                  // Analyze mode: show pulsing file counter instead of speed
+                  TweenAnimationBuilder<double>(
+                    tween: Tween<double>(begin: 0, end: 1),
+                    duration: const Duration(milliseconds: 800),
+                    curve: Curves.easeInOut,
+                    builder: (context, value, _) {
+                      return Text(
+                        "${_formatCount(model.analyzeCount!)} files",
+                        style: TextStyle(
+                          color: Colors.white.withAlpha(
+                            (180 + (75 * value)).toInt(),
                           ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
+                          fontSize: 38.0.rx(isDesktop),
+                          fontWeight: FontWeight.bold,
+                          shadows: [
+                            Shadow(
+                              color: AppColors.primary.withAlpha(120),
+                              blurRadius: 20,
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  )
+                else
+                  TweenAnimationBuilder<double>(
+                    tween: Tween<double>(begin: 0, end: model.speed),
+                    duration: const Duration(milliseconds: 500),
+                    curve: Curves.easeOutCubic,
+                    builder: (context, value, child) {
+                      return Text(
+                        "${value.toStringAsFixed(1)} MB/s",
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 38.0.rx(isDesktop),
+                          fontWeight: FontWeight.bold,
+                          shadows: [
+                            Shadow(
+                              color: AppColors.primary.withAlpha(
+                                model.speed > 0 ? 150 : 0,
+                              ),
+                              blurRadius: 20,
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
 
                 // 3. Avg Speed & Time Info / Estimated Time
                 if (model.avgSpeed != null || model.totalTime != null)
@@ -125,7 +155,7 @@ class TransferProgressView extends StatelessWidget {
                     ),
                   ),
 
-                hasProgress
+                model.analyzeCount != null || hasProgress
                     ? SizedBox(height: 15.0.rh(isDesktop))
                     : SizedBox(height: 20.0.rh(isDesktop)),
 
@@ -150,48 +180,53 @@ class TransferProgressView extends StatelessWidget {
                   SizedBox(height: 8.0.rh(isDesktop)),
 
                   // The Bar
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final double progressWidth =
-                          constraints.maxWidth * model.progress.clamp(0.0, 1.0);
-                      return Stack(
-                        children: [
-                          Container(
-                            height: 8,
-                            width: double.infinity,
-                            decoration: BoxDecoration(
-                              color: Colors.white10,
-                              borderRadius: BorderRadius.circular(5),
+                  if (model.analyzeCount != null)
+                    // Indeterminate pulse bar during analyze
+                    _AnalyzePulseBar(isDesktop: isDesktop)
+                  else
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final double progressWidth =
+                            constraints.maxWidth *
+                            model.progress.clamp(0.0, 1.0);
+                        return Stack(
+                          children: [
+                            Container(
+                              height: 8,
+                              width: double.infinity,
+                              decoration: BoxDecoration(
+                                color: Colors.white10,
+                                borderRadius: BorderRadius.circular(5),
+                              ),
                             ),
-                          ),
-                          AnimatedContainer(
-                            duration: const Duration(milliseconds: 400),
-                            height: 8,
-                            width: progressWidth,
-                            constraints: BoxConstraints(
-                              minWidth: model.progress > 0 ? 6 : 0,
-                            ),
-                            decoration: BoxDecoration(
-                              gradient: const LinearGradient(
-                                colors: [
-                                  AppColors.primary,
-                                  AppColors.primaryLight,
+                            AnimatedContainer(
+                              duration: const Duration(milliseconds: 400),
+                              height: 8,
+                              width: progressWidth,
+                              constraints: BoxConstraints(
+                                minWidth: model.progress > 0 ? 6 : 0,
+                              ),
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(
+                                  colors: [
+                                    AppColors.primary,
+                                    AppColors.primaryLight,
+                                  ],
+                                ),
+                                borderRadius: BorderRadius.circular(5),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: AppColors.primary.withAlpha(100),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 2),
+                                  ),
                                 ],
                               ),
-                              borderRadius: BorderRadius.circular(5),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: AppColors.primary.withAlpha(100),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
                             ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
+                          ],
+                        );
+                      },
+                    ),
                   SizedBox(height: 8.0.rh(isDesktop)),
 
                   // Progress Stats Below Bar
@@ -286,6 +321,12 @@ class TransferProgressView extends StatelessWidget {
     );
   }
 
+  String _formatCount(int count) {
+    if (count >= 1000000) return "${(count / 1000000).toStringAsFixed(1)}M";
+    if (count >= 1000) return "${(count / 1000).toStringAsFixed(1)}K";
+    return count.toString();
+  }
+
   Color _getStatusColor(String status) {
     return AppColors.primary;
   }
@@ -327,5 +368,88 @@ class TransferProgressView extends StatelessWidget {
       final int minutes = ((secondsRemaining % 3600) / 60).toInt();
       return "${hours}h ${minutes}m";
     }
+  }
+}
+
+/// Indeterminate sliding-pulse progress bar shown during the analyze phase.
+class _AnalyzePulseBar extends StatefulWidget {
+  final bool isDesktop;
+  const _AnalyzePulseBar({required this.isDesktop});
+
+  @override
+  State<_AnalyzePulseBar> createState() => _AnalyzePulseBarState();
+}
+
+class _AnalyzePulseBarState extends State<_AnalyzePulseBar>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+    _anim = CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final totalWidth = constraints.maxWidth;
+        const pulseWidth = 80.0;
+        return AnimatedBuilder(
+          animation: _anim,
+          builder: (context, _) {
+            final offset = _anim.value * (totalWidth + pulseWidth) - pulseWidth;
+            return ClipRRect(
+              borderRadius: BorderRadius.circular(5),
+              child: Stack(
+                children: [
+                  Container(
+                    height: 8,
+                    width: double.infinity,
+                    color: Colors.white10,
+                  ),
+                  Positioned(
+                    left: offset,
+                    child: Container(
+                      height: 8,
+                      width: pulseWidth,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            AppColors.primary.withAlpha(0),
+                            AppColors.primary,
+                            AppColors.primaryLight,
+                            AppColors.primary.withAlpha(0),
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(5),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primary.withAlpha(120),
+                            blurRadius: 10,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 }

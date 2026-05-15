@@ -8,6 +8,10 @@ class TransferModel {
   String? totalTime;
   double progress;
 
+  /// Non-null only during the analyze phase (before the transfer starts).
+  /// When set, the UI replaces the speed display with a file-count indicator.
+  int? analyzeCount;
+
   TransferModel({
     this.speed = 0.0,
     this.transferred = 0.0,
@@ -17,5 +21,6 @@ class TransferModel {
     this.avgSpeed,
     this.totalTime,
     this.progress = 0.0,
+    this.analyzeCount,
   });
 }

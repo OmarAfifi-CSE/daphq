@@ -154,10 +154,18 @@ class ReceiverController {
               if (newlineIndex != -1) {
                 headerBuffer.addAll(chunk.sublist(0, newlineIndex));
 
-                if (headerBuffer.length > 1024 * 1024) {
-                  throw const FileSystemException(
-                    "Security Exception: Header exceeded 1MB limit. Possible Out-Of-Memory attack.",
-                  );
+                if (headerBuffer.length > 32 * 1024 * 1024) {
+                  // Header is abnormally large — reject gracefully instead of crashing.
+                  try {
+                    client.write(
+                      "${jsonEncode({"status": "REJECTED", "reason": "HEADER_TOO_LARGE"})}\n",
+                    );
+                    await client.flush();
+                    client.destroy();
+                  } catch (_) {}
+                  isRejected = true;
+                  onUpdate(TransferModel(status: "Ready & Waiting..."));
+                  break;
                 }
 
                 String jsonStr = utf8.decode(headerBuffer);
@@ -192,7 +200,9 @@ class ReceiverController {
                     onUpdate(
                       TransferModel(
                         status:
-                            "Error: Insufficient space (${freeSpace.freeSize} available).",
+                            "Transfer rejected: Not enough space "
+                            "(need ${(totalSizeMB).toStringAsFixed(1)} MB, "
+                            "${freeSpace.freeSize} available). Ready & Waiting...",
                       ),
                     );
                     break;
@@ -261,10 +271,18 @@ class ReceiverController {
                 }
               } else {
                 headerBuffer.addAll(chunk);
-                if (headerBuffer.length > 1024 * 1024) {
-                  throw const FileSystemException(
-                    "Security Exception: Header exceeded 1MB limit. Possible Out-Of-Memory attack.",
-                  );
+                if (headerBuffer.length > 32 * 1024 * 1024) {
+                  // Header is abnormally large — reject gracefully instead of crashing.
+                  try {
+                    client.write(
+                      "${jsonEncode({"status": "REJECTED", "reason": "HEADER_TOO_LARGE"})}\n",
+                    );
+                    await client.flush();
+                    client.destroy();
+                  } catch (_) {}
+                  isRejected = true;
+                  onUpdate(TransferModel(status: "Ready & Waiting..."));
+                  break;
                 }
                 continue;
               }
@@ -405,8 +423,14 @@ class ReceiverController {
             _activeSink = null;
           }
 
+          // Guard: if metadata is null, the sender connected but dropped
+          if (metadata == null) {
+            onUpdate(TransferModel(status: "Ready & Waiting as $deviceName"));
+            break;
+          }
+
           // Check for premature connection drop
-          if (metadata != null && received < totalExpectedBytes) {
+          if (received < totalExpectedBytes) {
             throw "Transfer cancelled by ${_currentSenderDeviceName ?? 'the other device'}.";
           }
 

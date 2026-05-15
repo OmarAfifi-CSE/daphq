@@ -31,7 +31,9 @@ class DeviceTransferMenu extends StatelessWidget {
         context: context,
         builder: (context) => Dialog(
           backgroundColor: AppColors.dialogBackground,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
           child: Container(
             width: 420,
             height: 520,
@@ -93,7 +95,10 @@ class DeviceTransferMenu extends StatelessWidget {
                           onPressed: () => cubit.clearSelection(),
                           child: Text(
                             "Clear All",
-                            style: TextStyle(color: AppColors.danger, fontSize: 13.rx(isDesktop)),
+                            style: TextStyle(
+                              color: AppColors.danger,
+                              fontSize: 13.rx(isDesktop),
+                            ),
                           ),
                         ),
                       if (isDesktop) ...[
@@ -111,9 +116,7 @@ class DeviceTransferMenu extends StatelessWidget {
 
               // Add Buttons
               // Unified Add Button
-              UnifiedAddButton(
-                isDesktop: isDesktop,
-              ),
+              UnifiedAddButton(isDesktop: isDesktop),
 
               SizedBox(height: 20.rh(isDesktop)),
 
@@ -124,13 +127,18 @@ class DeviceTransferMenu extends StatelessWidget {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.cloud_upload_outlined,
-                                size: 50.rx(isDesktop), color: Colors.white24),
+                            Icon(
+                              Icons.cloud_upload_outlined,
+                              size: 50.rx(isDesktop),
+                              color: Colors.white24,
+                            ),
                             SizedBox(height: 10.rh(isDesktop)),
                             Text(
                               "No items selected yet",
                               style: TextStyle(
-                                  color: Colors.white38, fontSize: 14.rx(isDesktop)),
+                                color: Colors.white38,
+                                fontSize: 14.rx(isDesktop),
+                              ),
                             ),
                           ],
                         ),
@@ -142,7 +150,13 @@ class DeviceTransferMenu extends StatelessWidget {
                         itemBuilder: (context, index) {
                           final path = state.selectedPaths[index];
                           final isDir = FileSystemEntity.isDirectorySync(path);
-                          final name = path.split(Platform.pathSeparator).last;
+                          final segments = path
+                              .split(Platform.pathSeparator)
+                              .where((s) => s.isNotEmpty)
+                              .toList();
+                          final name = segments.isNotEmpty
+                              ? segments.last
+                              : path.replaceAll(RegExp(r'[\\/]+$'), '');
 
                           return ListTile(
                             contentPadding: EdgeInsets.zero,
@@ -155,10 +169,16 @@ class DeviceTransferMenu extends StatelessWidget {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                  color: Colors.white, fontSize: 14.rx(isDesktop)),
+                                color: Colors.white,
+                                fontSize: 14.rx(isDesktop),
+                              ),
                             ),
                             trailing: IconButton(
-                              icon: const Icon(Icons.close, color: Colors.white38, size: 18),
+                              icon: const Icon(
+                                Icons.close,
+                                color: Colors.white38,
+                                size: 18,
+                              ),
                               onPressed: () => cubit.removeSelectedPath(path),
                             ),
                           );
@@ -177,11 +197,18 @@ class DeviceTransferMenu extends StatelessWidget {
                         cubit.sendData();
                         Navigator.pop(context);
                       },
-                gradientColors: const [AppColors.primary, AppColors.primaryLight],
+                gradientColors: const [
+                  AppColors.primary,
+                  AppColors.primaryLight,
+                ],
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.send_rounded, color: Colors.white, size: 20.rx(isDesktop)),
+                    Icon(
+                      Icons.send_rounded,
+                      color: Colors.white,
+                      size: 20.rx(isDesktop),
+                    ),
                     SizedBox(width: 10.rw(isDesktop)),
                     Text(
                       state.selectedPaths.isEmpty
@@ -202,6 +229,4 @@ class DeviceTransferMenu extends StatelessWidget {
       },
     );
   }
-
 }
-

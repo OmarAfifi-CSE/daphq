@@ -41,22 +41,79 @@ class SenderController {
       // 1. Prepare file list from multiple paths
       List<Map<String, dynamic>> fileList = [];
 
-      for (String path in paths) {
-        if (await FileSystemEntity.isDirectory(path)) {
-          final dir = Directory(path);
-          await for (var entity in dir.list(recursive: true)) {
-            if (entity is File) {
+      // Tracks analyze duration; progress is shown only if it takes > 2s.
+      final analyzeWatch = Stopwatch()..start();
+      bool showingProgress = false;
+      int discoveredCount = 0;
+
+      // Flush a batch of files by calling entity.length() in parallel.
+      // This keeps Dart's I/O isolate pool busy instead of waiting serially.
+      Future<void> flushBatch(List<File> batch, String fromPath) async {
+        if (_isCancelled) return;
+        final results = await Future.wait(
+          batch.map((f) async {
+            try {
+              final size = await f.length();
               final relPath = p
-                  .relative(entity.path, from: dir.parent.path)
+                  .relative(f.path, from: fromPath)
                   .replaceAll(r'\', '/');
-              final size = await entity.length();
-              fileList.add({
-                "absPath": entity.path,
+              return <String, dynamic>{
+                "absPath": f.path,
                 "path": relPath,
                 "size": size,
-              });
-              totalSizeBytes += size;
+              };
+            } catch (_) {
+              return null; // Skip locked/protected files
             }
+          }),
+        );
+        for (final r in results) {
+          if (r != null) {
+            fileList.add(r);
+            totalSizeBytes += r["size"] as int;
+          }
+        }
+      }
+
+      for (String path in paths) {
+        if (_isCancelled) break;
+        if (await FileSystemEntity.isDirectory(path)) {
+          final dir = Directory(path);
+          final fromPath = dir.parent.path;
+          const int batchSize = 64;
+          List<File> batch = [];
+
+          await for (var entity
+              in dir
+                  .list(recursive: true, followLinks: false)
+                  .handleError((_) {})) {
+            if (_isCancelled) break; // Stop listing immediately on cancel
+            if (entity is File) {
+              batch.add(entity);
+              discoveredCount++;
+
+              // Show progress UI only if analyze is taking longer than 2s.
+              if (!showingProgress && analyzeWatch.elapsedMilliseconds > 2000) {
+                showingProgress = true;
+              }
+              if (showingProgress && discoveredCount % 200 == 0) {
+                onUpdate(
+                  TransferModel(
+                    status: "Analyzing...",
+                    analyzeCount: discoveredCount,
+                  ),
+                );
+              }
+
+              if (batch.length >= batchSize) {
+                await flushBatch(batch, fromPath);
+                batch.clear();
+              }
+            }
+          }
+          if (!_isCancelled) {
+            // Flush any remaining files in the last partial batch
+            await flushBatch(batch, fromPath);
           }
         } else {
           final file = File(path);
@@ -67,28 +124,29 @@ class SenderController {
         }
       }
 
+      if (_isCancelled) throw "Transfer Cancelled";
+
       if (fileList.isEmpty) throw "No files found in selection.";
 
       if (totalSizeBytes == 0) {
         throw "Error: The selected item is empty (0.0 MB).";
       }
 
-      // Connect to receiver
-      onUpdate(TransferModel(status: "Connecting..."));
-      socket = await Socket.connect(
-        targetIp,
-        AppConstants.transferPort,
-        timeout: const Duration(seconds: AppConstants.connectionTimeoutSeconds),
-      );
-      _activeSocket = socket;
-      socket.setOption(SocketOption.tcpNoDelay, true);
+      // Build the JSON header BEFORE connecting so we can validate its size
+      // without disturbing the receiver.
+      String resolveName(String path) {
+        final base = p.basename(path);
+        if (base.isEmpty || base == r'\' || base == '/') {
+          return path.replaceAll(RegExp(r'[\\/]+$'), '');
+        }
+        return base;
+      }
 
-      // Send file metadata (JSON header)
       originalName = paths.length == 1
-          ? p.basename(paths[0])
-          : "${p.basename(paths[0])} and ${paths.length - 1} more";
+          ? resolveName(paths[0])
+          : "${resolveName(paths[0])} and ${paths.length - 1} more";
 
-      Map<String, dynamic> metadata = {
+      final Map<String, dynamic> metadata = {
         "fileName": originalName,
         "fileSize": totalSizeBytes,
         "senderDeviceName": senderDeviceName,
@@ -99,8 +157,28 @@ class SenderController {
             .toList(),
       };
 
+      final String header = "${jsonEncode(metadata)}\n";
+
+      // Pre-flight size check — fail before connecting so the receiver
+      // is never disturbed.
+      if (header.length > 32 * 1024 * 1024) {
+        throw "Too many files selected (${fileList.length} files). "
+            "The transfer metadata is too large. "
+            "Please select a subfolder instead of the entire drive root.";
+      }
+
+      // Connect to receiver only after all validations pass
+      onUpdate(TransferModel(status: "Connecting..."));
+      socket = await Socket.connect(
+        targetIp,
+        AppConstants.transferPort,
+        timeout: const Duration(seconds: AppConstants.connectionTimeoutSeconds),
+      );
+      _activeSocket = socket;
+      socket.setOption(SocketOption.tcpNoDelay, true);
+
+      // Send file metadata (JSON header)
       try {
-        String header = "${jsonEncode(metadata)}\n";
         socket.write(header);
         await socket.flush();
       } on SocketException {
@@ -125,15 +203,21 @@ class SenderController {
                 Map<String, dynamic> response = jsonDecode(line);
                 if (response["status"] == "REJECTED") {
                   if (!readyCompleter.isCompleted) {
-                    String errorMsg = response["reason"] == "OUT_OF_SPACE"
-                        ? "Receiver has insufficient storage space."
-                        : "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}";
+                    final reason = response["reason"];
+                    String errorMsg = reason == "OUT_OF_SPACE"
+                        ? "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}: Insufficient storage space."
+                        : reason == "HEADER_TOO_LARGE"
+                        ? "Too many files — the transfer metadata is too large. Please select a subfolder instead."
+                        : "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}.";
                     readyCompleter.completeError(errorMsg);
                   } else {
                     // If already transferring, trigger a cancellation
-                    String errorMsg = response["reason"] == "OUT_OF_SPACE"
-                        ? "Receiver has insufficient storage space."
-                        : "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}";
+                    final reason = response["reason"];
+                    String errorMsg = reason == "OUT_OF_SPACE"
+                        ? "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}: Insufficient storage space."
+                        : reason == "HEADER_TOO_LARGE"
+                        ? "Too many files — the transfer metadata is too large. Please select a subfolder instead."
+                        : "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}.";
                     _isCancelled = true;
                     _wasRejectedByReceiver = true;
                     _cancelReason = errorMsg;
@@ -298,8 +382,10 @@ class SenderController {
           progress: 1.0,
         ),
       );
-    } on PathAccessException {
-      onUpdate(TransferModel(status: "Error: Permission Denied"));
+    } on PathAccessException catch (e) {
+      // This should rarely happen now since we skip bad files inline.
+      // Fall through to the generic handler for any unexpected top-level denial.
+      onUpdate(TransferModel(status: "Error: $e"));
     } catch (e) {
       if (_isCancelled || e.toString().contains("Transfer Cancelled")) {
         String status = _wasRejectedByReceiver

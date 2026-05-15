@@ -129,7 +129,7 @@ class TransferCubit extends Cubit<TransferState> {
 
   void addExternalFiles(List<String> paths) {
     if (paths.isEmpty) return;
-    
+
     final List<String> cleanedPaths = [];
     for (var path in paths) {
       // Clean path: remove quotes that might be added by Windows shell escaping (e.g. "C:\" -> C:")
@@ -140,12 +140,18 @@ class TransferCubit extends Cubit<TransferState> {
     }
 
     // Check if the path exists as either a file or a directory
-    final validPaths = cleanedPaths.where((p) => FileSystemEntity.typeSync(p) != FileSystemEntityType.notFound).toList();
-    
+    final validPaths = cleanedPaths
+        .where(
+          (p) => FileSystemEntity.typeSync(p) != FileSystemEntityType.notFound,
+        )
+        .toList();
+
     if (validPaths.isNotEmpty) {
-      emit(state.copyWith(
-        selectedPaths: {...state.selectedPaths, ...validPaths}.toList(),
-      ));
+      emit(
+        state.copyWith(
+          selectedPaths: {...state.selectedPaths, ...validPaths}.toList(),
+        ),
+      );
     }
   }
 
