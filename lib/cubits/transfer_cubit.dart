@@ -15,7 +15,6 @@ import 'package:file_picker/file_picker.dart';
 import '../models/transfer_model.dart';
 import 'transfer_state.dart';
 import '../core/app_constants.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/services.dart';
 import '../main.dart';
 
@@ -642,9 +641,12 @@ class TransferCubit extends Cubit<TransferState> {
     if (folder == null) return;
 
     try {
-      if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
-        final uri = Uri.file(folder);
-        await launchUrl(uri);
+      if (Platform.isWindows) {
+        await Process.run('explorer.exe', [folder]);
+      } else if (Platform.isMacOS) {
+        await Process.run('open', [folder]);
+      } else if (Platform.isLinux) {
+        await Process.run('xdg-open', [folder]);
       } else if (Platform.isAndroid) {
         // Use native MethodChannel for Android to avoid library issues
         const platform = MethodChannel('com.omarafifi.daphq/file_manager');
