@@ -69,13 +69,16 @@ Daphq's performance has been rigorously tested to ensure it pushes hardware to i
 ## ✨ Key Features
 
 - **Extreme Throughput (TCP)**: Bypasses HTTP/REST overhead using raw TCP sockets with `tcpNoDelay` for near-zero protocol latency (Speeds up to 100+ MB/s).
-- **System-Wide Sharing**: Share files directly from any app. Includes native **Android Share Menu** integration and a **Windows Context Menu** ("Send via Daphq") shell extension for seamless desktop file sharing.
-- **Atomic Directory Sync**: Recursively traverse and reconstruct exact directory trees with intelligent collision management and auto-renaming.
-- **Batch Transfer Support**: Select, stage, and transfer multiple files or entire directories simultaneously with a single click.
-- **Smart Discovery Engine**: Connectivity-aware engine with instant watchdog recovery and IP caching for near-instant device pairing.
+- **Seamless Auto-Discovery**: Instant device pairing on the same network. I've included manual IP entry as a fallback to ensure connectivity even in complex network environments.
+- **System-Wide File Sharing**: Direct file sharing from any app. Includes native **Android Share Menu** integration and a **Windows Context Menu** ("Send via Daphq") shell extension.
+- **Atomic Directory Sync**: Recursive traversal and reconstruction of exact directory trees with intelligent collision management and auto-renaming.
+- **Batch Transfer Support**: Ability to select, stage, and transfer multiple files or entire directories simultaneously with a single click.
+- **Smart Add Button**: Features a `UnifiedAddButton` that provides platform-specific smart menus (such as direct shortcuts to Photos and Videos) for an intuitive experience.
+- **Smart Discovery Engine**: Connectivity-aware engine with watchdog recovery and IP caching for near-instant device pairing.
 - **Uninterruptible Background Sync**: (Android) Foreground Services keep transfers alive even when the app is closed or the screen is off.
-- **Secure Authorization**: Receivers have full control—view the payload size and file count before explicitly authorizing any transfer.
-- **Advanced Analytics & ETA**: Precise real-time tracking of transfer speeds (MB/s), total payload progress, and estimated time remaining.
+- **Secure Authorization**: Full receiver control—view payload size and file count before explicitly authorizing any transfer.
+- **Advanced Transfer Tracking**: Precise real-time tracking of transfer speeds (MB/s), total payload progress, and estimated time remaining.
+- **Post-Transfer Quick Access**: A "Show in Folder" button appears automatically after successful transfers, allowing instant access to received files.
 
 ## 📸 Screenshots
 
