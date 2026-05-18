@@ -80,7 +80,6 @@ class UpdateService {
     }
   }
 
-
   /// Removes common prefixes from a version string (e.g. 'v1.0.0-beta' -> '1.0.0')
   static String _cleanVersion(String version) {
     String cleanStr = version.toLowerCase().trim();

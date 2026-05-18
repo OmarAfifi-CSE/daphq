@@ -3,7 +3,7 @@ description: "A high-performance, raw TCP-based file transfer utility for seamle
 homepage: https://omarafifi-cse.github.io/daphq/
 publish_to: 'none'
 
-version: 2.0.0+2
+version: 2.1.0+3
 
 environment:
   sdk: ^3.11.4
