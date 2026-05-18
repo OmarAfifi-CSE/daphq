@@ -23,6 +23,7 @@ class UpdateService {
         // Smart URL detection based on platform
         String downloadUrl = AppConstants.websiteUrl; // Default fallback
         final List<dynamic> assets = data['assets'] ?? [];
+        bool hasAssetForPlatform = false;
 
         if (Platform.isAndroid) {
           // Look for APK
@@ -30,6 +31,7 @@ class UpdateService {
             final String name = asset['name']?.toString().toLowerCase() ?? '';
             if (name.endsWith('.apk')) {
               downloadUrl = asset['browser_download_url'];
+              hasAssetForPlatform = true;
               break;
             }
           }
@@ -39,9 +41,16 @@ class UpdateService {
             final String name = asset['name']?.toString().toLowerCase() ?? '';
             if (name.endsWith('.exe')) {
               downloadUrl = asset['browser_download_url'];
+              hasAssetForPlatform = true;
               break;
             }
           }
+        }
+
+        // If the latest release doesn't contain a file for this platform,
+        // ignore the update entirely.
+        if (!hasAssetForPlatform) {
+          return;
         }
 
         // Strip non-numeric prefix like 'v'
@@ -70,6 +79,7 @@ class UpdateService {
       // Silently fail
     }
   }
+
 
   /// Removes common prefixes from a version string (e.g. 'v1.0.0-beta' -> '1.0.0')
   static String _cleanVersion(String version) {
