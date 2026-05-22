@@ -40,6 +40,7 @@ class ReceiverController {
   }) async {
     _isCancelled = false;
     _cancelReason = null;
+    final Set<String> createdDirs = {};
     try {
       if (_server != null) {
         await _server!.close();
@@ -133,17 +134,19 @@ class ReceiverController {
         try {
           Stopwatch stopwatch = Stopwatch()..start();
           bool isRejected = false;
-          Completer<void> backgroundWriteCompleter = Completer<void>();
+          final List<Future<void>> closeFutures = [];
 
           List<int> headerBuffer = [];
 
           int currentFileIndex = 0;
           int bytesReadForCurrentFile = 0;
           IOSink? currentSink;
+          BytesBuilder? currentBuffer;
 
           int bytesSinceUpdate = 0;
           DateTime lastTime = DateTime.now();
 
+          chunkLoop:
           await for (var chunk in client.timeout(
             const Duration(seconds: AppConstants.transferTimeoutSeconds),
           )) {
@@ -297,51 +300,64 @@ class ReceiverController {
                 int targetSize = fileMeta["size"];
 
                 // Open file for writing if not already open
-                if (currentSink == null) {
-                  String savePath = p.join(saveDirectory, fileMeta["path"]);
-                  File f = File(savePath);
-                  // Create subdirectories recursively
-                  await f.parent.create(recursive: true);
-
-                  currentSink = f.openWrite();
-                  _activeSink = currentSink;
+                if (currentSink == null && currentBuffer == null) {
                   bytesReadForCurrentFile = 0;
+                  String savePath = p.join(saveDirectory, fileMeta["path"]);
+                  final parentPath = p.dirname(savePath);
+                  if (!createdDirs.contains(parentPath)) {
+                    try {
+                      Directory(parentPath).createSync(recursive: true);
+                      createdDirs.add(parentPath);
+                    } catch (_) {}
+                  }
+
+                  if (targetSize <= 512 * 1024) {
+                    currentBuffer = BytesBuilder(copy: false);
+                  } else {
+                    File f = File(savePath);
+                    currentSink = f.openWrite();
+                    _activeSink = currentSink;
+                  }
                 }
 
                 int remainingInChunk = chunk.length - offset;
                 int bytesNeeded = targetSize - bytesReadForCurrentFile;
+                int bytesToProcess = remainingInChunk <= bytesNeeded
+                    ? remainingInChunk
+                    : bytesNeeded;
 
-                if (bytesNeeded <= 0) {
-                  // Already complete file from previous session
-                  await currentSink.flush();
-                  await currentSink.close();
-                  currentSink = null;
+                if (bytesToProcess > 0) {
+                  if (currentBuffer != null) {
+                    currentBuffer.add(
+                      Uint8List.sublistView(
+                        chunk,
+                        offset,
+                        offset + bytesToProcess,
+                      ),
+                    );
+                  } else if (currentSink != null) {
+                    currentSink.add(
+                      Uint8List.sublistView(
+                        chunk,
+                        offset,
+                        offset + bytesToProcess,
+                      ),
+                    );
+                  }
+                  bytesReadForCurrentFile += bytesToProcess;
+                  received += bytesToProcess;
+                  bytesSinceUpdate += bytesToProcess;
+                  offset += bytesToProcess;
+                } else if (targetSize == 0) {
                   bytesReadForCurrentFile = 0;
-                  currentFileIndex++;
-                  continue;
-                }
-
-                // Write bytes with exact boundary precision
-                if (remainingInChunk <= bytesNeeded) {
-                  currentSink.add(Uint8List.sublistView(chunk, offset));
-                  bytesReadForCurrentFile += remainingInChunk;
-                  received += remainingInChunk;
-                  bytesSinceUpdate += remainingInChunk;
-                  offset += remainingInChunk;
-                } else {
-                  currentSink.add(
-                    Uint8List.sublistView(chunk, offset, offset + bytesNeeded),
-                  );
-                  bytesReadForCurrentFile += bytesNeeded;
-                  received += bytesNeeded;
-                  bytesSinceUpdate += bytesNeeded;
-                  offset += bytesNeeded;
                 }
 
                 // Update speed in UI
-                if (DateTime.now().difference(lastTime).inMilliseconds >
-                    AppConstants.speedUpdateIntervalMs) {
-                  double speed = (bytesSinceUpdate / 1024 / 1024) / 0.5;
+                final now = DateTime.now();
+                final elapsedMs = now.difference(lastTime).inMilliseconds;
+                if (elapsedMs > AppConstants.speedUpdateIntervalMs) {
+                  double speed =
+                      (bytesSinceUpdate / 1024 / 1024) / (elapsedMs / 1000.0);
                   onUpdate(
                     TransferModel(
                       speed: speed,
@@ -355,46 +371,47 @@ class ReceiverController {
                     ),
                   );
                   bytesSinceUpdate = 0;
-                  lastTime = DateTime.now();
+                  lastTime = now;
                 }
 
-                // Close file when fully received
+                // Close/flush file when fully received
                 if (bytesReadForCurrentFile == targetSize) {
-                  var sinkToClose = currentSink;
-                  currentSink = null;
-                  _activeSink = null;
+                  if (currentBuffer != null) {
+                    final bufferToSave = currentBuffer;
+                    currentBuffer = null;
+                    final fileSavePath = p.join(
+                      saveDirectory,
+                      fileMeta["path"],
+                    );
+
+                    final writeFuture = () async {
+                      try {
+                        final f = File(fileSavePath);
+                        await f.writeAsBytes(
+                          bufferToSave.takeBytes(),
+                          flush: false,
+                        );
+                      } catch (_) {}
+                    }();
+                    closeFutures.add(writeFuture);
+                  } else if (currentSink != null) {
+                    var sinkToClose = currentSink;
+                    currentSink = null;
+                    _activeSink = null;
+                    closeFutures.add(sinkToClose.close().catchError((_) {}));
+                  }
+
                   bytesReadForCurrentFile = 0;
                   currentFileIndex++;
 
                   if (received >= totalExpectedBytes) {
-                    // In background: close, then send tiny done signal
-                    sinkToClose.flush().then((_) {
-                      sinkToClose.close().then((_) {
-                        try {
-                          client.write('${jsonEncode({"s": "d"})}\n');
-                          client.flush().whenComplete(() {
-                            if (!backgroundWriteCompleter.isCompleted) {
-                              backgroundWriteCompleter.complete();
-                            }
-                          });
-                        } catch (_) {
-                          if (!backgroundWriteCompleter.isCompleted) {
-                            backgroundWriteCompleter.complete();
-                          }
-                        }
-                      });
-                    });
-                    break; // Exit the chunk loop early since we have everything
-                  } else {
-                    await sinkToClose.flush();
-                    await sinkToClose.close();
+                    break chunkLoop; // Exit the chunk loop early since we have everything
                   }
                 }
               }
             } finally {
               if (currentSink != null && currentFileIndex >= files.length) {
-                await currentSink.flush();
-                await currentSink.close();
+                closeFutures.add(currentSink.close().catchError((_) {}));
                 _activeSink = null;
               }
             }
@@ -408,7 +425,29 @@ class ReceiverController {
             throw "Transfer Cancelled";
           }
 
-          // Final cleanup for any streams left open
+          // Final cleanup for any streams or buffers left open
+          if (currentBuffer != null) {
+            final bufferToSave = currentBuffer;
+            currentBuffer = null;
+            if (metadata != null && metadata["files"] != null) {
+              final List<dynamic> filesList = metadata["files"];
+              if (currentFileIndex < filesList.length) {
+                var fileMeta = filesList[currentFileIndex];
+                final fileSavePath = p.join(saveDirectory, fileMeta["path"]);
+                final writeFuture = () async {
+                  try {
+                    final f = File(fileSavePath);
+                    await f.writeAsBytes(
+                      bufferToSave.takeBytes(),
+                      flush: false,
+                    );
+                  } catch (_) {}
+                }();
+                closeFutures.add(writeFuture);
+              }
+            }
+          }
+
           if (currentSink != null) {
             if (received >= totalExpectedBytes) {
               onUpdate(
@@ -421,10 +460,14 @@ class ReceiverController {
                 ),
               );
             }
-            await currentSink.flush();
-            await currentSink.close();
+            closeFutures.add(currentSink.close().catchError((_) {}));
             currentSink = null;
             _activeSink = null;
+          }
+
+          // Wait for all background file closures/writes to complete before finishing
+          if (closeFutures.isNotEmpty) {
+            await Future.wait(closeFutures);
           }
 
           // Guard: if metadata is null, the sender connected but dropped
@@ -436,6 +479,14 @@ class ReceiverController {
           // Check for premature connection drop
           if (received < totalExpectedBytes) {
             throw "Transfer cancelled by ${_currentSenderDeviceName ?? 'the other device'}";
+          }
+
+          // Send tiny done signal since everything is safely written to disk
+          if (received >= totalExpectedBytes) {
+            try {
+              client.write('${jsonEncode({"s": "d"})}\n');
+              await client.flush();
+            } catch (_) {}
           }
 
           stopwatch.stop();
@@ -456,9 +507,7 @@ class ReceiverController {
             ),
           );
 
-          if (received >= totalExpectedBytes) {
-            await backgroundWriteCompleter.future;
-          }
+          // All done signal and writes completed
         } on PathAccessException {
           onUpdate(TransferModel(status: "Error: Permission Denied"));
         } catch (e) {
@@ -520,7 +569,6 @@ class ReceiverController {
           try {
             // CRITICAL: Ensure the file sink is closed on connection drop
             if (_activeSink != null) {
-              await _activeSink?.flush();
               await _activeSink?.close();
             }
             client.destroy();
