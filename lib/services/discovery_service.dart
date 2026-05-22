@@ -131,6 +131,12 @@ class DiscoveryService {
     _safeCloseSocket();
   }
 
+  void dispose() {
+    stop();
+    _devicesController.close();
+    _statusController.close();
+  }
+
   Future<void> _onConnectivityChanged(String deviceName) async {
     if (!_running) return;
 

@@ -410,15 +410,17 @@ class ReceiverController {
 
           // Final cleanup for any streams left open
           if (currentSink != null) {
-            onUpdate(
-              TransferModel(
-                status: "Finalizing... Saving to disk",
-                transferred: received / 1024 / 1024,
-                totalSize: totalExpectedBytes / 1024 / 1024,
-                progress: 1.0,
-                fileName: originalName ?? "",
-              ),
-            );
+            if (received >= totalExpectedBytes) {
+              onUpdate(
+                TransferModel(
+                  status: "Finalizing... Saving to disk",
+                  transferred: received / 1024 / 1024,
+                  totalSize: totalExpectedBytes / 1024 / 1024,
+                  progress: 1.0,
+                  fileName: originalName ?? "",
+                ),
+              );
+            }
             await currentSink.flush();
             await currentSink.close();
             currentSink = null;
@@ -433,7 +435,7 @@ class ReceiverController {
 
           // Check for premature connection drop
           if (received < totalExpectedBytes) {
-            throw "Transfer cancelled by ${_currentSenderDeviceName ?? 'the other device'}.";
+            throw "Transfer cancelled by ${_currentSenderDeviceName ?? 'the other device'}";
           }
 
           stopwatch.stop();
@@ -498,9 +500,13 @@ class ReceiverController {
               ),
             );
           } else {
+            String errorMsg = e.toString();
+            if (errorMsg.endsWith('.')) {
+              errorMsg = errorMsg.substring(0, errorMsg.length - 1);
+            }
             onUpdate(
               TransferModel(
-                status: "$e. Ready & Waiting...",
+                status: "$errorMsg. Ready & Waiting...",
                 transferred: received / 1024 / 1024,
                 totalSize: totalExpectedBytes / 1024 / 1024,
                 progress: totalExpectedBytes > 0

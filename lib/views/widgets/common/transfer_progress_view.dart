@@ -4,6 +4,8 @@ import '../../../cubits/transfer_cubit.dart';
 import '../../../cubits/transfer_state.dart';
 import '../../../core/app_colors.dart';
 import '../../../core/responsive_utils.dart';
+import 'animated_press_button.dart';
+import 'custom_snackbar.dart';
 
 class TransferProgressView extends StatelessWidget {
   final bool isDesktop;
@@ -22,7 +24,11 @@ class TransferProgressView extends StatelessWidget {
             p.transferred != c.transferred ||
             p.totalSize != c.totalSize ||
             p.fileName != c.fileName ||
-            p.analyzeCount != c.analyzeCount;
+            p.analyzeCount != c.analyzeCount ||
+            previous.isTransferring != current.isTransferring ||
+            previous.isReceiving != current.isReceiving ||
+            previous.isLastTransferIncoming != current.isLastTransferIncoming ||
+            previous.showProgressView != current.showProgressView;
       },
       builder: (context, state) {
         final model = state.model;
@@ -254,64 +260,197 @@ class TransferProgressView extends StatelessWidget {
                       ),
                     ],
                   ),
-                  if (state.isLastTransferIncoming && isDone) ...[
-                    SizedBox(height: 15.0.rh(isDesktop)),
-                    Align(
-                      alignment: Alignment.center,
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxWidth: isDesktop
-                              ? 220
-                              : MediaQuery.sizeOf(context).width,
-                          maxHeight: 80.0.rh(isDesktop),
-                        ),
-                        child: SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed: () => context
-                                .read<TransferCubit>()
-                                .openReceivedFolder(),
-                            icon: Icon(
-                              Icons.folder_open_rounded,
-                              size: 18.0.rx(isDesktop),
-                            ),
-                            label: Text(
-                              "Open Received Folder",
-                              style: TextStyle(fontSize: 14.0.rx(isDesktop)),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.primary.withAlpha(40),
-                              foregroundColor: Colors.white,
-                              padding: EdgeInsets.symmetric(
-                                vertical: isDesktop ? 20 : 12.0.rh(isDesktop),
-                                horizontal: 16,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(
-                                  12.0.rr(isDesktop),
+                  // Action Buttons at the bottom of the Progress View!
+                  SizedBox(height: 18.0.rh(isDesktop)),
+                  (isDone || isFailed)
+                      ? (isDesktop
+                            ? Row(
+                                children: [
+                                  if (state.isLastTransferIncoming &&
+                                      isDone) ...[
+                                    Expanded(
+                                      child: AnimatedPressButton(
+                                        isDesktop: isDesktop,
+                                        onPressed: () => context
+                                            .read<TransferCubit>()
+                                            .openReceivedFolder(),
+                                        gradientColors: const [
+                                          AppColors.primary,
+                                          AppColors.primaryLight,
+                                        ],
+                                        child: Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            Icon(
+                                              Icons.folder_open_rounded,
+                                              color: Colors.white,
+                                              size: 18.0.rx(isDesktop),
+                                            ),
+                                            SizedBox(width: 6.rw(isDesktop)),
+                                            Text(
+                                              "Open Folder",
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 13.0.rx(isDesktop),
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                    SizedBox(width: 10.rw(isDesktop)),
+                                  ],
+                                  Expanded(
+                                    child: AnimatedPressButton(
+                                      isDesktop: isDesktop,
+                                      onPressed: () => context
+                                          .read<TransferCubit>()
+                                          .dismissProgress(),
+                                      gradientColors: isDone
+                                          ? const [
+                                              AppColors.success,
+                                              AppColors.successLight,
+                                            ]
+                                          : const [Colors.grey, Colors.white24],
+                                      child: Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.check_circle_outline_rounded,
+                                            color: isDone
+                                                ? Colors.black87
+                                                : Colors.white70,
+                                            size: 18.0.rx(isDesktop),
+                                          ),
+                                          SizedBox(width: 6.rw(isDesktop)),
+                                          Text(
+                                            isDone ? "Done" : "Dismiss",
+                                            style: TextStyle(
+                                              color: isDone
+                                                  ? Colors.black87
+                                                  : Colors.white,
+                                              fontSize: 13.0.rx(isDesktop),
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : Column(
+                                children: [
+                                  if (state.isLastTransferIncoming &&
+                                      isDone) ...[
+                                    AnimatedPressButton(
+                                      isDesktop: isDesktop,
+                                      onPressed: () => context
+                                          .read<TransferCubit>()
+                                          .openReceivedFolder(),
+                                      gradientColors: const [
+                                        AppColors.primary,
+                                        AppColors.primaryLight,
+                                      ],
+                                      child: Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.folder_open_rounded,
+                                            color: Colors.white,
+                                            size: 18.0.rx(isDesktop),
+                                          ),
+                                          SizedBox(width: 6.rw(isDesktop)),
+                                          Text(
+                                            "Open Folder",
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 13.0.rx(isDesktop),
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    SizedBox(height: 10.rh(isDesktop)),
+                                  ],
+                                  AnimatedPressButton(
+                                    isDesktop: isDesktop,
+                                    onPressed: () => context
+                                        .read<TransferCubit>()
+                                        .dismissProgress(),
+                                    gradientColors: isDone
+                                        ? const [
+                                            AppColors.success,
+                                            AppColors.successLight,
+                                          ]
+                                        : const [Colors.grey, Colors.white24],
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.check_circle_outline_rounded,
+                                          color: isDone
+                                              ? Colors.black87
+                                              : Colors.white70,
+                                          size: 18.0.rx(isDesktop),
+                                        ),
+                                        SizedBox(width: 6.rw(isDesktop)),
+                                        Text(
+                                          isDone ? "Done" : "Dismiss",
+                                          style: TextStyle(
+                                            color: isDone
+                                                ? Colors.black87
+                                                : Colors.white,
+                                            fontSize: 13.0.rx(isDesktop),
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ))
+                      : (state.isTransferring
+                            ? AnimatedPressButton(
+                                isDesktop: isDesktop,
+                                onPressed: () {
+                                  CustomSnackBar.hide();
+                                  context.read<TransferCubit>().cancelSending();
+                                },
+                                gradientColors: const [
+                                  AppColors.danger,
+                                  AppColors.dangerLight,
+                                ],
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.cancel_rounded,
+                                      color: Colors.white,
+                                      size: 18.0.rx(isDesktop),
+                                    ),
+                                    SizedBox(width: 8.rw(isDesktop)),
+                                    Text(
+                                      "Cancel Transfer",
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 14.0.rx(isDesktop),
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                                side: const BorderSide(
-                                  color: AppColors.primary,
-                                ),
-                              ),
-                              elevation: 0,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                              )
+                            : const SizedBox.shrink()),
                 ] else ...[
-                  // Minimal Placeholder when no progress
-                  const Divider(color: Colors.white10),
-                  Text(
-                    "Waiting for data transmission...",
-                    style: TextStyle(
-                      color: Colors.white24,
-                      fontSize: 13.0.rx(isDesktop),
-                      fontStyle: FontStyle.italic,
-                    ),
-                  ),
+                  // Minimal Placeholder
+                  const SizedBox.shrink(),
                 ],
               ],
             ),

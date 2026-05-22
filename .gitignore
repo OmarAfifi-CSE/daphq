@@ -1,4 +1,6 @@
 .vscode
+.agents
+.aidesigner
 apk_windows_outputs
 build_and_export.ps1
 # Miscellaneous
@@ -47,3 +49,5 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 android/build/
+.aidesigner/*
+!.aidesigner/.gitkeep

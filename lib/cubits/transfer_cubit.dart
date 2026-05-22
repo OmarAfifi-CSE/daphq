@@ -415,6 +415,7 @@ class TransferCubit extends Cubit<TransferState> {
               isLastTransferIncoming: isBusy
                   ? true
                   : state.isLastTransferIncoming,
+              showProgressView: isBusy ? true : state.showProgressView,
             ),
           );
         }
@@ -454,11 +455,19 @@ class TransferCubit extends Cubit<TransferState> {
         return _authCompleter!.future;
       },
       onDone: () {
-        if (Platform.isAndroid) {
-          FlutterForegroundTask.updateService(
-            notificationTitle: AppConstants.appName,
-            notificationText: 'Receiver idle...',
-          );
+        if (state.isReceiving) {
+          if (Platform.isAndroid) {
+            FlutterForegroundTask.updateService(
+              notificationTitle: AppConstants.appName,
+              notificationText: 'Receiver idle...',
+              notificationButtons: [
+                const NotificationButton(
+                  id: 'stopReceivingButton',
+                  text: 'Stop Receiving',
+                ),
+              ],
+            );
+          }
         }
 
         // Ensure UI reflects that receiver is no longer active
@@ -557,7 +566,13 @@ class TransferCubit extends Cubit<TransferState> {
 
     if (!await _prepareRequirements()) return;
 
-    emit(state.copyWith(isTransferring: true, isLastTransferIncoming: false));
+    emit(
+      state.copyWith(
+        isTransferring: true,
+        isLastTransferIncoming: false,
+        showProgressView: true,
+      ),
+    );
 
     await _startForegroundService(
       AppConstants.appName,
@@ -663,13 +678,18 @@ class TransferCubit extends Cubit<TransferState> {
         await HistoryService.addEntries(entries);
       }
 
+      String errorMsg = e.toString();
+      if (errorMsg.endsWith('.')) {
+        errorMsg = errorMsg.substring(0, errorMsg.length - 1);
+      }
+
       if (!isClosed) {
         emit(
           state.copyWith(
             isTransferring: false,
-            errorMessage: e.toString(),
+            errorMessage: errorMsg,
             model: TransferModel(
-              status: "$e. Ready & Waiting...",
+              status: "$errorMsg. Ready & Waiting...",
               transferred: state.model.transferred,
               totalSize: state.model.totalSize,
               progress: state.model.progress,
@@ -678,7 +698,20 @@ class TransferCubit extends Cubit<TransferState> {
           ),
         );
       }
-      if (!state.isReceiving) {
+      if (state.isReceiving) {
+        if (Platform.isAndroid) {
+          FlutterForegroundTask.updateService(
+            notificationTitle: AppConstants.appName,
+            notificationText: "Waiting for incoming files...",
+            notificationButtons: [
+              const NotificationButton(
+                id: 'stopReceivingButton',
+                text: 'Stop Receiving',
+              ),
+            ],
+          );
+        }
+      } else {
         _stopForegroundService();
       }
     }
@@ -689,8 +722,9 @@ class TransferCubit extends Cubit<TransferState> {
     FlutterForegroundTask.removeTaskDataCallback(_onReceiveTaskData);
     _discoverySubscription?.cancel();
     _connectivitySubscription?.cancel();
-    discoveryService.stop();
+    discoveryService.dispose();
     _receiver.stop();
+    _sender.cancel();
     _stopForegroundService();
     return super.close();
   }
@@ -755,6 +789,37 @@ class TransferCubit extends Cubit<TransferState> {
       } else {
         emit(state.copyWith(errorMessage: "Error opening folder: $e"));
       }
+    }
+  }
+
+  void dismissProgress() {
+    emit(
+      state.copyWith(
+        showProgressView: false,
+        model: TransferModel(
+          status: "",
+          transferred: 0,
+          totalSize: 0,
+          progress: 0,
+          fileName: "",
+        ),
+      ),
+    );
+    if (state.isReceiving) {
+      if (Platform.isAndroid) {
+        FlutterForegroundTask.updateService(
+          notificationTitle: AppConstants.appName,
+          notificationText: "Waiting for incoming files...",
+          notificationButtons: [
+            const NotificationButton(
+              id: 'stopReceivingButton',
+              text: 'Stop Receiving',
+            ),
+          ],
+        );
+      }
+    } else {
+      _stopForegroundService();
     }
   }
 
