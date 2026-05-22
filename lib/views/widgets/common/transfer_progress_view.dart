@@ -14,6 +14,8 @@ class TransferProgressView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scale = isDesktop ? context.desktopScale : 1.0;
+
     return BlocBuilder<TransferCubit, TransferState>(
       buildWhen: (previous, current) {
         final p = previous.model;
@@ -50,10 +52,12 @@ class TransferProgressView extends StatelessWidget {
           duration: const Duration(milliseconds: 350),
           alignment: Alignment.topCenter,
           child: Container(
-            padding: EdgeInsets.all(22.0.rw(isDesktop)),
+            padding: EdgeInsets.all(22.0.rw(isDesktop, desktopScale: scale)),
             decoration: BoxDecoration(
               color: AppColors.cardOverlay,
-              borderRadius: BorderRadius.circular(22.0.rr(isDesktop)),
+              borderRadius: BorderRadius.circular(
+                22.0.rr(isDesktop, desktopScale: scale),
+              ),
               border: Border.all(color: AppColors.cardBorder),
               boxShadow: [
                 BoxShadow(
@@ -74,13 +78,13 @@ class TransferProgressView extends StatelessWidget {
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: _getStatusColor(model.status),
-                      fontSize: 18.0.rx(isDesktop),
+                      fontSize: 18.0.rx(isDesktop, desktopScale: scale),
                       fontWeight: FontWeight.w700,
                       letterSpacing: 0.3,
                     ),
                   ),
                 ),
-                SizedBox(height: 10.0.rh(isDesktop)),
+                SizedBox(height: 10.0.rh(isDesktop, desktopScale: scale)),
 
                 // 2. Speed Display — or File Count during analyze phase
                 if (model.analyzeCount != null)
@@ -95,7 +99,7 @@ class TransferProgressView extends StatelessWidget {
                           color: AppColors.textPrimary.withAlpha(
                             (180 + (75 * value)).toInt(),
                           ),
-                          fontSize: 38.0.rx(isDesktop),
+                          fontSize: 38.0.rx(isDesktop, desktopScale: scale),
                           fontWeight: FontWeight.bold,
                           shadows: [
                             Shadow(
@@ -113,33 +117,37 @@ class TransferProgressView extends StatelessWidget {
                 // 3. Avg Speed & Time Info / Estimated Time
                 if (model.avgSpeed != null || model.totalTime != null)
                   Padding(
-                    padding: EdgeInsets.only(top: 5.0.rh(isDesktop)),
+                    padding: EdgeInsets.only(
+                      top: 5.0.rh(isDesktop, desktopScale: scale),
+                    ),
                     child: Text(
                       "${model.avgSpeed != null ? "Avg: ${model.avgSpeed} MB/s" : ""}${model.avgSpeed != null && model.totalTime != null ? " | " : ""}${_formatCompletedTime(model.totalTime)}",
                       style: TextStyle(
                         color: AppColors.success.withAlpha(200),
-                        fontSize: 15.0.rx(isDesktop),
+                        fontSize: 15.0.rx(isDesktop, desktopScale: scale),
                         fontWeight: FontWeight.w500,
                       ),
                     ),
                   )
                 else if (hasProgress && !isDone && !isFailed && model.speed > 0)
                   Padding(
-                    padding: EdgeInsets.only(top: 5.0.rh(isDesktop)),
+                    padding: EdgeInsets.only(
+                      top: 5.0.rh(isDesktop, desktopScale: scale),
+                    ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Icon(
                           Icons.timer_outlined,
                           color: AppColors.primaryLight,
-                          size: 16.0.rx(isDesktop),
+                          size: 16.0.rx(isDesktop, desktopScale: scale),
                         ),
-                        SizedBox(width: 6.0.rw(isDesktop)),
+                        SizedBox(width: 6.0.rw(isDesktop, desktopScale: scale)),
                         Text(
                           "Est. time: ${_formatEstimatedTime((model.totalSize - model.transferred) / model.speed)}",
                           style: TextStyle(
                             color: AppColors.primaryLight,
-                            fontSize: 15.0.rx(isDesktop),
+                            fontSize: 15.0.rx(isDesktop, desktopScale: scale),
                             fontWeight: FontWeight.w500,
                           ),
                         ),
@@ -148,8 +156,8 @@ class TransferProgressView extends StatelessWidget {
                   ),
 
                 model.analyzeCount != null || hasProgress
-                    ? SizedBox(height: 15.0.rh(isDesktop))
-                    : SizedBox(height: 20.0.rh(isDesktop)),
+                    ? SizedBox(height: 15.0.rh(isDesktop, desktopScale: scale))
+                    : SizedBox(height: 20.0.rh(isDesktop, desktopScale: scale)),
 
                 // 4. Compact Progress Section
                 if (hasProgress) ...[
@@ -164,12 +172,12 @@ class TransferProgressView extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: AppColors.textPrimary,
-                        fontSize: 14.0.rx(isDesktop),
+                        fontSize: 14.0.rx(isDesktop, desktopScale: scale),
                         fontWeight: FontWeight.w500,
                       ),
                     ),
                   ),
-                  SizedBox(height: 8.0.rh(isDesktop)),
+                  SizedBox(height: 8.0.rh(isDesktop, desktopScale: scale)),
 
                   // The Progress Bar
                   if (model.analyzeCount != null)
@@ -181,7 +189,7 @@ class TransferProgressView extends StatelessWidget {
                       isDone: isDone,
                       isFailed: isFailed,
                     ),
-                  SizedBox(height: 8.0.rh(isDesktop)),
+                  SizedBox(height: 8.0.rh(isDesktop, desktopScale: scale)),
 
                   // Progress Stats
                   Row(
@@ -199,7 +207,7 @@ class TransferProgressView extends StatelessWidget {
                               : (isFailed
                                     ? AppColors.danger
                                     : AppColors.primaryLight),
-                          fontSize: 12.0.rx(isDesktop),
+                          fontSize: 12.0.rx(isDesktop, desktopScale: scale),
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -207,13 +215,13 @@ class TransferProgressView extends StatelessWidget {
                         "${_formatSize(model.transferred)}${model.totalSize > 0 ? " / ${_formatSize(model.totalSize)}" : ""}",
                         style: TextStyle(
                           color: AppColors.textMuted,
-                          fontSize: 12.0.rx(isDesktop),
+                          fontSize: 12.0.rx(isDesktop, desktopScale: scale),
                         ),
                       ),
                     ],
                   ),
                   // Action Buttons
-                  SizedBox(height: 18.0.rh(isDesktop)),
+                  SizedBox(height: 18.0.rh(isDesktop, desktopScale: scale)),
                   (isDone || isFailed)
                       ? (isDesktop
                             ? Row(
@@ -237,14 +245,25 @@ class TransferProgressView extends StatelessWidget {
                                             Icon(
                                               Icons.folder_open_rounded,
                                               color: Colors.white,
-                                              size: 18.0.rx(isDesktop),
+                                              size: 18.0.rx(
+                                                isDesktop,
+                                                desktopScale: scale,
+                                              ),
                                             ),
-                                            SizedBox(width: 6.rw(isDesktop)),
+                                            SizedBox(
+                                              width: 6.rw(
+                                                isDesktop,
+                                                desktopScale: scale,
+                                              ),
+                                            ),
                                             Text(
                                               "Open Folder",
                                               style: TextStyle(
                                                 color: Colors.white,
-                                                fontSize: 13.0.rx(isDesktop),
+                                                fontSize: 13.0.rx(
+                                                  isDesktop,
+                                                  desktopScale: scale,
+                                                ),
                                                 fontWeight: FontWeight.bold,
                                               ),
                                             ),
@@ -252,7 +271,12 @@ class TransferProgressView extends StatelessWidget {
                                         ),
                                       ),
                                     ),
-                                    SizedBox(width: 10.rw(isDesktop)),
+                                    SizedBox(
+                                      width: 10.rw(
+                                        isDesktop,
+                                        desktopScale: scale,
+                                      ),
+                                    ),
                                   ],
                                   Expanded(
                                     child: AnimatedPressButton(
@@ -278,16 +302,27 @@ class TransferProgressView extends StatelessWidget {
                                             color: isDone
                                                 ? Colors.black87
                                                 : AppColors.textSecondary,
-                                            size: 18.0.rx(isDesktop),
+                                            size: 18.0.rx(
+                                              isDesktop,
+                                              desktopScale: scale,
+                                            ),
                                           ),
-                                          SizedBox(width: 6.rw(isDesktop)),
+                                          SizedBox(
+                                            width: 6.rw(
+                                              isDesktop,
+                                              desktopScale: scale,
+                                            ),
+                                          ),
                                           Text(
                                             isDone ? "Done" : "Dismiss",
                                             style: TextStyle(
                                               color: isDone
                                                   ? Colors.black87
                                                   : AppColors.textPrimary,
-                                              fontSize: 13.0.rx(isDesktop),
+                                              fontSize: 13.0.rx(
+                                                isDesktop,
+                                                desktopScale: scale,
+                                              ),
                                               fontWeight: FontWeight.bold,
                                             ),
                                           ),
@@ -317,21 +352,37 @@ class TransferProgressView extends StatelessWidget {
                                           Icon(
                                             Icons.folder_open_rounded,
                                             color: Colors.white,
-                                            size: 18.0.rx(isDesktop),
+                                            size: 18.0.rx(
+                                              isDesktop,
+                                              desktopScale: scale,
+                                            ),
                                           ),
-                                          SizedBox(width: 6.rw(isDesktop)),
+                                          SizedBox(
+                                            width: 6.rw(
+                                              isDesktop,
+                                              desktopScale: scale,
+                                            ),
+                                          ),
                                           Text(
                                             "Open Folder",
                                             style: TextStyle(
                                               color: Colors.white,
-                                              fontSize: 13.0.rx(isDesktop),
+                                              fontSize: 13.0.rx(
+                                                isDesktop,
+                                                desktopScale: scale,
+                                              ),
                                               fontWeight: FontWeight.bold,
                                             ),
                                           ),
                                         ],
                                       ),
                                     ),
-                                    SizedBox(height: 10.rh(isDesktop)),
+                                    SizedBox(
+                                      height: 10.rh(
+                                        isDesktop,
+                                        desktopScale: scale,
+                                      ),
+                                    ),
                                   ],
                                   AnimatedPressButton(
                                     isDesktop: isDesktop,
@@ -356,16 +407,27 @@ class TransferProgressView extends StatelessWidget {
                                           color: isDone
                                               ? Colors.black87
                                               : AppColors.textSecondary,
-                                          size: 18.0.rx(isDesktop),
+                                          size: 18.0.rx(
+                                            isDesktop,
+                                            desktopScale: scale,
+                                          ),
                                         ),
-                                        SizedBox(width: 6.rw(isDesktop)),
+                                        SizedBox(
+                                          width: 6.rw(
+                                            isDesktop,
+                                            desktopScale: scale,
+                                          ),
+                                        ),
                                         Text(
                                           isDone ? "Done" : "Dismiss",
                                           style: TextStyle(
                                             color: isDone
                                                 ? Colors.black87
                                                 : AppColors.textPrimary,
-                                            fontSize: 13.0.rx(isDesktop),
+                                            fontSize: 13.0.rx(
+                                              isDesktop,
+                                              desktopScale: scale,
+                                            ),
                                             fontWeight: FontWeight.bold,
                                           ),
                                         ),
@@ -391,14 +453,25 @@ class TransferProgressView extends StatelessWidget {
                                     Icon(
                                       Icons.cancel_rounded,
                                       color: Colors.white,
-                                      size: 18.0.rx(isDesktop),
+                                      size: 18.0.rx(
+                                        isDesktop,
+                                        desktopScale: scale,
+                                      ),
                                     ),
-                                    SizedBox(width: 8.rw(isDesktop)),
+                                    SizedBox(
+                                      width: 8.rw(
+                                        isDesktop,
+                                        desktopScale: scale,
+                                      ),
+                                    ),
                                     Text(
                                       "Cancel Transfer",
                                       style: TextStyle(
                                         color: Colors.white,
-                                        fontSize: 14.0.rx(isDesktop),
+                                        fontSize: 14.0.rx(
+                                          isDesktop,
+                                          desktopScale: scale,
+                                        ),
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),
@@ -486,6 +559,7 @@ class _SpeedDisplay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scale = isDesktop ? context.desktopScale : 1.0;
     return TweenAnimationBuilder<double>(
       tween: Tween<double>(begin: 0, end: speed),
       duration: const Duration(milliseconds: 500),
@@ -496,7 +570,7 @@ class _SpeedDisplay extends StatelessWidget {
           "${value.toStringAsFixed(1)} MB/s",
           style: TextStyle(
             color: AppColors.textPrimary,
-            fontSize: 38.0.rx(isDesktop),
+            fontSize: 38.0.rx(isDesktop, desktopScale: scale),
             fontWeight: FontWeight.bold,
             shadows: [
               Shadow(
@@ -527,11 +601,15 @@ class _GlowingProgressBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scale = isDesktop ? context.desktopScale : 1.0;
     final colors = isDone
         ? [AppColors.success, AppColors.successLight]
         : (isFailed
               ? [AppColors.danger, AppColors.dangerLight]
               : [AppColors.primary, AppColors.primaryLight]);
+
+    final barHeight = 6.rh(isDesktop, desktopScale: scale);
+    final barRadius = 4.rr(isDesktop, desktopScale: scale);
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -541,26 +619,28 @@ class _GlowingProgressBar extends StatelessWidget {
           clipBehavior: Clip.none,
           children: [
             Container(
-              height: 6,
+              height: barHeight,
               width: double.infinity,
               decoration: BoxDecoration(
                 color: Colors.white.withAlpha(8),
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(barRadius),
               ),
             ),
             AnimatedContainer(
               duration: const Duration(milliseconds: 400),
-              height: 6,
+              height: barHeight,
               width: progressWidth,
-              constraints: BoxConstraints(minWidth: progress > 0 ? 6 : 0),
+              constraints: BoxConstraints(
+                minWidth: progress > 0 ? barHeight : 0,
+              ),
               decoration: BoxDecoration(
                 gradient: LinearGradient(colors: colors),
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(barRadius),
                 boxShadow: [
                   BoxShadow(
                     color: colors.first.withAlpha(100),
-                    blurRadius: 12,
-                    offset: const Offset(0, 2),
+                    blurRadius: 12.rr(isDesktop, desktopScale: scale),
+                    offset: Offset(0, 2.rh(isDesktop, desktopScale: scale)),
                   ),
                 ],
               ),
@@ -568,19 +648,19 @@ class _GlowingProgressBar extends StatelessWidget {
             // Leading edge glow particle
             if (progress > 0.01 && progress < 1.0 && !isDone && !isFailed)
               Positioned(
-                left: progressWidth - 4,
-                top: -2,
+                left: progressWidth - 4.rw(isDesktop, desktopScale: scale),
+                top: -2.rh(isDesktop, desktopScale: scale),
                 child: Container(
-                  width: 10,
-                  height: 10,
+                  width: 10.rw(isDesktop, desktopScale: scale),
+                  height: 10.rh(isDesktop, desktopScale: scale),
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: colors.last.withAlpha(180),
                     boxShadow: [
                       BoxShadow(
                         color: colors.first.withAlpha(150),
-                        blurRadius: 8,
-                        spreadRadius: 2,
+                        blurRadius: 8.rr(isDesktop, desktopScale: scale),
+                        spreadRadius: 2.rr(isDesktop, desktopScale: scale),
                       ),
                     ],
                   ),
@@ -625,27 +705,32 @@ class _AnalyzePulseBarState extends State<_AnalyzePulseBar>
 
   @override
   Widget build(BuildContext context) {
+    final isDesktop = widget.isDesktop;
+    final scale = isDesktop ? context.desktopScale : 1.0;
+    final barHeight = 6.rh(isDesktop, desktopScale: scale);
+    final barRadius = 4.rr(isDesktop, desktopScale: scale);
+    final pulseWidth = 80.0.rw(isDesktop, desktopScale: scale);
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final totalWidth = constraints.maxWidth;
-        const pulseWidth = 80.0;
         return AnimatedBuilder(
           animation: _anim,
           builder: (context, _) {
             final offset = _anim.value * (totalWidth + pulseWidth) - pulseWidth;
             return ClipRRect(
-              borderRadius: BorderRadius.circular(4),
+              borderRadius: BorderRadius.circular(barRadius),
               child: Stack(
                 children: [
                   Container(
-                    height: 6,
+                    height: barHeight,
                     width: double.infinity,
                     color: Colors.white.withAlpha(8),
                   ),
                   Positioned(
                     left: offset,
                     child: Container(
-                      height: 6,
+                      height: barHeight,
                       width: pulseWidth,
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
@@ -656,11 +741,11 @@ class _AnalyzePulseBarState extends State<_AnalyzePulseBar>
                             AppColors.primary.withAlpha(0),
                           ],
                         ),
-                        borderRadius: BorderRadius.circular(4),
+                        borderRadius: BorderRadius.circular(barRadius),
                         boxShadow: [
                           BoxShadow(
                             color: AppColors.primary.withAlpha(120),
-                            blurRadius: 10,
+                            blurRadius: 10.rr(isDesktop, desktopScale: scale),
                           ),
                         ],
                       ),

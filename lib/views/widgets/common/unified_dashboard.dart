@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -24,6 +25,18 @@ class UnifiedDashboard extends StatefulWidget {
 
 class _UnifiedDashboardState extends State<UnifiedDashboard> {
   late final TextEditingController _ipController;
+  bool _isPickingFolder = false;
+
+  String get _pickerLoadingText {
+    if (!widget.isDesktop) {
+      return "Opening Folder Picker...";
+    }
+    try {
+      if (Platform.isWindows) return "Opening File Explorer...";
+      if (Platform.isMacOS) return "Opening Finder...";
+    } catch (_) {}
+    return "Opening Folder Picker...";
+  }
 
   @override
   void initState() {
@@ -45,6 +58,7 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
   @override
   Widget build(BuildContext context) {
     final isDesktop = widget.isDesktop;
+    final double scale = isDesktop ? context.desktopScale : 1.0;
     final cubit = context.read<TransferCubit>();
 
     return BlocBuilder<TransferCubit, TransferState>(
@@ -63,7 +77,7 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                       "Manual IP Transfer",
                       style: TextStyle(
                         color: AppColors.textPrimary,
-                        fontSize: 15.rx(isDesktop),
+                        fontSize: 15.rx(isDesktop, desktopScale: scale),
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -71,50 +85,56 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                       icon: Icon(
                         Icons.close_rounded,
                         color: AppColors.textMuted,
-                        size: 20.rx(isDesktop),
+                        size: 20.rx(isDesktop, desktopScale: scale),
                       ),
                       onPressed: () => cubit.toggleAdvancedMode(),
                     ),
                   ],
                 ),
                 Divider(color: Colors.white.withAlpha(8), height: 16),
-                SizedBox(height: 8.rh(isDesktop)),
+                SizedBox(height: 8.rh(isDesktop, desktopScale: scale)),
                 TextField(
                   controller: _ipController,
                   cursorColor: AppColors.primary,
                   style: TextStyle(
                     color: AppColors.textPrimary,
-                    fontSize: 13.0.rx(isDesktop),
+                    fontSize: 13.0.rx(isDesktop, desktopScale: scale),
                   ),
                   decoration: InputDecoration(
                     labelText: AppConstants.receiverIpLabel,
                     labelStyle: TextStyle(
                       color: AppColors.textMuted,
-                      fontSize: 12.0.rx(isDesktop),
+                      fontSize: 12.0.rx(isDesktop, desktopScale: scale),
                     ),
                     helperText: AppConstants.receiverIpHelper,
                     helperStyle: TextStyle(
                       color: AppColors.textMuted.withAlpha(120),
-                      fontSize: 10.0.rx(isDesktop),
+                      fontSize: 10.0.rx(isDesktop, desktopScale: scale),
                     ),
                     filled: true,
                     fillColor: Colors.black.withAlpha(40),
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10.rr(isDesktop)),
+                      borderRadius: BorderRadius.circular(
+                        10.rr(isDesktop, desktopScale: scale),
+                      ),
                       borderSide: BorderSide.none,
                     ),
                     focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10.rr(isDesktop)),
+                      borderRadius: BorderRadius.circular(
+                        10.rr(isDesktop, desktopScale: scale),
+                      ),
                       borderSide: BorderSide(
                         color: AppColors.primary.withAlpha(80),
                         width: 1.0,
                       ),
                     ),
-                    contentPadding: EdgeInsets.all(12.rr(isDesktop)),
+                    contentPadding: EdgeInsets.all(
+                      12.rr(isDesktop, desktopScale: scale),
+                    ),
                   ),
                   enabled: !state.isTransferring,
                 ),
-                SizedBox(height: 14.rh(isDesktop)),
+                SizedBox(height: 14.rh(isDesktop, desktopScale: scale)),
                 AnimatedPressButton(
                   isDesktop: isDesktop,
                   onPressed: () {
@@ -143,14 +163,14 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                       Icon(
                         Icons.open_in_new_rounded,
                         color: Colors.white,
-                        size: 16.rx(isDesktop),
+                        size: 16.rx(isDesktop, desktopScale: scale),
                       ),
-                      SizedBox(width: 6.rw(isDesktop)),
+                      SizedBox(width: 6.rw(isDesktop, desktopScale: scale)),
                       Text(
                         "Select Content & Send",
                         style: TextStyle(
                           color: Colors.white,
-                          fontSize: 13.rx(isDesktop),
+                          fontSize: 13.rx(isDesktop, desktopScale: scale),
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -180,12 +200,19 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                             Expanded(
                               child: Row(
                                 children: [
-                                  SizedBox(width: 3.rx(isDesktop)),
+                                  SizedBox(
+                                    width: 3.rx(isDesktop, desktopScale: scale),
+                                  ),
                                   _AnimatedStatusDot(
                                     isOnline: state.isReceiving,
-                                    size: 10.rx(isDesktop),
+                                    size: 10.rx(isDesktop, desktopScale: scale),
                                   ),
-                                  SizedBox(width: 18.rw(isDesktop)),
+                                  SizedBox(
+                                    width: 18.rw(
+                                      isDesktop,
+                                      desktopScale: scale,
+                                    ),
+                                  ),
                                   Expanded(
                                     child: Text(
                                       _balanceText(
@@ -199,7 +226,10 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                                       ),
                                       style: TextStyle(
                                         color: AppColors.textPrimary,
-                                        fontSize: 14.rx(isDesktop),
+                                        fontSize: 14.rx(
+                                          isDesktop,
+                                          desktopScale: scale,
+                                        ),
                                         fontWeight: FontWeight.w700,
                                       ),
                                       maxLines: 2,
@@ -240,38 +270,81 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                         Divider(color: Colors.white.withAlpha(10), height: 1),
                         const SizedBox(height: 10),
                         GestureDetector(
-                          onTap: state.isTransferring
+                          onTap: (state.isTransferring || _isPickingFolder)
                               ? null
                               : () async {
-                                  String? path =
-                                      await FilePicker.getDirectoryPath();
-                                  if (path != null && mounted) {
-                                    cubit.setReceiveFolder(path);
+                                  setState(() {
+                                    _isPickingFolder = true;
+                                  });
+                                  try {
+                                    String? path =
+                                        await FilePicker.getDirectoryPath();
+                                    if (path != null && mounted) {
+                                      cubit.setReceiveFolder(path);
+                                    }
+                                  } finally {
+                                    if (mounted) {
+                                      setState(() {
+                                        _isPickingFolder = false;
+                                      });
+                                    }
                                   }
                                 },
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
-                              Icon(
-                                Icons.folder_open_rounded,
-                                color: AppColors.primary,
-                                size: 16.rx(isDesktop),
+                              _isPickingFolder
+                                  ? SizedBox(
+                                      width: 16.rx(
+                                        isDesktop,
+                                        desktopScale: scale,
+                                      ),
+                                      height: 16.rx(
+                                        isDesktop,
+                                        desktopScale: scale,
+                                      ),
+                                      child: const CircularProgressIndicator(
+                                        strokeWidth: 1.5,
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                              AppColors.primary,
+                                            ),
+                                      ),
+                                    )
+                                  : Icon(
+                                      Icons.folder_open_rounded,
+                                      color: AppColors.primary,
+                                      size: 16.rx(
+                                        isDesktop,
+                                        desktopScale: scale,
+                                      ),
+                                    ),
+                              SizedBox(
+                                width: 16.rw(isDesktop, desktopScale: scale),
                               ),
-                              SizedBox(width: 16.rw(isDesktop)),
                               Expanded(
                                 child: Text(
-                                  state.receiveFolder == null
-                                      ? "Select download folder"
-                                      : _balanceText(
-                                          "Saving to: ",
-                                          state.receiveFolder!,
-                                        ),
+                                  _isPickingFolder
+                                      ? _pickerLoadingText
+                                      : (state.receiveFolder == null
+                                            ? "Select download folder"
+                                            : _balanceText(
+                                                "Saving to: ",
+                                                state.receiveFolder!,
+                                              )),
                                   maxLines: 3,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
-                                    color: AppColors.textSecondary,
-                                    fontSize: 11.rx(isDesktop),
-                                    fontWeight: FontWeight.w500,
+                                    color: _isPickingFolder
+                                        ? AppColors.primary
+                                        : AppColors.textSecondary,
+                                    fontSize: 11.rx(
+                                      isDesktop,
+                                      desktopScale: scale,
+                                    ),
+                                    fontWeight: _isPickingFolder
+                                        ? FontWeight.bold
+                                        : FontWeight.w500,
                                   ),
                                 ),
                               ),
@@ -292,9 +365,11 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                                   // Animated status dot
                                   _AnimatedStatusDot(
                                     isOnline: state.isReceiving,
-                                    size: 8.rx(isDesktop),
+                                    size: 8.rx(isDesktop, desktopScale: scale),
                                   ),
-                                  SizedBox(width: 8.rw(isDesktop)),
+                                  SizedBox(
+                                    width: 8.rw(isDesktop, desktopScale: scale),
+                                  ),
                                   Expanded(
                                     child: Text(
                                       _balanceText(
@@ -308,7 +383,10 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                                       ),
                                       style: TextStyle(
                                         color: AppColors.textPrimary,
-                                        fontSize: 14.rx(isDesktop),
+                                        fontSize: 14.rx(
+                                          isDesktop,
+                                          desktopScale: scale,
+                                        ),
                                         fontWeight: FontWeight.w700,
                                       ),
                                       maxLines: 2,
@@ -317,36 +395,86 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                                   ),
                                 ],
                               ),
-                              SizedBox(height: 5.rh(isDesktop)),
+                              SizedBox(
+                                height: 5.rh(isDesktop, desktopScale: scale),
+                              ),
                               GestureDetector(
-                                onTap: state.isTransferring
+                                onTap:
+                                    (state.isTransferring || _isPickingFolder)
                                     ? null
                                     : () async {
-                                        String? path =
-                                            await FilePicker.getDirectoryPath();
-                                        if (path != null && mounted) {
-                                          cubit.setReceiveFolder(path);
+                                        setState(() {
+                                          _isPickingFolder = true;
+                                        });
+                                        try {
+                                          String? path =
+                                              await FilePicker.getDirectoryPath();
+                                          if (path != null && mounted) {
+                                            cubit.setReceiveFolder(path);
+                                          }
+                                        } finally {
+                                          if (mounted) {
+                                            setState(() {
+                                              _isPickingFolder = false;
+                                            });
+                                          }
                                         }
                                       },
                                 child: Row(
                                   children: [
-                                    Icon(
-                                      Icons.folder_open_rounded,
-                                      color: AppColors.primary,
-                                      size: 12.rx(isDesktop),
+                                    _isPickingFolder
+                                        ? SizedBox(
+                                            width: 12.rx(
+                                              isDesktop,
+                                              desktopScale: scale,
+                                            ),
+                                            height: 12.rx(
+                                              isDesktop,
+                                              desktopScale: scale,
+                                            ),
+                                            child:
+                                                const CircularProgressIndicator(
+                                                  strokeWidth: 1.2,
+                                                  valueColor:
+                                                      AlwaysStoppedAnimation<
+                                                        Color
+                                                      >(AppColors.primary),
+                                                ),
+                                          )
+                                        : Icon(
+                                            Icons.folder_open_rounded,
+                                            color: AppColors.primary,
+                                            size: 12.rx(
+                                              isDesktop,
+                                              desktopScale: scale,
+                                            ),
+                                          ),
+                                    SizedBox(
+                                      width: 4.rw(
+                                        isDesktop,
+                                        desktopScale: scale,
+                                      ),
                                     ),
-                                    SizedBox(width: 4.rw(isDesktop)),
                                     Expanded(
                                       child: Text(
-                                        state.receiveFolder == null
-                                            ? "Select download folder"
-                                            : "Saving to: ${state.receiveFolder!}",
+                                        _isPickingFolder
+                                            ? _pickerLoadingText
+                                            : (state.receiveFolder == null
+                                                  ? "Select download folder"
+                                                  : "Saving to: ${state.receiveFolder!}"),
                                         maxLines: 2,
                                         overflow: TextOverflow.ellipsis,
                                         style: TextStyle(
-                                          color: AppColors.textSecondary,
-                                          fontSize: 11.rx(isDesktop),
-                                          fontWeight: FontWeight.w500,
+                                          color: _isPickingFolder
+                                              ? AppColors.primary
+                                              : AppColors.textSecondary,
+                                          fontSize: 11.rx(
+                                            isDesktop,
+                                            desktopScale: scale,
+                                          ),
+                                          fontWeight: _isPickingFolder
+                                              ? FontWeight.bold
+                                              : FontWeight.w500,
                                         ),
                                       ),
                                     ),
@@ -385,15 +513,17 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
 
             // Selection Banner
             if (state.selectedPaths.isNotEmpty && !state.isTransferring) ...[
-              SizedBox(height: 12.rh(isDesktop)),
+              SizedBox(height: 12.rh(isDesktop, desktopScale: scale)),
               Container(
                 padding: EdgeInsets.symmetric(
-                  horizontal: 10.rw(isDesktop),
-                  vertical: 6.rh(isDesktop),
+                  horizontal: 10.rw(isDesktop, desktopScale: scale),
+                  vertical: 6.rh(isDesktop, desktopScale: scale),
                 ),
                 decoration: BoxDecoration(
                   color: AppColors.primary.withAlpha(12),
-                  borderRadius: BorderRadius.circular(10.rr(isDesktop)),
+                  borderRadius: BorderRadius.circular(
+                    10.rr(isDesktop, desktopScale: scale),
+                  ),
                   border: Border.all(color: AppColors.primary.withAlpha(30)),
                 ),
                 child: Row(
@@ -401,15 +531,15 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                     Icon(
                       Icons.check_circle_outline_rounded,
                       color: AppColors.primary,
-                      size: 16.rx(isDesktop),
+                      size: 16.rx(isDesktop, desktopScale: scale),
                     ),
-                    SizedBox(width: 8.rw(isDesktop)),
+                    SizedBox(width: 8.rw(isDesktop, desktopScale: scale)),
                     Expanded(
                       child: Text(
                         "${state.selectedPaths.length} items selected",
                         style: TextStyle(
                           color: AppColors.textPrimary,
-                          fontSize: 12.rx(isDesktop),
+                          fontSize: 12.rx(isDesktop, desktopScale: scale),
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -418,7 +548,7 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                       onPressed: () => cubit.clearSelection(),
                       style: TextButton.styleFrom(
                         padding: EdgeInsets.symmetric(
-                          horizontal: 8.rw(isDesktop),
+                          horizontal: 8.rw(isDesktop, desktopScale: scale),
                         ),
                         minimumSize: Size.zero,
                         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -427,7 +557,7 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                         "Clear",
                         style: TextStyle(
                           color: AppColors.danger,
-                          fontSize: 11.rx(isDesktop),
+                          fontSize: 11.rx(isDesktop, desktopScale: scale),
                         ),
                       ),
                     ),
@@ -437,9 +567,9 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
             ],
 
             // 2. CENTER RADAR
-            SizedBox(height: 35.rh(isDesktop)),
-            OrbitalRadar(isDesktop: isDesktop, size: 320.0),
-            SizedBox(height: 35.rh(isDesktop)),
+            SizedBox(height: 35.rh(isDesktop, desktopScale: scale)),
+            OrbitalRadar(isDesktop: isDesktop, size: 320.0 * scale),
+            SizedBox(height: 35.rh(isDesktop, desktopScale: scale)),
 
             // 3. BOTTOM PANEL: Status bar with scan shimmer
             Center(
@@ -611,19 +741,27 @@ class _ScanStatusBarState extends State<_ScanStatusBar>
   @override
   Widget build(BuildContext context) {
     final isDesktop = widget.isDesktop;
+    final scale = isDesktop ? context.desktopScale : 1.0;
 
     return ClipRRect(
-      borderRadius: BorderRadius.circular(20),
+      borderRadius: BorderRadius.circular(
+        20.rr(isDesktop, desktopScale: scale),
+      ),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
         child: AnimatedBuilder(
           animation: _shimmerController,
           builder: (context, child) {
             return Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              padding: EdgeInsets.symmetric(
+                horizontal: 16.rw(isDesktop, desktopScale: scale),
+                vertical: 8.rh(isDesktop, desktopScale: scale),
+              ),
               decoration: BoxDecoration(
                 color: Colors.black.withAlpha(40),
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(
+                  20.rr(isDesktop, desktopScale: scale),
+                ),
                 border: Border.all(
                   color: Colors.white.withAlpha(10),
                   width: 1.0,
@@ -658,8 +796,8 @@ class _ScanStatusBarState extends State<_ScanStatusBar>
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Container(
-                          width: 6.rx(isDesktop),
-                          height: 6.rx(isDesktop),
+                          width: 6.rx(isDesktop, desktopScale: scale),
+                          height: 6.rx(isDesktop, desktopScale: scale),
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             color: widget.isReceiving
@@ -669,52 +807,60 @@ class _ScanStatusBarState extends State<_ScanStatusBar>
                                 ? [
                                     BoxShadow(
                                       color: AppColors.primary.withAlpha(100),
-                                      blurRadius: 4,
-                                      spreadRadius: 1,
+                                      blurRadius: 4.rr(
+                                        isDesktop,
+                                        desktopScale: scale,
+                                      ),
+                                      spreadRadius: 1.rr(
+                                        isDesktop,
+                                        desktopScale: scale,
+                                      ),
                                     ),
                                   ]
                                 : null,
                           ),
                         ),
-                        const SizedBox(width: 8),
+                        SizedBox(width: 8.rw(isDesktop, desktopScale: scale)),
                         Text(
                           widget.isReceiving
                               ? "SCANNING FOR PEERS"
                               : "RADAR OFFLINE",
                           style: TextStyle(
                             color: AppColors.textMuted,
-                            fontSize: 10.rx(isDesktop),
+                            fontSize: 10.rx(isDesktop, desktopScale: scale),
                             fontWeight: FontWeight.w700,
                             letterSpacing: 1.2,
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
+                    SizedBox(height: 8.rh(isDesktop, desktopScale: scale)),
                     Container(
-                      width: 80,
+                      width: 80.rw(isDesktop, desktopScale: scale),
                       height: 1,
                       color: Colors.white.withAlpha(15),
                     ),
-                    const SizedBox(height: 8),
+                    SizedBox(height: 8.rh(isDesktop, desktopScale: scale)),
                     InkWell(
                       onTap: widget.onManualIpTap,
-                      borderRadius: BorderRadius.circular(4),
+                      borderRadius: BorderRadius.circular(
+                        4.rr(isDesktop, desktopScale: scale),
+                      ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(
                             Icons.settings_ethernet_rounded,
-                            size: 13.rx(isDesktop),
+                            size: 13.rx(isDesktop, desktopScale: scale),
                             color: AppColors.primary,
                           ),
-                          const SizedBox(width: 4),
+                          SizedBox(width: 4.rw(isDesktop, desktopScale: scale)),
                           Text(
                             "MANUAL IP",
                             style: TextStyle(
                               color: AppColors.primary,
-                              fontSize: 10.rx(isDesktop),
+                              fontSize: 10.rx(isDesktop, desktopScale: scale),
                               fontWeight: FontWeight.w700,
                               letterSpacing: 1.0,
                             ),
@@ -728,8 +874,8 @@ class _ScanStatusBarState extends State<_ScanStatusBar>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Container(
-                      width: 6.rx(isDesktop),
-                      height: 6.rx(isDesktop),
+                      width: 6.rx(isDesktop, desktopScale: scale),
+                      height: 6.rx(isDesktop, desktopScale: scale),
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: widget.isReceiving
@@ -739,48 +885,56 @@ class _ScanStatusBarState extends State<_ScanStatusBar>
                             ? [
                                 BoxShadow(
                                   color: AppColors.primary.withAlpha(100),
-                                  blurRadius: 4,
-                                  spreadRadius: 1,
+                                  blurRadius: 4.rr(
+                                    isDesktop,
+                                    desktopScale: scale,
+                                  ),
+                                  spreadRadius: 1.rr(
+                                    isDesktop,
+                                    desktopScale: scale,
+                                  ),
                                 ),
                               ]
                             : null,
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    SizedBox(width: 8.rw(isDesktop, desktopScale: scale)),
                     Text(
                       widget.isReceiving
                           ? "SCANNING FOR PEERS"
                           : "RADAR OFFLINE",
                       style: TextStyle(
                         color: AppColors.textMuted,
-                        fontSize: 10.rx(isDesktop),
+                        fontSize: 10.rx(isDesktop, desktopScale: scale),
                         fontWeight: FontWeight.w700,
                         letterSpacing: 1.2,
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    SizedBox(width: 12.rw(isDesktop, desktopScale: scale)),
                     Container(
                       width: 1,
-                      height: 12,
+                      height: 12.rh(isDesktop, desktopScale: scale),
                       color: Colors.white.withAlpha(10),
                     ),
-                    const SizedBox(width: 12),
+                    SizedBox(width: 12.rw(isDesktop, desktopScale: scale)),
                     InkWell(
                       onTap: widget.onManualIpTap,
-                      borderRadius: BorderRadius.circular(4),
+                      borderRadius: BorderRadius.circular(
+                        4.rr(isDesktop, desktopScale: scale),
+                      ),
                       child: Row(
                         children: [
                           Icon(
                             Icons.settings_ethernet_rounded,
-                            size: 13.rx(isDesktop),
+                            size: 13.rx(isDesktop, desktopScale: scale),
                             color: AppColors.primary,
                           ),
-                          const SizedBox(width: 4),
+                          SizedBox(width: 4.rw(isDesktop, desktopScale: scale)),
                           Text(
                             "MANUAL IP",
                             style: TextStyle(
                               color: AppColors.primary,
-                              fontSize: 10.rx(isDesktop),
+                              fontSize: 10.rx(isDesktop, desktopScale: scale),
                               fontWeight: FontWeight.w700,
                               letterSpacing: 1.0,
                             ),

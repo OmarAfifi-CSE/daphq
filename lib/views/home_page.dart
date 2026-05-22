@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:window_manager/window_manager.dart';
 import '../core/app_colors.dart';
+import '../core/responsive_utils.dart';
 import '../services/update_service.dart';
 import '../core/app_constants.dart';
 import 'widgets/common/info_dialog.dart';
@@ -267,24 +268,26 @@ class _HomePageState extends State<HomePage> {
                         title: ShaderMask(
                           shaderCallback: (bounds) => const LinearGradient(
                             colors: [
-                              Color(0xFFE3F2FD), // Icy soft white
-                              AppColors.primaryLight, // Cyber blue accent
+                              Color.fromARGB(185, 195, 237, 255),
+                              Color(0xFF80D8FF), // Vibrant neon cyan/ice blue
+                              AppColors.primary, // Electric primary blue
                             ],
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
+                            begin: Alignment.centerLeft,
+                            end: Alignment.centerRight,
                           ).createShader(bounds),
                           child: Text(
                             "DAPHQ",
                             style: TextStyle(
                               fontSize: 22.sp,
                               fontWeight: FontWeight.w900,
-                              letterSpacing: 2.0,
+                              letterSpacing: 3.5,
                               fontFamily: 'Roboto',
                               color: Colors.white,
                               shadows: [
                                 Shadow(
-                                  color: AppColors.primary.withAlpha(140),
-                                  blurRadius: 10,
+                                  color: AppColors.primary.withAlpha(100),
+                                  blurRadius: 12,
+                                  offset: const Offset(0, 1),
                                 ),
                               ],
                             ),
@@ -359,12 +362,17 @@ class _HomePageState extends State<HomePage> {
                                         Platform.isWindows ||
                                         Platform.isMacOS ||
                                         Platform.isLinux;
+                                    final double desktopScale = isDesktopOS
+                                        ? context.desktopScale
+                                        : 1.0;
+                                    final double maxDashWidth =
+                                        500.0 * desktopScale;
 
                                     return Align(
                                       alignment: Alignment.center,
                                       child: ConstrainedBox(
-                                        constraints: const BoxConstraints(
-                                          maxWidth: 500,
+                                        constraints: BoxConstraints(
+                                          maxWidth: maxDashWidth,
                                         ),
                                         child: SingleChildScrollView(
                                           physics: isDesktopOS

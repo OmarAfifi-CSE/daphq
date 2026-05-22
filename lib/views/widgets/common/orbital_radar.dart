@@ -50,6 +50,7 @@ class _OrbitalRadarState extends State<OrbitalRadar>
   @override
   Widget build(BuildContext context) {
     final isDesktop = widget.isDesktop;
+    final scale = isDesktop ? context.desktopScale : 1.0;
     final cubit = context.read<TransferCubit>();
     final double radarSize = widget.size;
 
@@ -81,24 +82,26 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                         angle: _rotationController.value * 2.0 * math.pi,
                         isScanning: true,
                         color: AppColors.primary,
+                        scale: scale,
                       ),
                     );
                   },
                 ),
 
                 // 2. Cardinal direction labels
-                ..._buildCardinalLabels(radarSize, isDesktop),
+                ..._buildCardinalLabels(radarSize, isDesktop, scale),
 
                 // 3. Central Pulse Halo — active only when receiving
                 if (state.isReceiving)
                   AnimatedBuilder(
                     animation: _pulseController,
                     builder: (context, child) {
-                      final double scale = 1.0 + (_pulseController.value * 0.3);
+                      final double scaleVal =
+                          1.0 + (_pulseController.value * 0.3);
                       final double opacity =
                           0.6 + (0.4 * (1.0 - _pulseController.value));
                       return Transform.scale(
-                        scale: scale,
+                        scale: scaleVal,
                         child: Opacity(
                           opacity: opacity,
                           child: Container(
@@ -122,11 +125,12 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                   AnimatedBuilder(
                     animation: _pulseController,
                     builder: (context, child) {
-                      final double scale = 1.0 + (_pulseController.value * 0.5);
+                      final double scaleVal =
+                          1.0 + (_pulseController.value * 0.5);
                       final double opacity =
                           0.3 * (1.0 - _pulseController.value);
                       return Transform.scale(
-                        scale: scale,
+                        scale: scaleVal,
                         child: Opacity(
                           opacity: opacity.clamp(0.0, 1.0),
                           child: Container(
@@ -148,8 +152,8 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                 // 4. Orbiting Devices
                 ...List.generate(devices.length, (index) {
                   final device = devices[index];
-                  final nodeWidth = 60.0.rx(isDesktop);
-                  final nodeHeight = 75.0.rx(isDesktop);
+                  final nodeWidth = 60.0.rx(isDesktop, desktopScale: scale);
+                  final nodeHeight = 75.0.rx(isDesktop, desktopScale: scale);
                   final orbitRadius = (radarSize * 0.36).rx(isDesktop);
 
                   final String lowerName = device.name.toLowerCase();
@@ -181,7 +185,7 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                           math.sin(
                             elapsedSeconds * 2.0 * math.pi / 4.0 + index,
                           ) *
-                          3.0.rx(isDesktop);
+                          3.0.rx(isDesktop, desktopScale: scale);
 
                       final double x =
                           (orbitRadius + bobbing) * math.cos(angle);
@@ -213,8 +217,14 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                                 children: [
                                   // Device node with glass-bubble effect
                                   Container(
-                                    width: 44.rx(isDesktop),
-                                    height: 44.rx(isDesktop),
+                                    width: 44.rx(
+                                      isDesktop,
+                                      desktopScale: scale,
+                                    ),
+                                    height: 44.rx(
+                                      isDesktop,
+                                      desktopScale: scale,
+                                    ),
                                     decoration: BoxDecoration(
                                       shape: BoxShape.circle,
                                       gradient: LinearGradient(
@@ -230,8 +240,14 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                                           color: AppColors.primary.withAlpha(
                                             25,
                                           ),
-                                          blurRadius: 12,
-                                          spreadRadius: 2,
+                                          blurRadius: 12.rr(
+                                            isDesktop,
+                                            desktopScale: scale,
+                                          ),
+                                          spreadRadius: 2.rr(
+                                            isDesktop,
+                                            desktopScale: scale,
+                                          ),
                                         ),
                                       ],
                                       border: Border.all(
@@ -245,11 +261,19 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                                         color: AppColors.primaryLight.withAlpha(
                                           200,
                                         ),
-                                        size: 18.rx(isDesktop),
+                                        size: 18.rx(
+                                          isDesktop,
+                                          desktopScale: scale,
+                                        ),
                                       ),
                                     ),
                                   ),
-                                  SizedBox(height: 5.rh(isDesktop)),
+                                  SizedBox(
+                                    height: 5.rh(
+                                      isDesktop,
+                                      desktopScale: scale,
+                                    ),
+                                  ),
                                   // Label Text
                                   Expanded(
                                     child: Text(
@@ -258,7 +282,10 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                                       overflow: TextOverflow.ellipsis,
                                       style: TextStyle(
                                         color: AppColors.textSecondary,
-                                        fontSize: 10.rx(isDesktop),
+                                        fontSize: 10.rx(
+                                          isDesktop,
+                                          desktopScale: scale,
+                                        ),
                                         fontWeight: FontWeight.w600,
                                         shadows: const [
                                           Shadow(
@@ -360,7 +387,11 @@ class _OrbitalRadarState extends State<OrbitalRadar>
     );
   }
 
-  List<Widget> _buildCardinalLabels(double radarSize, bool isDesktop) {
+  List<Widget> _buildCardinalLabels(
+    double radarSize,
+    bool isDesktop,
+    double scale,
+  ) {
     final labels = ['N', 'E', 'S', 'W'];
     final offsets = [
       Offset(0, -(radarSize * 0.48).rx(isDesktop)),
@@ -370,13 +401,19 @@ class _OrbitalRadarState extends State<OrbitalRadar>
     ];
     return List.generate(4, (i) {
       return Positioned(
-        left: (radarSize / 2).rx(isDesktop) + offsets[i].dx - 6,
-        top: (radarSize / 2).rx(isDesktop) + offsets[i].dy - 6,
+        left:
+            (radarSize / 2).rx(isDesktop) +
+            offsets[i].dx -
+            6.rw(isDesktop, desktopScale: scale),
+        top:
+            (radarSize / 2).rx(isDesktop) +
+            offsets[i].dy -
+            6.rh(isDesktop, desktopScale: scale),
         child: Text(
           labels[i],
           style: TextStyle(
             color: AppColors.textMuted.withAlpha(80),
-            fontSize: 9.rx(isDesktop),
+            fontSize: 9.rx(isDesktop, desktopScale: scale),
             fontWeight: FontWeight.w700,
             letterSpacing: 1.0,
           ),
@@ -399,11 +436,13 @@ class RadarSweepPainter extends CustomPainter {
   final double angle;
   final bool isScanning;
   final Color color;
+  final double scale;
 
   RadarSweepPainter({
     required this.angle,
     required this.isScanning,
     required this.color,
+    required this.scale,
   });
 
   @override
@@ -451,7 +490,7 @@ class RadarSweepPainter extends CustomPainter {
         final a = i * math.pi / 2;
         canvas.drawCircle(
           Offset(center.dx + r * math.cos(a), center.dy + r * math.sin(a)),
-          1.5,
+          1.5 * scale,
           dotPaint,
         );
       }
@@ -493,7 +532,7 @@ class RadarSweepPainter extends CustomPainter {
             center.dx + trailR * math.cos(trailAngle),
             center.dy + trailR * math.sin(trailAngle),
           ),
-          1.2,
+          1.2 * scale,
           trailPaint,
         );
       }
@@ -504,7 +543,8 @@ class RadarSweepPainter extends CustomPainter {
   bool shouldRepaint(covariant RadarSweepPainter oldDelegate) {
     return oldDelegate.angle != angle ||
         oldDelegate.isScanning != isScanning ||
-        oldDelegate.color != color;
+        oldDelegate.color != color ||
+        oldDelegate.scale != scale;
   }
 }
 

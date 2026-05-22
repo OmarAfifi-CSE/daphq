@@ -35,10 +35,9 @@ class _AnimatedPressButtonState extends State<AnimatedPressButton>
       duration: const Duration(milliseconds: 120),
       reverseDuration: const Duration(milliseconds: 200),
     );
-    _scaleAnimation = Tween<double>(
-      begin: 1.0,
-      end: 0.96,
-    ).animate(CurvedAnimation(parent: _pressController, curve: Curves.easeInOut));
+    _scaleAnimation = Tween<double>(begin: 1.0, end: 0.96).animate(
+      CurvedAnimation(parent: _pressController, curve: Curves.easeInOut),
+    );
     _shimmerController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1800),
@@ -78,8 +77,9 @@ class _AnimatedPressButtonState extends State<AnimatedPressButton>
 
   @override
   Widget build(BuildContext context) {
-    final double minHeight = 48.0.rh(widget.isDesktop);
-    final double borderRadius = 14.0.rr(widget.isDesktop);
+    final double scale = widget.isDesktop ? context.desktopScale : 1.0;
+    final double minHeight = 48.0.rh(widget.isDesktop, desktopScale: scale);
+    final double borderRadius = 14.0.rr(widget.isDesktop, desktopScale: scale);
 
     return MouseRegion(
       onEnter: (_) => setState(() => _isHovered = true),
@@ -107,7 +107,10 @@ class _AnimatedPressButtonState extends State<AnimatedPressButton>
                       end: Alignment.bottomRight,
                     )
                   : LinearGradient(
-                      colors: [Colors.white.withAlpha(10), Colors.white.withAlpha(6)],
+                      colors: [
+                        Colors.white.withAlpha(10),
+                        Colors.white.withAlpha(6),
+                      ],
                     ),
               boxShadow: _isEnabled
                   ? [
@@ -136,8 +139,14 @@ class _AnimatedPressButtonState extends State<AnimatedPressButton>
                           return ShaderMask(
                             shaderCallback: (bounds) {
                               return LinearGradient(
-                                begin: Alignment(-1.0 + 3.0 * _shimmerController.value, 0),
-                                end: Alignment(-0.5 + 3.0 * _shimmerController.value, 0),
+                                begin: Alignment(
+                                  -1.0 + 3.0 * _shimmerController.value,
+                                  0,
+                                ),
+                                end: Alignment(
+                                  -0.5 + 3.0 * _shimmerController.value,
+                                  0,
+                                ),
                                 colors: [
                                   Colors.transparent,
                                   Colors.white.withAlpha(25),
@@ -146,9 +155,7 @@ class _AnimatedPressButtonState extends State<AnimatedPressButton>
                               ).createShader(bounds);
                             },
                             blendMode: BlendMode.srcATop,
-                            child: Container(
-                              color: Colors.white.withAlpha(15),
-                            ),
+                            child: Container(color: Colors.white.withAlpha(15)),
                           );
                         },
                       ),
@@ -156,12 +163,15 @@ class _AnimatedPressButtonState extends State<AnimatedPressButton>
                   // Child content perfectly centered with padding
                   Padding(
                     padding: EdgeInsets.symmetric(
-                      vertical: 8.rh(widget.isDesktop),
-                      horizontal: 12.rw(widget.isDesktop),
+                      vertical: 8.rh(widget.isDesktop, desktopScale: scale),
+                      horizontal: 12.rw(widget.isDesktop, desktopScale: scale),
                     ),
                     child: Center(
                       widthFactor: 1.0,
-                      child: widget.child,
+                      child: Transform.translate(
+                        offset: Offset(0, widget.isDesktop ? -1.5 : 0),
+                        child: widget.child,
+                      ),
                     ),
                   ),
                 ],

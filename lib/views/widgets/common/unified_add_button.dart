@@ -136,13 +136,14 @@ class _UnifiedAddButtonState extends State<UnifiedAddButton> {
         Platform.isWindows ||
         Platform.isMacOS ||
         Platform.isLinux;
+    final scale = isDesktop ? context.desktopScale : 1.0;
 
     if (!isDesktop) {
       return AnimatedPressButton(
         isDesktop: false,
         onPressed: () => _showMobileMenu(context, cubit),
         gradientColors: const [AppColors.primary, AppColors.primaryLight],
-        child: _buildButtonContent(false),
+        child: _buildButtonContent(false, 1.0),
       );
     }
 
@@ -154,11 +155,13 @@ class _UnifiedAddButtonState extends State<UnifiedAddButton> {
       ),
       child: PopupMenuButton<int>(
         key: _menuKey,
-        offset: Offset(0, 55.rh(widget.isDesktop)),
+        offset: Offset(0, 55.rh(isDesktop, desktopScale: scale)),
         color: AppColors.dialogBackground,
         elevation: 20,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18.rr(widget.isDesktop)),
+          borderRadius: BorderRadius.circular(
+            18.rr(isDesktop, desktopScale: scale),
+          ),
           side: BorderSide(color: Colors.white.withAlpha(10), width: 1),
         ),
         onSelected: (value) => _handleSelection(value, cubit),
@@ -168,51 +171,59 @@ class _UnifiedAddButtonState extends State<UnifiedAddButton> {
             Icons.insert_drive_file_outlined,
             "All Files",
             "Browse any file",
+            isDesktop,
+            scale,
           ),
           _buildDesktopItem(
             2,
             Icons.folder_outlined,
             "Folders",
             "Select full directories",
+            isDesktop,
+            scale,
           ),
           _buildDesktopItem(
             3,
             Icons.image_outlined,
             "Images",
             "Gallery photos",
+            isDesktop,
+            scale,
           ),
           _buildDesktopItem(
             4,
             Icons.movie_outlined,
             "Videos",
             "Camera recordings",
+            isDesktop,
+            scale,
           ),
         ],
         child: AnimatedPressButton(
-          isDesktop: widget.isDesktop,
+          isDesktop: isDesktop,
           onPressed: () => _menuKey.currentState?.showButtonMenu(),
           gradientColors: const [AppColors.primary, AppColors.primaryLight],
-          child: _buildButtonContent(widget.isDesktop),
+          child: _buildButtonContent(isDesktop, scale),
         ),
       ),
     );
   }
 
-  Widget _buildButtonContent(bool isDesktop) {
+  Widget _buildButtonContent(bool isDesktop, double scale) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Icon(
           Icons.add_box_rounded,
           color: Colors.white,
-          size: 24.rx(isDesktop),
+          size: 24.rx(isDesktop, desktopScale: scale),
         ),
-        SizedBox(width: 12.rw(isDesktop)),
+        SizedBox(width: 12.rw(isDesktop, desktopScale: scale)),
         Text(
           "Add Content",
           style: TextStyle(
             color: Colors.white,
-            fontSize: 16.rx(isDesktop),
+            fontSize: 16.rx(isDesktop, desktopScale: scale),
             fontWeight: FontWeight.w700,
             letterSpacing: 0.5,
           ),
@@ -221,7 +232,7 @@ class _UnifiedAddButtonState extends State<UnifiedAddButton> {
         Icon(
           Icons.keyboard_arrow_down_rounded,
           color: Colors.white70,
-          size: 20.rx(isDesktop),
+          size: 20.rx(isDesktop, desktopScale: scale),
         ),
       ],
     );
@@ -232,25 +243,32 @@ class _UnifiedAddButtonState extends State<UnifiedAddButton> {
     IconData icon,
     String label,
     String sub,
+    bool isDesktop,
+    double scale,
   ) {
-    final isDesktop = widget.isDesktop;
     return PopupMenuItem(
       value: value,
       padding: EdgeInsets.symmetric(
-        horizontal: 18.rw(isDesktop),
-        vertical: 10.rh(isDesktop),
+        horizontal: 18.rw(isDesktop, desktopScale: scale),
+        vertical: 10.rh(isDesktop, desktopScale: scale),
       ),
       child: Row(
         children: [
           Container(
-            padding: EdgeInsets.all(10.rr(isDesktop)),
+            padding: EdgeInsets.all(10.rr(isDesktop, desktopScale: scale)),
             decoration: BoxDecoration(
               color: AppColors.primary.withAlpha(15),
-              borderRadius: BorderRadius.circular(12.rr(isDesktop)),
+              borderRadius: BorderRadius.circular(
+                12.rr(isDesktop, desktopScale: scale),
+              ),
             ),
-            child: Icon(icon, color: AppColors.primary, size: 22.rx(isDesktop)),
+            child: Icon(
+              icon,
+              color: AppColors.primary,
+              size: 22.rx(isDesktop, desktopScale: scale),
+            ),
           ),
-          SizedBox(width: 18.rw(isDesktop)),
+          SizedBox(width: 18.rw(isDesktop, desktopScale: scale)),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -259,16 +277,16 @@ class _UnifiedAddButtonState extends State<UnifiedAddButton> {
                 label,
                 style: TextStyle(
                   color: AppColors.textPrimary,
-                  fontSize: 15.rx(isDesktop),
+                  fontSize: 15.rx(isDesktop, desktopScale: scale),
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              SizedBox(height: 2.rh(isDesktop)),
+              SizedBox(height: 2.rh(isDesktop, desktopScale: scale)),
               Text(
                 sub,
                 style: TextStyle(
                   color: AppColors.textMuted,
-                  fontSize: 11.rx(isDesktop),
+                  fontSize: 11.rx(isDesktop, desktopScale: scale),
                 ),
               ),
             ],

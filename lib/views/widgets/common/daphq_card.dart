@@ -42,13 +42,16 @@ class _DaphqCardState extends State<DaphqCard>
   Widget build(BuildContext context) {
     final glow = widget.glowColor ?? AppColors.primary;
     final isDesktop = widget.isDesktop;
+    final double scale = isDesktop ? context.desktopScale : 1.0;
 
     return AnimatedBuilder(
       animation: _borderController,
       builder: (context, child) {
         return Container(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18.0.rr(isDesktop)),
+            borderRadius: BorderRadius.circular(
+              18.0.rr(isDesktop, desktopScale: scale),
+            ),
             boxShadow: [
               BoxShadow(
                 color: glow.withAlpha(18),
@@ -58,14 +61,20 @@ class _DaphqCardState extends State<DaphqCard>
             ],
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(18.0.rr(isDesktop)),
+            borderRadius: BorderRadius.circular(
+              18.0.rr(isDesktop, desktopScale: scale),
+            ),
             child: BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 20.0, sigmaY: 20.0),
               child: Container(
-                padding: EdgeInsets.all(14.0.rw(isDesktop)),
+                padding: EdgeInsets.all(
+                  14.0.rw(isDesktop, desktopScale: scale),
+                ),
                 decoration: BoxDecoration(
                   color: AppColors.cardOverlay,
-                  borderRadius: BorderRadius.circular(18.0.rr(isDesktop)),
+                  borderRadius: BorderRadius.circular(
+                    18.0.rr(isDesktop, desktopScale: scale),
+                  ),
                   border: Border.all(
                     color: Colors.white.withAlpha(14),
                     width: 1.0,

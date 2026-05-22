@@ -17,17 +17,40 @@ class _AnimatedBackgroundState extends State<AnimatedBackground>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
   late final List<_Particle> _particles;
-  final math.Random _rng = math.Random(42);
   final Stopwatch _stopwatch = Stopwatch();
 
   @override
   void initState() {
     super.initState();
-    _particles = List.generate(widget.particleCount, (_) => _Particle(_rng));
+    final math.Random rng = math.Random();
+
+    // Stratified sampling (Jittered Grid) to guarantee a perfectly balanced,
+    // uniform spread across the entire screen without any clumping or empty gaps.
+    final int count = widget.particleCount;
+    final int cols = math.sqrt(count * 1.6).round().clamp(1, count);
+    final int rows = (count / cols).ceil();
+
+    _particles = [];
+    for (int i = 0; i < count; i++) {
+      final int col = i % cols;
+      final int row = i ~/ cols;
+
+      final double cellWidth = 1.0 / cols;
+      final double cellHeight = 1.0 / rows;
+
+      // Place each particle in its designated cell with a random organic jitter offset
+      final double x = (col + rng.nextDouble()) * cellWidth;
+      final double y = (row + rng.nextDouble()) * cellHeight;
+
+      _particles.add(
+        _Particle(x: x.clamp(0.0, 1.0), y: y.clamp(0.0, 1.0), rng: rng),
+      );
+    }
+
     _stopwatch.start();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 20),
+      duration: const Duration(seconds: 10),
     )..repeat();
   }
 
@@ -47,7 +70,7 @@ class _AnimatedBackgroundState extends State<AnimatedBackground>
             return CustomPaint(
               painter: _ParticlePainter(
                 particles: _particles,
-                time: _stopwatch.elapsedMilliseconds / 20000.0,
+                time: _stopwatch.elapsedMilliseconds / 10000.0,
               ),
               size: Size.infinite,
             );
@@ -66,10 +89,8 @@ class _Particle {
   final double opacity;
   final double phase; // phase offset for unique drift pattern
 
-  _Particle(math.Random rng)
-    : x = rng.nextDouble(),
-      y = rng.nextDouble(),
-      size = 0.5 + rng.nextDouble() * 1.5,
+  _Particle({required this.x, required this.y, required math.Random rng})
+    : size = 0.5 + rng.nextDouble() * 1.5,
       speed = 0.2 + rng.nextDouble() * 0.6,
       opacity = 0.15 + rng.nextDouble() * 0.35,
       phase = rng.nextDouble() * math.pi * 2;
@@ -97,6 +118,11 @@ class _ParticlePainter extends CustomPainter {
       centerGradient,
     );
 
+    // 1. Calculate positions of all particles first
+    final List<Offset> positions = [];
+    final List<double> opacities = [];
+    final List<double> sizes = [];
+
     for (final p in particles) {
       final double t = time * p.speed;
       final double dx = math.sin(t * math.pi * 2 + p.phase) * 20;
@@ -106,8 +132,54 @@ class _ParticlePainter extends CustomPainter {
       final double py =
           (p.y * size.height + dy + t * size.height * 0.05) % size.height;
 
-      paint.color = AppColors.primaryLight.withAlpha((p.opacity * 255).toInt());
-      canvas.drawCircle(Offset(px, py), p.size, paint);
+      positions.add(Offset(px, py));
+      opacities.add(p.opacity);
+      sizes.add(p.size);
+    }
+
+    // 2. Draw neural network connection lines
+    final linePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.8; // Thin, delicate lines for an elegant, premium look
+
+    const double maxDistance = 80.0; // Compact connection range
+
+    for (int i = 0; i < positions.length; i++) {
+      final posA = positions[i];
+      for (int j = i + 1; j < positions.length; j++) {
+        final posB = positions[j];
+
+        // Optimize: skip calculation if bounding box dx or dy exceeds threshold
+        final double dx = posA.dx - posB.dx;
+        if (dx.abs() > maxDistance) continue;
+
+        final double dy = posA.dy - posB.dy;
+        if (dy.abs() > maxDistance) continue;
+
+        final double distance = math.sqrt(dx * dx + dy * dy);
+        if (distance < maxDistance) {
+          final double opacityFactor = 1.0 - (distance / maxDistance);
+          final double finalOpacity =
+              opacityFactor * (opacities[i] + opacities[j]) * 0.22;
+
+          if (finalOpacity > 0.01) {
+            linePaint.color = AppColors.primaryLight.withAlpha(
+              (finalOpacity * 255).toInt(),
+            );
+            canvas.drawLine(posA, posB, linePaint);
+          }
+        }
+      }
+    }
+
+    // 3. Draw the particles (nodes) themselves on top of the lines
+    for (int i = 0; i < positions.length; i++) {
+      // Soft, premium opacity and slight size boost for perfect harmony
+      final double particleOpacity = (opacities[i] * 1.1).clamp(0.0, 1.0);
+      paint.color = AppColors.primaryLight.withAlpha(
+        (particleOpacity * 255).toInt(),
+      );
+      canvas.drawCircle(positions[i], sizes[i] * 1.3, paint); // Elegant size
     }
   }
 
