@@ -11,6 +11,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import '../controllers/sender_controller.dart';
 import '../controllers/receiver_controller.dart';
 import '../services/discovery_service.dart';
+import '../services/history_service.dart';
 import 'package:file_picker/file_picker.dart';
 import '../models/transfer_model.dart';
 import 'transfer_state.dart';
@@ -342,7 +343,7 @@ class TransferCubit extends Cubit<TransferState> {
     _receiver.startReceiver(
       saveDirectory: state.receiveFolder!,
       deviceName: state.deviceName,
-      onUpdate: (model) {
+      onUpdate: (model) async {
         bool isBusy = false;
         String s = model.status.toLowerCase();
         if (s.contains("ready & waiting") ||
@@ -353,6 +354,57 @@ class TransferCubit extends Cubit<TransferState> {
           isBusy = false;
         } else if (s.contains("receiving data") || s.contains("connecting")) {
           isBusy = true;
+        }
+
+        final bool wasActive = state.isReceivingActive;
+
+        // Write log when transitioning from busy to idle (await it first!)
+        if (wasActive && !isBusy) {
+          final String status = s.contains("complete")
+              ? "success"
+              : (s.contains("cancelled") || s.contains("abort")
+                    ? "cancelled"
+                    : "failed");
+
+          final List<dynamic> filesList =
+              _receiver.lastReceivedMetadata?["files"] ?? [];
+          if (filesList.isNotEmpty) {
+            final Map<String, double> items = {};
+            for (final f in filesList) {
+              final String pathStr = f["path"] as String;
+              final int size = f["size"] as int;
+              // Split path and take first element (the top-level file or directory name)
+              final String topLevelName = p.split(pathStr).first;
+              items[topLevelName] =
+                  (items[topLevelName] ?? 0.0) + (size / 1024 / 1024);
+            }
+
+            final List<HistoryEntryInput> entries = [];
+            for (final entry in items.entries) {
+              entries.add(
+                HistoryEntryInput(
+                  fileName: entry.key,
+                  fileSizeMB: entry.value,
+                  direction: 'receive',
+                  status: status,
+                  localPath: status == 'success'
+                      ? p.join(state.receiveFolder!, entry.key)
+                      : null,
+                ),
+              );
+            }
+            await HistoryService.addEntries(entries);
+          } else {
+            if (model.fileName.isNotEmpty && model.totalSize > 0) {
+              await HistoryService.addEntry(
+                fileName: model.fileName,
+                fileSizeMB: model.totalSize,
+                direction: 'receive',
+                status: status,
+                localPath: status == 'success' ? state.receiveFolder : null,
+              );
+            }
+          }
         }
 
         if (!isClosed) {
@@ -550,6 +602,23 @@ class TransferCubit extends Cubit<TransferState> {
         },
       );
 
+      // Log success individually for each item atomically
+      if (itemsToSend.isNotEmpty) {
+        final List<HistoryEntryInput> entries = [];
+        for (final path in itemsToSend) {
+          final double sizeMB = await _getPathSizeMB(path);
+          entries.add(
+            HistoryEntryInput(
+              fileName: p.basename(path),
+              fileSizeMB: sizeMB,
+              direction: 'send',
+              status: 'success',
+            ),
+          );
+        }
+        await HistoryService.addEntries(entries);
+      }
+
       if (!isClosed) {
         emit(state.copyWith(isTransferring: false, clearFeedback: true));
       }
@@ -571,6 +640,29 @@ class TransferCubit extends Cubit<TransferState> {
         _stopForegroundService();
       }
     } catch (e) {
+      // Log failure/cancellation individually for each item atomically
+      if (itemsToSend.isNotEmpty) {
+        final String errorStr = e.toString().toLowerCase();
+        final String status =
+            errorStr.contains("cancelled") || errorStr.contains("abort")
+            ? "cancelled"
+            : "failed";
+
+        final List<HistoryEntryInput> entries = [];
+        for (final path in itemsToSend) {
+          final double sizeMB = await _getPathSizeMB(path);
+          entries.add(
+            HistoryEntryInput(
+              fileName: p.basename(path),
+              fileSizeMB: sizeMB,
+              direction: 'send',
+              status: status,
+            ),
+          );
+        }
+        await HistoryService.addEntries(entries);
+      }
+
       if (!isClosed) {
         emit(
           state.copyWith(
@@ -664,5 +756,30 @@ class TransferCubit extends Cubit<TransferState> {
         emit(state.copyWith(errorMessage: "Error opening folder: $e"));
       }
     }
+  }
+
+  Future<double> _getPathSizeMB(String path) async {
+    try {
+      if (await FileSystemEntity.isDirectory(path)) {
+        int totalBytes = 0;
+        await for (final entity in Directory(
+          path,
+        ).list(recursive: true, followLinks: false).handleError((_) {})) {
+          if (entity is File) {
+            try {
+              totalBytes += await entity.length();
+            } catch (_) {}
+          }
+        }
+        return totalBytes / 1024 / 1024;
+      } else {
+        final file = File(path);
+        if (await file.exists()) {
+          final len = await file.length();
+          return len / 1024 / 1024;
+        }
+      }
+    } catch (_) {}
+    return 0.0;
   }
 }

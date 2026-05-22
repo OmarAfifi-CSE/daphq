@@ -6,6 +6,7 @@ import '../core/app_colors.dart';
 import '../services/update_service.dart';
 import '../core/app_constants.dart';
 import 'widgets/common/info_dialog.dart';
+import 'widgets/common/history_dialog.dart';
 import 'widgets/common/transfer_progress_view.dart';
 import 'widgets/receiver/receiver_section.dart';
 import 'widgets/sender/sender_section.dart';
@@ -198,6 +199,14 @@ class _HomePageState extends State<HomePage> {
                 )
               : AppBar(
                   scrolledUnderElevation: 0,
+                  leading: IconButton(
+                    onPressed: () => InfoDialog.show(context),
+                    icon: const Icon(
+                      Icons.info_outline_rounded,
+                      color: Colors.white70,
+                    ),
+                    tooltip: "How to use",
+                  ),
                   title: Text(
                     AppConstants.appName,
                     style: TextStyle(color: Colors.white, fontSize: 20.sp),
@@ -208,12 +217,13 @@ class _HomePageState extends State<HomePage> {
                   iconTheme: IconThemeData(color: Colors.white, size: 24.sp),
                   actions: [
                     IconButton(
-                      onPressed: () => InfoDialog.show(context),
+                      onPressed: () =>
+                          HistoryDialog.show(context, isDesktop: false),
                       icon: const Icon(
-                        Icons.info_outline_rounded,
+                        Icons.history_rounded,
                         color: Colors.white70,
                       ),
-                      tooltip: "How to use",
+                      tooltip: "Transfer History",
                     ),
                   ],
                 ),
@@ -339,18 +349,40 @@ class _HomePageState extends State<HomePage> {
           ),
           floatingActionButton:
               (Platform.isWindows || Platform.isLinux || Platform.isMacOS)
-              ? FloatingActionButton.small(
-                  onPressed: () => InfoDialog.show(context),
-                  backgroundColor: AppColors.primary.withAlpha(25),
-                  elevation: 0,
-                  hoverElevation: 2,
-                  highlightElevation: 0,
-                  tooltip: "How to use",
-                  child: Icon(
-                    Icons.info_outline_rounded,
-                    color: AppColors.primaryLight.withAlpha(90),
-                    size: 20,
-                  ),
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    FloatingActionButton.small(
+                      heroTag: 'history_fab',
+                      onPressed: () =>
+                          HistoryDialog.show(context, isDesktop: true),
+                      backgroundColor: AppColors.primary.withAlpha(25),
+                      elevation: 0,
+                      hoverElevation: 2,
+                      highlightElevation: 0,
+                      tooltip: "Transfer History",
+                      child: Icon(
+                        Icons.history_rounded,
+                        color: AppColors.primaryLight.withAlpha(90),
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    FloatingActionButton.small(
+                      heroTag: 'info_fab',
+                      onPressed: () => InfoDialog.show(context),
+                      backgroundColor: AppColors.primary.withAlpha(25),
+                      elevation: 0,
+                      hoverElevation: 2,
+                      highlightElevation: 0,
+                      tooltip: "How to use",
+                      child: Icon(
+                        Icons.info_outline_rounded,
+                        color: AppColors.primaryLight.withAlpha(90),
+                        size: 20,
+                      ),
+                    ),
+                  ],
                 )
               : null,
         ),

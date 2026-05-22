@@ -50,15 +50,13 @@ void main(List<String> args) async {
 
   WidgetsFlutterBinding.ensureInitialized();
 
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-  ]);
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
   FlutterForegroundTask.initCommunicationPort();
 
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    systemNavigationBarColor: AppColors.background,
-  ));
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(systemNavigationBarColor: AppColors.background),
+  );
 
   if (Platform.isAndroid) {
     await requestAllPermissions();
@@ -202,7 +200,9 @@ class _AppInitState extends State<_AppInit> {
     super.initState();
     SharingService.init(context);
 
-    _externalFilesSubscription = DesktopIntegrationService.fileStream.listen((paths) {
+    _externalFilesSubscription = DesktopIntegrationService.fileStream.listen((
+      paths,
+    ) {
       if (mounted) {
         context.read<TransferCubit>().addExternalFiles(paths);
       }

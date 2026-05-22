@@ -19,6 +19,7 @@ class ReceiverController {
   bool _isCancelled = false;
   String? _cancelReason;
   String? _currentSenderDeviceName;
+  Map<String, dynamic>? lastReceivedMetadata;
 
   /// Starts a TCP server and waits for incoming file transfers.
   ///
@@ -170,6 +171,7 @@ class ReceiverController {
 
                 String jsonStr = utf8.decode(headerBuffer);
                 metadata = jsonDecode(jsonStr);
+                lastReceivedMetadata = metadata;
                 originalName = metadata?["fileName"];
                 _currentSenderDeviceName =
                     metadata?["senderDeviceName"] ?? "the other device";
