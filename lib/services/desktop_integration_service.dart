@@ -46,8 +46,9 @@ class DesktopIntegrationService {
         _writeArgsToQueue(queuePath, args);
       }
 
-      // Use standard Dart exit. Calling native ExitProcess via FFI can deadlock the Dart VM.
-      exit(0);
+      // Use native ExitProcess via FFI to guarantee instantaneous termination without Dart VM deadlocks.
+      _exitProcess(0);
+      return false; // Satisfy Dart static analysis (never reached since process exits)
     }
   }
 
@@ -115,10 +116,25 @@ class DesktopIntegrationService {
             IntPtr Function(Pointer<Void>, Int32, Pointer<Utf16>),
             int Function(Pointer<Void>, int, Pointer<Utf16>)
           >('CreateMutexW');
-      final name = 'Global\\Daphq_Unique_Mutex_Lock'.toNativeUtf16();
+      // Changed 'Global\\' to 'Local\\' because standard users don't have SeCreateGlobalPrivilege.
+      // Since explorer.exe and the app run in the same session, Local works perfectly.
+      final name = 'Local\\Daphq_Unique_Mutex_Lock'.toNativeUtf16();
       createMutex(nullptr, 1, name);
-      // Intentionally not freeing name or closing handle — held for process lifetime.
     } catch (_) {}
+  }
+
+  // Instantly terminates the process using Windows API to avoid Flutter/Dart VM shutdown hangs.
+  static void _exitProcess(int exitCode) {
+    try {
+      final kernel32 = DynamicLibrary.open('kernel32.dll');
+      final exitProcess = kernel32
+          .lookupFunction<Void Function(Uint32), void Function(int)>(
+            'ExitProcess',
+          );
+      exitProcess(exitCode);
+    } catch (_) {
+      exit(exitCode); // Fallback
+    }
   }
 
   static void dispose() {
