@@ -436,12 +436,20 @@ class TransferProgressView extends StatelessWidget {
                                   ),
                                 ],
                               ))
-                      : (state.isTransferring
+                      : ((state.isTransferring || state.isReceivingActive)
                             ? AnimatedPressButton(
                                 isDesktop: isDesktop,
                                 onPressed: () {
                                   CustomSnackBar.hide();
-                                  context.read<TransferCubit>().cancelSending();
+                                  if (state.isTransferring) {
+                                    context
+                                        .read<TransferCubit>()
+                                        .cancelSending();
+                                  } else {
+                                    context
+                                        .read<TransferCubit>()
+                                        .cancelReceiving();
+                                  }
                                 },
                                 gradientColors: const [
                                   AppColors.danger,
@@ -465,7 +473,9 @@ class TransferProgressView extends StatelessWidget {
                                       ),
                                     ),
                                     Text(
-                                      "Cancel Transfer",
+                                      state.isTransferring
+                                          ? "Cancel Transfer"
+                                          : "Cancel Receiving",
                                       style: TextStyle(
                                         color: Colors.white,
                                         fontSize: 14.0.rx(

@@ -268,8 +268,14 @@ class _HomePageState extends State<HomePage> {
                         title: ShaderMask(
                           shaderCallback: (bounds) => const LinearGradient(
                             colors: [
-                              Color.fromARGB(185, 195, 237, 255),
-                              Color(0xFF80D8FF), // Vibrant neon cyan/ice blue
+                              Color.fromARGB(
+                                255,
+                                128,
+                                217,
+                                255,
+                              ), // Vibrant neon cyan/ice blue
+                              AppColors
+                                  .primaryLight, // Premium theme light blue
                               AppColors.primary, // Electric primary blue
                             ],
                             begin: Alignment.centerLeft,

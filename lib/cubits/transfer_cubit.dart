@@ -762,6 +762,23 @@ class TransferCubit extends Cubit<TransferState> {
     }
   }
 
+  void cancelReceiving({String? reason}) {
+    _receiver.cancelActiveTransfer(reason: reason);
+    emit(
+      state.copyWith(
+        isReceivingActive: false,
+        clearFeedback: true,
+        model: TransferModel(
+          status: reason ?? "Transfer Cancelled",
+          transferred: state.model.transferred,
+          totalSize: state.model.totalSize,
+          progress: state.model.progress,
+          fileName: state.model.fileName,
+        ),
+      ),
+    );
+  }
+
   Future<void> openReceivedFolder() async {
     final folder = state.receiveFolder;
     if (folder == null) return;

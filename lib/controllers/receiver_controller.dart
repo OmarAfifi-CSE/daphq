@@ -18,6 +18,8 @@ class ReceiverController {
   IOSink? _activeSink;
   bool _isCancelled = false;
   String? _cancelReason;
+  bool _isActiveTransferCancelled = false;
+  String? _activeTransferCancelReason;
   String? _currentSenderDeviceName;
   Map<String, dynamic>? lastReceivedMetadata;
 
@@ -123,6 +125,8 @@ class ReceiverController {
         }
 
         _activeClient = client;
+        _isActiveTransferCancelled = false;
+        _activeTransferCancelReason = null;
         try {
           _activeClient!.setOption(SocketOption.tcpNoDelay, true);
         } catch (_) {}
@@ -523,6 +527,18 @@ class ReceiverController {
                 fileName: originalName ?? "",
               ),
             );
+          } else if (_isActiveTransferCancelled) {
+            onUpdate(
+              TransferModel(
+                status: _activeTransferCancelReason ?? "Transfer Cancelled.",
+                transferred: received / 1024 / 1024,
+                totalSize: totalExpectedBytes / 1024 / 1024,
+                progress: totalExpectedBytes > 0
+                    ? received / totalExpectedBytes
+                    : 0.0,
+                fileName: originalName ?? "",
+              ),
+            );
           } else if (e is SocketException) {
             onUpdate(
               TransferModel(
@@ -619,6 +635,28 @@ class ReceiverController {
       _isCancelled = false;
       onDone(); // Only call onDone when the method truly finishes (server closed)
     }
+  }
+
+  /// Cancels only the active transfer connection without stopping the server.
+  void cancelActiveTransfer({String? reason}) {
+    _isActiveTransferCancelled = true;
+    _activeTransferCancelReason = reason;
+
+    if (_activeClient != null) {
+      try {
+        _activeClient!.write(
+          "${jsonEncode({"status": "REJECTED", "reason": "CANCELLED"})}\n",
+        );
+        _activeClient!.flush().then((_) {
+          _activeClient?.destroy();
+          _activeClient = null;
+        });
+      } catch (_) {}
+    }
+
+    // CRITICAL: Close the active file sink to release file locks
+    _activeSink?.close();
+    _activeSink = null;
   }
 
   /// Stops the receiver server and cancels any active transfer.
