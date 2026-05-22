@@ -276,23 +276,32 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                                   ),
                                   // Label Text
                                   Expanded(
-                                    child: Text(
-                                      device.name,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: AppColors.textSecondary,
-                                        fontSize: 10.rx(
-                                          isDesktop,
-                                          desktopScale: scale,
-                                        ),
-                                        fontWeight: FontWeight.w600,
-                                        shadows: const [
-                                          Shadow(
-                                            color: Colors.black,
-                                            blurRadius: 4,
+                                    child: OverflowBox(
+                                      maxWidth: 180.0.rx(
+                                        isDesktop,
+                                        desktopScale: scale,
+                                      ),
+                                      minWidth: 0,
+                                      child: Text(
+                                        device.name,
+                                        textAlign: TextAlign.center,
+                                        maxLines: 1,
+                                        softWrap: false,
+                                        overflow: TextOverflow.visible,
+                                        style: TextStyle(
+                                          color: AppColors.textSecondary,
+                                          fontSize: 10.rx(
+                                            isDesktop,
+                                            desktopScale: scale,
                                           ),
-                                        ],
+                                          fontWeight: FontWeight.w600,
+                                          shadows: const [
+                                            Shadow(
+                                              color: Colors.black,
+                                              blurRadius: 4,
+                                            ),
+                                          ],
+                                        ),
                                       ),
                                     ),
                                   ),

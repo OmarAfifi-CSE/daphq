@@ -628,6 +628,7 @@ class _GlowingProgressBar extends StatelessWidget {
             ),
             AnimatedContainer(
               duration: const Duration(milliseconds: 400),
+              curve: Curves.easeInOut,
               height: barHeight,
               width: progressWidth,
               constraints: BoxConstraints(
@@ -645,27 +646,6 @@ class _GlowingProgressBar extends StatelessWidget {
                 ],
               ),
             ),
-            // Leading edge glow particle
-            if (progress > 0.01 && progress < 1.0 && !isDone && !isFailed)
-              Positioned(
-                left: progressWidth - 4.rw(isDesktop, desktopScale: scale),
-                top: -2.rh(isDesktop, desktopScale: scale),
-                child: Container(
-                  width: 10.rw(isDesktop, desktopScale: scale),
-                  height: 10.rh(isDesktop, desktopScale: scale),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: colors.last.withAlpha(180),
-                    boxShadow: [
-                      BoxShadow(
-                        color: colors.first.withAlpha(150),
-                        blurRadius: 8.rr(isDesktop, desktopScale: scale),
-                        spreadRadius: 2.rr(isDesktop, desktopScale: scale),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
           ],
         );
       },

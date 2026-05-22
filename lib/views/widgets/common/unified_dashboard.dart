@@ -63,8 +63,17 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
 
     return BlocBuilder<TransferCubit, TransferState>(
       builder: (context, state) {
-        if (state.isAdvancedMode) {
-          return DaphqCard(
+        return AnimatedCrossFade(
+          duration: const Duration(milliseconds: 250),
+          firstCurve: Curves.linear,
+          secondCurve: Curves.linear,
+          sizeCurve: Curves.linear,
+          alignment: Alignment.topCenter,
+          crossFadeState: state.isAdvancedMode
+              ? CrossFadeState.showFirst
+              : CrossFadeState.showSecond,
+          firstChild: DaphqCard(
+            key: const ValueKey('advanced_mode_card'),
             isDesktop: isDesktop,
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -179,407 +188,421 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                 ),
               ],
             ),
-          );
-        }
-
-        // Simple mode — centered around the Orbit Radar
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // 1. TOP PANEL: Status capsule
-            DaphqCard(
-              isDesktop: isDesktop,
-              child: !isDesktop
-                  ? Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Row(
-                                children: [
-                                  SizedBox(
-                                    width: 3.rx(isDesktop, desktopScale: scale),
-                                  ),
-                                  _AnimatedStatusDot(
-                                    isOnline: state.isReceiving,
-                                    size: 10.rx(isDesktop, desktopScale: scale),
-                                  ),
-                                  SizedBox(
-                                    width: 18.rw(
-                                      isDesktop,
-                                      desktopScale: scale,
-                                    ),
-                                  ),
-                                  Expanded(
-                                    child: Text(
-                                      _balanceText(
-                                        state.isReceiving
-                                            ? "Discoverable as "
-                                            : "Offline (",
-                                        state.isReceiving
-                                            ? state.deviceName
-                                            : "${state.deviceName})",
-                                        threshold: 25,
-                                      ),
-                                      style: TextStyle(
-                                        color: AppColors.textPrimary,
-                                        fontSize: 14.rx(
-                                          isDesktop,
-                                          desktopScale: scale,
-                                        ),
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Switch.adaptive(
-                              value: state.isReceiving,
-                              activeThumbColor: Colors.white,
-                              activeTrackColor: AppColors.primary.withAlpha(60),
-                              inactiveThumbColor: AppColors.textMuted,
-                              inactiveTrackColor: Colors.white.withAlpha(8),
-                              onChanged: state.isTransferring
-                                  ? null
-                                  : (value) {
-                                      if (value) {
-                                        if (state.receiveFolder == null) {
-                                          CustomSnackBar.show(
-                                            context,
-                                            message:
-                                                AppConstants.selectFolderFirst,
-                                          );
-                                          return;
-                                        }
-                                        cubit.startReceiver();
-                                      } else {
-                                        cubit.stopReceiver();
-                                      }
-                                    },
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Divider(color: Colors.white.withAlpha(10), height: 1),
-                        const SizedBox(height: 10),
-                        GestureDetector(
-                          onTap: (state.isTransferring || _isPickingFolder)
-                              ? null
-                              : () async {
-                                  setState(() {
-                                    _isPickingFolder = true;
-                                  });
-                                  try {
-                                    String? path =
-                                        await FilePicker.getDirectoryPath();
-                                    if (path != null && mounted) {
-                                      cubit.setReceiveFolder(path);
-                                    }
-                                  } finally {
-                                    if (mounted) {
-                                      setState(() {
-                                        _isPickingFolder = false;
-                                      });
-                                    }
-                                  }
-                                },
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
+          ),
+          secondChild: Column(
+            key: const ValueKey('simple_mode_radar'),
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 1. TOP PANEL: Status capsule
+              DaphqCard(
+                isDesktop: isDesktop,
+                child: !isDesktop
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              _isPickingFolder
-                                  ? SizedBox(
-                                      width: 16.rx(
-                                        isDesktop,
-                                        desktopScale: scale,
-                                      ),
-                                      height: 16.rx(
-                                        isDesktop,
-                                        desktopScale: scale,
-                                      ),
-                                      child: const CircularProgressIndicator(
-                                        strokeWidth: 1.5,
-                                        valueColor:
-                                            AlwaysStoppedAnimation<Color>(
-                                              AppColors.primary,
-                                            ),
-                                      ),
-                                    )
-                                  : Icon(
-                                      Icons.folder_open_rounded,
-                                      color: AppColors.primary,
-                                      size: 16.rx(
-                                        isDesktop,
-                                        desktopScale: scale,
-                                      ),
-                                    ),
-                              SizedBox(
-                                width: 16.rw(isDesktop, desktopScale: scale),
-                              ),
                               Expanded(
-                                child: Text(
-                                  _isPickingFolder
-                                      ? _pickerLoadingText
-                                      : (state.receiveFolder == null
-                                            ? "Select download folder"
-                                            : _balanceText(
-                                                "Saving to: ",
-                                                state.receiveFolder!,
-                                              )),
-                                  maxLines: 3,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: _isPickingFolder
-                                        ? AppColors.primary
-                                        : AppColors.textSecondary,
-                                    fontSize: 11.rx(
-                                      isDesktop,
-                                      desktopScale: scale,
-                                    ),
-                                    fontWeight: _isPickingFolder
-                                        ? FontWeight.bold
-                                        : FontWeight.w500,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  // Animated status dot
-                                  _AnimatedStatusDot(
-                                    isOnline: state.isReceiving,
-                                    size: 8.rx(isDesktop, desktopScale: scale),
-                                  ),
-                                  SizedBox(
-                                    width: 8.rw(isDesktop, desktopScale: scale),
-                                  ),
-                                  Expanded(
-                                    child: Text(
-                                      _balanceText(
-                                        state.isReceiving
-                                            ? "Discoverable as "
-                                            : "Offline (",
-                                        state.isReceiving
-                                            ? state.deviceName
-                                            : "${state.deviceName})",
-                                        threshold: 35,
-                                      ),
-                                      style: TextStyle(
-                                        color: AppColors.textPrimary,
-                                        fontSize: 14.rx(
-                                          isDesktop,
-                                          desktopScale: scale,
-                                        ),
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              SizedBox(
-                                height: 5.rh(isDesktop, desktopScale: scale),
-                              ),
-                              GestureDetector(
-                                onTap:
-                                    (state.isTransferring || _isPickingFolder)
-                                    ? null
-                                    : () async {
-                                        setState(() {
-                                          _isPickingFolder = true;
-                                        });
-                                        try {
-                                          String? path =
-                                              await FilePicker.getDirectoryPath();
-                                          if (path != null && mounted) {
-                                            cubit.setReceiveFolder(path);
-                                          }
-                                        } finally {
-                                          if (mounted) {
-                                            setState(() {
-                                              _isPickingFolder = false;
-                                            });
-                                          }
-                                        }
-                                      },
                                 child: Row(
                                   children: [
-                                    _isPickingFolder
-                                        ? SizedBox(
-                                            width: 12.rx(
-                                              isDesktop,
-                                              desktopScale: scale,
-                                            ),
-                                            height: 12.rx(
-                                              isDesktop,
-                                              desktopScale: scale,
-                                            ),
-                                            child:
-                                                const CircularProgressIndicator(
-                                                  strokeWidth: 1.2,
-                                                  valueColor:
-                                                      AlwaysStoppedAnimation<
-                                                        Color
-                                                      >(AppColors.primary),
-                                                ),
-                                          )
-                                        : Icon(
-                                            Icons.folder_open_rounded,
-                                            color: AppColors.primary,
-                                            size: 12.rx(
-                                              isDesktop,
-                                              desktopScale: scale,
-                                            ),
-                                          ),
                                     SizedBox(
-                                      width: 4.rw(
+                                      width: 3.rx(
+                                        isDesktop,
+                                        desktopScale: scale,
+                                      ),
+                                    ),
+                                    _AnimatedStatusDot(
+                                      isOnline: state.isReceiving,
+                                      size: 10.rx(
+                                        isDesktop,
+                                        desktopScale: scale,
+                                      ),
+                                    ),
+                                    SizedBox(
+                                      width: 18.rw(
                                         isDesktop,
                                         desktopScale: scale,
                                       ),
                                     ),
                                     Expanded(
                                       child: Text(
-                                        _isPickingFolder
-                                            ? _pickerLoadingText
-                                            : (state.receiveFolder == null
-                                                  ? "Select download folder"
-                                                  : "Saving to: ${state.receiveFolder!}"),
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
+                                        _balanceText(
+                                          state.isReceiving
+                                              ? "Discoverable as "
+                                              : "Offline (",
+                                          state.isReceiving
+                                              ? state.deviceName
+                                              : "${state.deviceName})",
+                                          threshold: 25,
+                                        ),
                                         style: TextStyle(
-                                          color: _isPickingFolder
-                                              ? AppColors.primary
-                                              : AppColors.textSecondary,
-                                          fontSize: 11.rx(
+                                          color: AppColors.textPrimary,
+                                          fontSize: 14.rx(
                                             isDesktop,
                                             desktopScale: scale,
                                           ),
-                                          fontWeight: _isPickingFolder
-                                              ? FontWeight.bold
-                                              : FontWeight.w500,
+                                          fontWeight: FontWeight.w700,
                                         ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
+                              const SizedBox(width: 12),
+                              Switch.adaptive(
+                                value: state.isReceiving,
+                                activeThumbColor: Colors.white,
+                                activeTrackColor: AppColors.primary.withAlpha(
+                                  60,
+                                ),
+                                inactiveThumbColor: AppColors.textMuted,
+                                inactiveTrackColor: Colors.white.withAlpha(8),
+                                onChanged: state.isTransferring
+                                    ? null
+                                    : (value) {
+                                        if (value) {
+                                          if (state.receiveFolder == null) {
+                                            CustomSnackBar.show(
+                                              context,
+                                              message: AppConstants
+                                                  .selectFolderFirst,
+                                            );
+                                            return;
+                                          }
+                                          cubit.startReceiver();
+                                        } else {
+                                          cubit.stopReceiver();
+                                        }
+                                      },
+                              ),
                             ],
                           ),
-                        ),
-                        Switch.adaptive(
-                          value: state.isReceiving,
-                          activeThumbColor: Colors.white,
-                          activeTrackColor: AppColors.primary.withAlpha(60),
-                          inactiveThumbColor: AppColors.textMuted,
-                          inactiveTrackColor: Colors.white.withAlpha(8),
-                          onChanged: state.isTransferring
-                              ? null
-                              : (value) {
-                                  if (value) {
-                                    if (state.receiveFolder == null) {
-                                      CustomSnackBar.show(
-                                        context,
-                                        message: AppConstants.selectFolderFirst,
-                                      );
-                                      return;
+                          const SizedBox(height: 10),
+                          Divider(color: Colors.white.withAlpha(10), height: 1),
+                          const SizedBox(height: 10),
+                          GestureDetector(
+                            onTap: (state.isTransferring || _isPickingFolder)
+                                ? null
+                                : () async {
+                                    setState(() {
+                                      _isPickingFolder = true;
+                                    });
+                                    try {
+                                      String? path =
+                                          await FilePicker.getDirectoryPath();
+                                      if (path != null && mounted) {
+                                        cubit.setReceiveFolder(path);
+                                      }
+                                    } finally {
+                                      if (mounted) {
+                                        setState(() {
+                                          _isPickingFolder = false;
+                                        });
+                                      }
                                     }
-                                    cubit.startReceiver();
-                                  } else {
-                                    cubit.stopReceiver();
-                                  }
-                                },
-                        ),
-                      ],
-                    ),
-            ),
+                                  },
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                _isPickingFolder
+                                    ? SizedBox(
+                                        width: 16.rx(
+                                          isDesktop,
+                                          desktopScale: scale,
+                                        ),
+                                        height: 16.rx(
+                                          isDesktop,
+                                          desktopScale: scale,
+                                        ),
+                                        child: const CircularProgressIndicator(
+                                          strokeWidth: 1.5,
+                                          valueColor:
+                                              AlwaysStoppedAnimation<Color>(
+                                                AppColors.primary,
+                                              ),
+                                        ),
+                                      )
+                                    : Icon(
+                                        Icons.folder_open_rounded,
+                                        color: AppColors.primary,
+                                        size: 16.rx(
+                                          isDesktop,
+                                          desktopScale: scale,
+                                        ),
+                                      ),
+                                SizedBox(
+                                  width: 16.rw(isDesktop, desktopScale: scale),
+                                ),
+                                Expanded(
+                                  child: Text(
+                                    _isPickingFolder
+                                        ? _pickerLoadingText
+                                        : (state.receiveFolder == null
+                                              ? "Select download folder"
+                                              : _balanceText(
+                                                  "Saving to: ",
+                                                  state.receiveFolder!,
+                                                )),
+                                    maxLines: 3,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: _isPickingFolder
+                                          ? AppColors.primary
+                                          : AppColors.textSecondary,
+                                      fontSize: 11.rx(
+                                        isDesktop,
+                                        desktopScale: scale,
+                                      ),
+                                      fontWeight: _isPickingFolder
+                                          ? FontWeight.bold
+                                          : FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      )
+                    : Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    // Animated status dot
+                                    _AnimatedStatusDot(
+                                      isOnline: state.isReceiving,
+                                      size: 8.rx(
+                                        isDesktop,
+                                        desktopScale: scale,
+                                      ),
+                                    ),
+                                    SizedBox(
+                                      width: 8.rw(
+                                        isDesktop,
+                                        desktopScale: scale,
+                                      ),
+                                    ),
+                                    Expanded(
+                                      child: Text(
+                                        _balanceText(
+                                          state.isReceiving
+                                              ? "Discoverable as "
+                                              : "Offline (",
+                                          state.isReceiving
+                                              ? state.deviceName
+                                              : "${state.deviceName})",
+                                          threshold: 35,
+                                        ),
+                                        style: TextStyle(
+                                          color: AppColors.textPrimary,
+                                          fontSize: 14.rx(
+                                            isDesktop,
+                                            desktopScale: scale,
+                                          ),
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                SizedBox(
+                                  height: 5.rh(isDesktop, desktopScale: scale),
+                                ),
+                                GestureDetector(
+                                  onTap:
+                                      (state.isTransferring || _isPickingFolder)
+                                      ? null
+                                      : () async {
+                                          setState(() {
+                                            _isPickingFolder = true;
+                                          });
+                                          try {
+                                            String? path =
+                                                await FilePicker.getDirectoryPath();
+                                            if (path != null && mounted) {
+                                              cubit.setReceiveFolder(path);
+                                            }
+                                          } finally {
+                                            if (mounted) {
+                                              setState(() {
+                                                _isPickingFolder = false;
+                                              });
+                                            }
+                                          }
+                                        },
+                                  child: Row(
+                                    children: [
+                                      _isPickingFolder
+                                          ? SizedBox(
+                                              width: 12.rx(
+                                                isDesktop,
+                                                desktopScale: scale,
+                                              ),
+                                              height: 12.rx(
+                                                isDesktop,
+                                                desktopScale: scale,
+                                              ),
+                                              child:
+                                                  const CircularProgressIndicator(
+                                                    strokeWidth: 1.2,
+                                                    valueColor:
+                                                        AlwaysStoppedAnimation<
+                                                          Color
+                                                        >(AppColors.primary),
+                                                  ),
+                                            )
+                                          : Icon(
+                                              Icons.folder_open_rounded,
+                                              color: AppColors.primary,
+                                              size: 12.rx(
+                                                isDesktop,
+                                                desktopScale: scale,
+                                              ),
+                                            ),
+                                      SizedBox(
+                                        width: 4.rw(
+                                          isDesktop,
+                                          desktopScale: scale,
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Text(
+                                          _isPickingFolder
+                                              ? _pickerLoadingText
+                                              : (state.receiveFolder == null
+                                                    ? "Select download folder"
+                                                    : "Saving to: ${state.receiveFolder!}"),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: _isPickingFolder
+                                                ? AppColors.primary
+                                                : AppColors.textSecondary,
+                                            fontSize: 11.rx(
+                                              isDesktop,
+                                              desktopScale: scale,
+                                            ),
+                                            fontWeight: _isPickingFolder
+                                                ? FontWeight.bold
+                                                : FontWeight.w500,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Switch.adaptive(
+                            value: state.isReceiving,
+                            activeThumbColor: Colors.white,
+                            activeTrackColor: AppColors.primary.withAlpha(60),
+                            inactiveThumbColor: AppColors.textMuted,
+                            inactiveTrackColor: Colors.white.withAlpha(8),
+                            onChanged: state.isTransferring
+                                ? null
+                                : (value) {
+                                    if (value) {
+                                      if (state.receiveFolder == null) {
+                                        CustomSnackBar.show(
+                                          context,
+                                          message:
+                                              AppConstants.selectFolderFirst,
+                                        );
+                                        return;
+                                      }
+                                      cubit.startReceiver();
+                                    } else {
+                                      cubit.stopReceiver();
+                                    }
+                                  },
+                          ),
+                        ],
+                      ),
+              ),
 
-            // Selection Banner
-            if (state.selectedPaths.isNotEmpty && !state.isTransferring) ...[
-              SizedBox(height: 12.rh(isDesktop, desktopScale: scale)),
-              Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: 10.rw(isDesktop, desktopScale: scale),
-                  vertical: 6.rh(isDesktop, desktopScale: scale),
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withAlpha(12),
-                  borderRadius: BorderRadius.circular(
-                    10.rr(isDesktop, desktopScale: scale),
+              // Selection Banner
+              if (state.selectedPaths.isNotEmpty && !state.isTransferring) ...[
+                SizedBox(height: 12.rh(isDesktop, desktopScale: scale)),
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 10.rw(isDesktop, desktopScale: scale),
+                    vertical: 6.rh(isDesktop, desktopScale: scale),
                   ),
-                  border: Border.all(color: AppColors.primary.withAlpha(30)),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withAlpha(12),
+                    borderRadius: BorderRadius.circular(
+                      10.rr(isDesktop, desktopScale: scale),
+                    ),
+                    border: Border.all(color: AppColors.primary.withAlpha(30)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.check_circle_outline_rounded,
+                        color: AppColors.primary,
+                        size: 16.rx(isDesktop, desktopScale: scale),
+                      ),
+                      SizedBox(width: 8.rw(isDesktop, desktopScale: scale)),
+                      Expanded(
+                        child: Text(
+                          "${state.selectedPaths.length} items selected",
+                          style: TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 12.rx(isDesktop, desktopScale: scale),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => cubit.clearSelection(),
+                        style: TextButton.styleFrom(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 8.rw(isDesktop, desktopScale: scale),
+                          ),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: Text(
+                          "Clear",
+                          style: TextStyle(
+                            color: AppColors.danger,
+                            fontSize: 11.rx(isDesktop, desktopScale: scale),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.check_circle_outline_rounded,
-                      color: AppColors.primary,
-                      size: 16.rx(isDesktop, desktopScale: scale),
-                    ),
-                    SizedBox(width: 8.rw(isDesktop, desktopScale: scale)),
-                    Expanded(
-                      child: Text(
-                        "${state.selectedPaths.length} items selected",
-                        style: TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 12.rx(isDesktop, desktopScale: scale),
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: () => cubit.clearSelection(),
-                      style: TextButton.styleFrom(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 8.rw(isDesktop, desktopScale: scale),
-                        ),
-                        minimumSize: Size.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      child: Text(
-                        "Clear",
-                        style: TextStyle(
-                          color: AppColors.danger,
-                          fontSize: 11.rx(isDesktop, desktopScale: scale),
-                        ),
-                      ),
-                    ),
-                  ],
+              ],
+
+              // 2. CENTER RADAR
+              SizedBox(height: 35.rh(isDesktop, desktopScale: scale)),
+              OrbitalRadar(isDesktop: isDesktop, size: 320.0 * scale),
+              SizedBox(height: 35.rh(isDesktop, desktopScale: scale)),
+
+              // 3. BOTTOM PANEL: Status bar with scan shimmer
+              Center(
+                child: _ScanStatusBar(
+                  isReceiving: state.isReceiving,
+                  isDesktop: isDesktop,
+                  onManualIpTap: () => cubit.toggleAdvancedMode(),
                 ),
               ),
             ],
-
-            // 2. CENTER RADAR
-            SizedBox(height: 35.rh(isDesktop, desktopScale: scale)),
-            OrbitalRadar(isDesktop: isDesktop, size: 320.0 * scale),
-            SizedBox(height: 35.rh(isDesktop, desktopScale: scale)),
-
-            // 3. BOTTOM PANEL: Status bar with scan shimmer
-            Center(
-              child: _ScanStatusBar(
-                isReceiving: state.isReceiving,
-                isDesktop: isDesktop,
-                onManualIpTap: () => cubit.toggleAdvancedMode(),
-              ),
-            ),
-          ],
+          ),
         );
       },
     );
