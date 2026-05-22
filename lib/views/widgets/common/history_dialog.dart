@@ -63,28 +63,31 @@ class _HistoryDialogState extends State<HistoryDialog> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: AppColors.dialogBackground,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text(
           'Clear History',
-          style: TextStyle(color: Colors.white),
+          style: TextStyle(
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.w700,
+          ),
         ),
         content: const Text(
           'Are you sure you want to clear your transfer history?',
-          style: TextStyle(color: Colors.white70),
+          style: TextStyle(color: AppColors.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
             child: const Text(
               'Cancel',
-              style: TextStyle(color: Colors.white54),
+              style: TextStyle(color: AppColors.textMuted),
             ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             child: const Text(
               'Clear',
-              style: TextStyle(color: AppColors.dangerLight),
+              style: TextStyle(color: AppColors.danger),
             ),
           ),
         ],
@@ -146,13 +149,13 @@ class _HistoryDialogState extends State<HistoryDialog> {
           width: 500,
           height: 600,
           decoration: BoxDecoration(
-            color: AppColors.background.withAlpha(242), // ~0.95 opacity
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppColors.cardBorder),
+            color: AppColors.background.withAlpha(245),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.white.withAlpha(12)),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withAlpha(128), // 0.5 opacity
-                blurRadius: 20,
+                color: Colors.black.withAlpha(120),
+                blurRadius: 30,
                 offset: const Offset(0, 10),
               ),
             ],
@@ -167,22 +170,22 @@ class _HistoryDialogState extends State<HistoryDialog> {
         decoration: BoxDecoration(
           color: AppColors.background,
           borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(20),
-            topRight: Radius.circular(20),
+            topLeft: Radius.circular(24),
+            topRight: Radius.circular(24),
           ),
           border: Border(
-            top: BorderSide(color: AppColors.cardBorder, width: 1.5),
+            top: BorderSide(color: Colors.white.withAlpha(12), width: 1.5),
           ),
         ),
         child: Column(
           children: [
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             // Bottom sheet drag handle
             Container(
-              width: 40,
+              width: 36,
               height: 4,
               decoration: BoxDecoration(
-                color: Colors.white24,
+                color: AppColors.textMuted.withAlpha(60),
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -222,8 +225,8 @@ class _HistoryDialogState extends State<HistoryDialog> {
               Text(
                 'Transfer History',
                 style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary,
+                  fontWeight: FontWeight.w700,
                   fontSize: widget.isDesktop ? 18 : 18.sp,
                 ),
               ),
@@ -233,7 +236,7 @@ class _HistoryDialogState extends State<HistoryDialog> {
                     IconButton(
                       icon: Icon(
                         Icons.delete_sweep_rounded,
-                        color: Colors.white70,
+                        color: AppColors.textMuted,
                         size: widget.isDesktop ? 22 : 22.sp,
                       ),
                       tooltip: 'Clear history',
@@ -242,7 +245,7 @@ class _HistoryDialogState extends State<HistoryDialog> {
                   IconButton(
                     icon: Icon(
                       Icons.close_rounded,
-                      color: Colors.white70,
+                      color: AppColors.textMuted,
                       size: widget.isDesktop ? 22 : 22.sp,
                     ),
                     onPressed: () => Navigator.pop(context),
@@ -253,7 +256,7 @@ class _HistoryDialogState extends State<HistoryDialog> {
           ),
         ),
         // Divider
-        Container(height: 1, color: AppColors.cardBorder),
+        Container(height: 1, color: Colors.white.withAlpha(8)),
         // History List
         Expanded(
           child: _isLoading
@@ -270,8 +273,7 @@ class _HistoryDialogState extends State<HistoryDialog> {
                   ),
                   itemCount: _history.length,
                   itemBuilder: (context, index) {
-                    final entry = _history[index];
-                    return _buildHistoryItem(entry);
+                    return _buildHistoryItem(_history[index], index);
                   },
                 ),
         ),
@@ -284,17 +286,25 @@ class _HistoryDialogState extends State<HistoryDialog> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.history_rounded,
-            size: widget.isDesktop ? 60 : 60.sp,
-            color: Colors.white24,
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: AppColors.primary.withAlpha(8),
+            ),
+            child: Icon(
+              Icons.history_rounded,
+              size: widget.isDesktop ? 48 : 48.sp,
+              color: AppColors.textMuted.withAlpha(60),
+            ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
           Text(
             'No transfers yet',
             style: TextStyle(
-              color: Colors.white38,
+              color: AppColors.textMuted,
               fontSize: widget.isDesktop ? 14 : 14.sp,
+              fontWeight: FontWeight.w500,
             ),
           ),
         ],
@@ -302,135 +312,173 @@ class _HistoryDialogState extends State<HistoryDialog> {
     );
   }
 
-  Widget _buildHistoryItem(HistoryEntry entry) {
+  Widget _buildHistoryItem(HistoryEntry entry, int index) {
     final bool isSend = entry.direction == 'send';
     final bool isSuccess = entry.status == 'success';
     final bool isCancelled = entry.status == 'cancelled';
 
-    Color statusColor = AppColors.successLight;
+    Color statusColor = AppColors.success;
     IconData statusIcon = Icons.check_circle_rounded;
     String statusText = 'Completed';
 
     if (!isSuccess) {
       if (isCancelled) {
-        statusColor = Colors.orangeAccent;
+        statusColor = const Color(0xFFFFB347);
         statusIcon = Icons.cancel_rounded;
         statusText = 'Cancelled';
       } else {
-        statusColor = AppColors.dangerLight;
+        statusColor = AppColors.danger;
         statusIcon = Icons.error_rounded;
         statusText = 'Failed';
       }
     }
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: AppColors.cardOverlay,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.cardBorder),
-      ),
-      child: ListTile(
-        contentPadding: EdgeInsets.symmetric(
-          horizontal: widget.isDesktop ? 12.0 : 12.w,
-          vertical: 4,
-        ),
-        leading: Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: (isSend ? Colors.blueAccent : AppColors.primary).withAlpha(
-              25,
-            ),
-            shape: BoxShape.circle,
+    // Staggered entrance animation
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0.0, end: 1.0),
+      duration: Duration(milliseconds: 300 + (index * 50).clamp(0, 300)),
+      curve: Curves.easeOutCubic,
+      builder: (context, value, child) {
+        return Opacity(
+          opacity: value,
+          child: Transform.translate(
+            offset: Offset(0, 12 * (1 - value)),
+            child: child,
           ),
-          child: Icon(
-            isSend ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
-            color: isSend ? Colors.blueAccent : Colors.tealAccent,
-            size: widget.isDesktop ? 20 : 20.sp,
-          ),
+        );
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          color: Colors.white.withAlpha(6),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withAlpha(8)),
         ),
-        title: Text(
-          entry.fileName,
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w500,
-            fontSize: widget.isDesktop ? 14 : 14.sp,
-          ),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 4.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            hoverColor: AppColors.primary.withAlpha(8),
+            onTap: (isSuccess && entry.localPath != null)
+                ? () => _openFolder(entry.localPath!)
+                : null,
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: widget.isDesktop ? 14.0 : 12.w,
+                vertical: 10,
+              ),
+              child: Row(
                 children: [
-                  Text(
-                    entry.formattedSize,
-                    style: TextStyle(
-                      color: Colors.white54,
-                      fontSize: widget.isDesktop ? 12 : 11.sp,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
+                  // Direction icon
                   Container(
-                    width: 3,
-                    height: 3,
-                    decoration: const BoxDecoration(
-                      color: Colors.white24,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: (isSend ? AppColors.primary : AppColors.success)
+                          .withAlpha(15),
                       shape: BoxShape.circle,
                     ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    entry.formattedDate,
-                    style: TextStyle(
-                      color: Colors.white54,
-                      fontSize: widget.isDesktop ? 12 : 11.sp,
+                    child: Icon(
+                      isSend
+                          ? Icons.arrow_upward_rounded
+                          : Icons.arrow_downward_rounded,
+                      color: isSend
+                          ? AppColors.primaryLight
+                          : AppColors.successLight,
+                      size: widget.isDesktop ? 18 : 18.sp,
                     ),
                   ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    statusIcon,
-                    color: statusColor,
-                    size: widget.isDesktop ? 13 : 13.sp,
-                  ),
-                  const SizedBox(width: 3),
-                  Text(
-                    statusText,
-                    style: TextStyle(
-                      color: statusColor,
-                      fontSize: widget.isDesktop ? 11 : 10.sp,
-                      fontWeight: FontWeight.w500,
+                  const SizedBox(width: 12),
+                  // Details
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          entry.fileName,
+                          style: TextStyle(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.w600,
+                            fontSize: widget.isDesktop ? 14 : 14.sp,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        Wrap(
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 6,
+                          runSpacing: 2,
+                          children: [
+                            Text(
+                              entry.formattedSize,
+                              style: TextStyle(
+                                color: AppColors.textMuted,
+                                fontSize: widget.isDesktop ? 12 : 11.sp,
+                              ),
+                            ),
+                            Container(
+                              width: 3,
+                              height: 3,
+                              decoration: BoxDecoration(
+                                color: AppColors.textMuted.withAlpha(60),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            Text(
+                              entry.formattedDate,
+                              style: TextStyle(
+                                color: AppColors.textMuted,
+                                fontSize: widget.isDesktop ? 12 : 11.sp,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        // Status pill
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: statusColor.withAlpha(15),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                statusIcon,
+                                color: statusColor,
+                                size: widget.isDesktop ? 11 : 11.sp,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                statusText,
+                                style: TextStyle(
+                                  color: statusColor,
+                                  fontSize: widget.isDesktop ? 10 : 10.sp,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ),
+                  // Folder open icon
+                  if (isSuccess && entry.localPath != null)
+                    Icon(
+                      Icons.folder_open_rounded,
+                      color: AppColors.primaryLight.withAlpha(120),
+                      size: widget.isDesktop ? 20 : 20.sp,
+                    ),
                 ],
               ),
-            ],
+            ),
           ),
         ),
-        trailing: (isSuccess && entry.localPath != null)
-            ? InkWell(
-                borderRadius: BorderRadius.circular(20),
-                onTap: () => _openFolder(entry.localPath!),
-                child: Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: Icon(
-                    Icons.folder_open_rounded,
-                    color: Colors.blueAccent,
-                    size: widget.isDesktop ? 22 : 22.sp,
-                  ),
-                ),
-              )
-            : null,
       ),
     );
   }

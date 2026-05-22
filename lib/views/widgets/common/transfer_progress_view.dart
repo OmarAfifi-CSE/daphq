@@ -50,11 +50,18 @@ class TransferProgressView extends StatelessWidget {
           duration: const Duration(milliseconds: 350),
           alignment: Alignment.topCenter,
           child: Container(
-            padding: EdgeInsets.all(20.0.rw(isDesktop)),
+            padding: EdgeInsets.all(22.0.rw(isDesktop)),
             decoration: BoxDecoration(
               color: AppColors.cardOverlay,
-              borderRadius: BorderRadius.circular(20.0.rr(isDesktop)),
+              borderRadius: BorderRadius.circular(22.0.rr(isDesktop)),
               border: Border.all(color: AppColors.cardBorder),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.primary.withAlpha(isDone ? 15 : 8),
+                  blurRadius: 30,
+                  offset: const Offset(0, 10),
+                ),
+              ],
             ),
             child: Column(
               children: [
@@ -68,7 +75,8 @@ class TransferProgressView extends StatelessWidget {
                     style: TextStyle(
                       color: _getStatusColor(model.status),
                       fontSize: 18.0.rx(isDesktop),
-                      fontWeight: FontWeight.bold,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.3,
                     ),
                   ),
                 ),
@@ -76,7 +84,6 @@ class TransferProgressView extends StatelessWidget {
 
                 // 2. Speed Display — or File Count during analyze phase
                 if (model.analyzeCount != null)
-                  // Analyze mode: show pulsing file counter instead of speed
                   TweenAnimationBuilder<double>(
                     tween: Tween<double>(begin: 0, end: 1),
                     duration: const Duration(milliseconds: 800),
@@ -85,7 +92,7 @@ class TransferProgressView extends StatelessWidget {
                       return Text(
                         "${_formatCount(model.analyzeCount!)} files",
                         style: TextStyle(
-                          color: Colors.white.withAlpha(
+                          color: AppColors.textPrimary.withAlpha(
                             (180 + (75 * value)).toInt(),
                           ),
                           fontSize: 38.0.rx(isDesktop),
@@ -101,29 +108,7 @@ class TransferProgressView extends StatelessWidget {
                     },
                   )
                 else
-                  TweenAnimationBuilder<double>(
-                    tween: Tween<double>(begin: 0, end: model.speed),
-                    duration: const Duration(milliseconds: 500),
-                    curve: Curves.easeOutCubic,
-                    builder: (context, value, child) {
-                      return Text(
-                        "${value.toStringAsFixed(1)} MB/s",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 38.0.rx(isDesktop),
-                          fontWeight: FontWeight.bold,
-                          shadows: [
-                            Shadow(
-                              color: AppColors.primary.withAlpha(
-                                model.speed > 0 ? 150 : 0,
-                              ),
-                              blurRadius: 20,
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
+                  _SpeedDisplay(speed: model.speed, isDesktop: isDesktop),
 
                 // 3. Avg Speed & Time Info / Estimated Time
                 if (model.avgSpeed != null || model.totalTime != null)
@@ -132,8 +117,9 @@ class TransferProgressView extends StatelessWidget {
                     child: Text(
                       "${model.avgSpeed != null ? "Avg: ${model.avgSpeed} MB/s" : ""}${model.avgSpeed != null && model.totalTime != null ? " | " : ""}${_formatCompletedTime(model.totalTime)}",
                       style: TextStyle(
-                        color: Colors.greenAccent.withAlpha(180),
-                        fontSize: 16.0.rx(isDesktop),
+                        color: AppColors.success.withAlpha(200),
+                        fontSize: 15.0.rx(isDesktop),
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
                   )
@@ -165,19 +151,19 @@ class TransferProgressView extends StatelessWidget {
                     ? SizedBox(height: 15.0.rh(isDesktop))
                     : SizedBox(height: 20.0.rh(isDesktop)),
 
-                // 4. Compact Progress Section (Unified)
+                // 4. Compact Progress Section
                 if (hasProgress) ...[
-                  // File Name Above Bar
+                  // File Name
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
                       model.fileName.isEmpty
                           ? "Preparing transfer..."
                           : model.fileName,
-                      maxLines: 1,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: Colors.white,
+                        color: AppColors.textPrimary,
                         fontSize: 14.0.rx(isDesktop),
                         fontWeight: FontWeight.w500,
                       ),
@@ -185,57 +171,19 @@ class TransferProgressView extends StatelessWidget {
                   ),
                   SizedBox(height: 8.0.rh(isDesktop)),
 
-                  // The Bar
+                  // The Progress Bar
                   if (model.analyzeCount != null)
-                    // Indeterminate pulse bar during analyze
                     _AnalyzePulseBar(isDesktop: isDesktop)
                   else
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        final double progressWidth =
-                            constraints.maxWidth *
-                            model.progress.clamp(0.0, 1.0);
-                        return Stack(
-                          children: [
-                            Container(
-                              height: 8,
-                              width: double.infinity,
-                              decoration: BoxDecoration(
-                                color: Colors.white10,
-                                borderRadius: BorderRadius.circular(5),
-                              ),
-                            ),
-                            AnimatedContainer(
-                              duration: const Duration(milliseconds: 400),
-                              height: 8,
-                              width: progressWidth,
-                              constraints: BoxConstraints(
-                                minWidth: model.progress > 0 ? 6 : 0,
-                              ),
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [
-                                    AppColors.primary,
-                                    AppColors.primaryLight,
-                                  ],
-                                ),
-                                borderRadius: BorderRadius.circular(5),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: AppColors.primary.withAlpha(100),
-                                    blurRadius: 10,
-                                    offset: const Offset(0, 2),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        );
-                      },
+                    _GlowingProgressBar(
+                      progress: model.progress,
+                      isDesktop: isDesktop,
+                      isDone: isDone,
+                      isFailed: isFailed,
                     ),
                   SizedBox(height: 8.0.rh(isDesktop)),
 
-                  // Progress Stats Below Bar
+                  // Progress Stats
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -246,21 +194,25 @@ class TransferProgressView extends StatelessWidget {
                                   ? "Transfer Cancelled"
                                   : "${(model.progress * 100).toInt()}% complete"),
                         style: TextStyle(
-                          color: AppColors.primaryLight,
+                          color: isDone
+                              ? AppColors.success
+                              : (isFailed
+                                    ? AppColors.danger
+                                    : AppColors.primaryLight),
                           fontSize: 12.0.rx(isDesktop),
-                          fontWeight: FontWeight.bold,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                       Text(
                         "${_formatSize(model.transferred)}${model.totalSize > 0 ? " / ${_formatSize(model.totalSize)}" : ""}",
                         style: TextStyle(
-                          color: Colors.white38,
+                          color: AppColors.textMuted,
                           fontSize: 12.0.rx(isDesktop),
                         ),
                       ),
                     ],
                   ),
-                  // Action Buttons at the bottom of the Progress View!
+                  // Action Buttons
                   SizedBox(height: 18.0.rh(isDesktop)),
                   (isDone || isFailed)
                       ? (isDesktop
@@ -313,7 +265,10 @@ class TransferProgressView extends StatelessWidget {
                                               AppColors.success,
                                               AppColors.successLight,
                                             ]
-                                          : const [Colors.grey, Colors.white24],
+                                          : [
+                                              Colors.white.withAlpha(15),
+                                              Colors.white.withAlpha(8),
+                                            ],
                                       child: Row(
                                         mainAxisAlignment:
                                             MainAxisAlignment.center,
@@ -322,7 +277,7 @@ class TransferProgressView extends StatelessWidget {
                                             Icons.check_circle_outline_rounded,
                                             color: isDone
                                                 ? Colors.black87
-                                                : Colors.white70,
+                                                : AppColors.textSecondary,
                                             size: 18.0.rx(isDesktop),
                                           ),
                                           SizedBox(width: 6.rw(isDesktop)),
@@ -331,7 +286,7 @@ class TransferProgressView extends StatelessWidget {
                                             style: TextStyle(
                                               color: isDone
                                                   ? Colors.black87
-                                                  : Colors.white,
+                                                  : AppColors.textPrimary,
                                               fontSize: 13.0.rx(isDesktop),
                                               fontWeight: FontWeight.bold,
                                             ),
@@ -388,7 +343,10 @@ class TransferProgressView extends StatelessWidget {
                                             AppColors.success,
                                             AppColors.successLight,
                                           ]
-                                        : const [Colors.grey, Colors.white24],
+                                        : [
+                                            Colors.white.withAlpha(15),
+                                            Colors.white.withAlpha(8),
+                                          ],
                                     child: Row(
                                       mainAxisAlignment:
                                           MainAxisAlignment.center,
@@ -397,7 +355,7 @@ class TransferProgressView extends StatelessWidget {
                                           Icons.check_circle_outline_rounded,
                                           color: isDone
                                               ? Colors.black87
-                                              : Colors.white70,
+                                              : AppColors.textSecondary,
                                           size: 18.0.rx(isDesktop),
                                         ),
                                         SizedBox(width: 6.rw(isDesktop)),
@@ -406,7 +364,7 @@ class TransferProgressView extends StatelessWidget {
                                           style: TextStyle(
                                             color: isDone
                                                 ? Colors.black87
-                                                : Colors.white,
+                                                : AppColors.textPrimary,
                                             fontSize: 13.0.rx(isDesktop),
                                             fontWeight: FontWeight.bold,
                                           ),
@@ -467,6 +425,15 @@ class TransferProgressView extends StatelessWidget {
   }
 
   Color _getStatusColor(String status) {
+    final lower = status.toLowerCase();
+    if (lower.contains("complete") || lower.contains("success")) {
+      return AppColors.success;
+    }
+    if (lower.contains("error") ||
+        lower.contains("fail") ||
+        lower.contains("cancel")) {
+      return AppColors.danger;
+    }
     return AppColors.primary;
   }
 
@@ -507,6 +474,122 @@ class TransferProgressView extends StatelessWidget {
       final int minutes = ((secondsRemaining % 3600) / 60).toInt();
       return "${hours}h ${minutes}m";
     }
+  }
+}
+
+/// Speed display with text glow that intensifies with higher speed.
+class _SpeedDisplay extends StatelessWidget {
+  final double speed;
+  final bool isDesktop;
+
+  const _SpeedDisplay({required this.speed, required this.isDesktop});
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: speed),
+      duration: const Duration(milliseconds: 500),
+      curve: Curves.easeOutCubic,
+      builder: (context, value, child) {
+        final glowIntensity = (value * 3).clamp(0.0, 200.0).toInt();
+        return Text(
+          "${value.toStringAsFixed(1)} MB/s",
+          style: TextStyle(
+            color: AppColors.textPrimary,
+            fontSize: 38.0.rx(isDesktop),
+            fontWeight: FontWeight.bold,
+            shadows: [
+              Shadow(
+                color: AppColors.primary.withAlpha(glowIntensity),
+                blurRadius: 20 + (value * 0.5).clamp(0, 15),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Glowing progress bar with particle effect at leading edge.
+class _GlowingProgressBar extends StatelessWidget {
+  final double progress;
+  final bool isDesktop;
+  final bool isDone;
+  final bool isFailed;
+
+  const _GlowingProgressBar({
+    required this.progress,
+    required this.isDesktop,
+    required this.isDone,
+    required this.isFailed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = isDone
+        ? [AppColors.success, AppColors.successLight]
+        : (isFailed
+              ? [AppColors.danger, AppColors.dangerLight]
+              : [AppColors.primary, AppColors.primaryLight]);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final double progressWidth =
+            constraints.maxWidth * progress.clamp(0.0, 1.0);
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Container(
+              height: 6,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: Colors.white.withAlpha(8),
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 400),
+              height: 6,
+              width: progressWidth,
+              constraints: BoxConstraints(minWidth: progress > 0 ? 6 : 0),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(colors: colors),
+                borderRadius: BorderRadius.circular(4),
+                boxShadow: [
+                  BoxShadow(
+                    color: colors.first.withAlpha(100),
+                    blurRadius: 12,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+            ),
+            // Leading edge glow particle
+            if (progress > 0.01 && progress < 1.0 && !isDone && !isFailed)
+              Positioned(
+                left: progressWidth - 4,
+                top: -2,
+                child: Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: colors.last.withAlpha(180),
+                    boxShadow: [
+                      BoxShadow(
+                        color: colors.first.withAlpha(150),
+                        blurRadius: 8,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
   }
 }
 
@@ -551,18 +634,18 @@ class _AnalyzePulseBarState extends State<_AnalyzePulseBar>
           builder: (context, _) {
             final offset = _anim.value * (totalWidth + pulseWidth) - pulseWidth;
             return ClipRRect(
-              borderRadius: BorderRadius.circular(5),
+              borderRadius: BorderRadius.circular(4),
               child: Stack(
                 children: [
                   Container(
-                    height: 8,
+                    height: 6,
                     width: double.infinity,
-                    color: Colors.white10,
+                    color: Colors.white.withAlpha(8),
                   ),
                   Positioned(
                     left: offset,
                     child: Container(
-                      height: 8,
+                      height: 6,
                       width: pulseWidth,
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
@@ -573,7 +656,7 @@ class _AnalyzePulseBarState extends State<_AnalyzePulseBar>
                             AppColors.primary.withAlpha(0),
                           ],
                         ),
-                        borderRadius: BorderRadius.circular(5),
+                        borderRadius: BorderRadius.circular(4),
                         boxShadow: [
                           BoxShadow(
                             color: AppColors.primary.withAlpha(120),

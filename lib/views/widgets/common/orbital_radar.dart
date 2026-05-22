@@ -21,21 +21,29 @@ class OrbitalRadar extends StatefulWidget {
 }
 
 class _OrbitalRadarState extends State<OrbitalRadar>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late final AnimationController _rotationController;
+  late final AnimationController _pulseController;
+  final Stopwatch _stopwatch = Stopwatch();
 
   @override
   void initState() {
     super.initState();
+    _stopwatch.start();
     _rotationController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 12),
     )..repeat();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2000),
+    )..repeat(reverse: true);
   }
 
   @override
   void dispose() {
     _rotationController.dispose();
+    _pulseController.dispose();
     super.dispose();
   }
 
@@ -60,8 +68,7 @@ class _OrbitalRadarState extends State<OrbitalRadar>
             child: Stack(
               alignment: Alignment.center,
               children: [
-                // 1. Sonar Sweep and Concentric Orbits Paint (Signature Daphq Primary Blue Accent)
-                // Always scanning/spinning continuously to keep the radar alive!
+                // 1. Radar paint: orbits, sweep, crosshairs, grid dots
                 AnimatedBuilder(
                   animation: _rotationController,
                   builder: (context, child) {
@@ -79,27 +86,29 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                   },
                 ),
 
-                // 2. Central Pulse Halo (Refined brand-blue ripple - active ONLY when receiving/discoverable!)
+                // 2. Cardinal direction labels
+                ..._buildCardinalLabels(radarSize, isDesktop),
+
+                // 3. Central Pulse Halo — active only when receiving
                 if (state.isReceiving)
                   AnimatedBuilder(
-                    animation: _rotationController,
+                    animation: _pulseController,
                     builder: (context, child) {
-                      final double scale =
-                          1.0 + (_rotationController.value * 0.6);
-                      final double opacity = (1.0 - _rotationController.value)
-                          .clamp(0.0, 1.0);
+                      final double scale = 1.0 + (_pulseController.value * 0.3);
+                      final double opacity =
+                          0.6 + (0.4 * (1.0 - _pulseController.value));
                       return Transform.scale(
                         scale: scale,
                         child: Opacity(
                           opacity: opacity,
                           child: Container(
-                            width: (radarSize * 0.36).rx(isDesktop),
-                            height: (radarSize * 0.36).rx(isDesktop),
+                            width: (radarSize * 0.33).rx(isDesktop),
+                            height: (radarSize * 0.33).rx(isDesktop),
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               border: Border.all(
-                                color: AppColors.primary.withAlpha(100),
-                                width: 1.2,
+                                color: AppColors.primary.withAlpha(60),
+                                width: 1.0,
                               ),
                             ),
                           ),
@@ -108,14 +117,41 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                     },
                   ),
 
-                // 3. Orbiting Devices (Pure glassmorphic Brand Blue satellites)
+                // Second outer pulse ring
+                if (state.isReceiving)
+                  AnimatedBuilder(
+                    animation: _pulseController,
+                    builder: (context, child) {
+                      final double scale = 1.0 + (_pulseController.value * 0.5);
+                      final double opacity =
+                          0.3 * (1.0 - _pulseController.value);
+                      return Transform.scale(
+                        scale: scale,
+                        child: Opacity(
+                          opacity: opacity.clamp(0.0, 1.0),
+                          child: Container(
+                            width: (radarSize * 0.33).rx(isDesktop),
+                            height: (radarSize * 0.33).rx(isDesktop),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: AppColors.primary.withAlpha(30),
+                                width: 0.8,
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+
+                // 4. Orbiting Devices
                 ...List.generate(devices.length, (index) {
                   final device = devices[index];
                   final nodeWidth = 60.0.rx(isDesktop);
                   final nodeHeight = 75.0.rx(isDesktop);
                   final orbitRadius = (radarSize * 0.36).rx(isDesktop);
 
-                  // Extremely robust check to prevent phones appearing as laptops on Windows
                   final String lowerName = device.name.toLowerCase();
                   final bool isLaptopDevice =
                       lowerName.contains("pc") ||
@@ -131,17 +167,19 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                   return AnimatedBuilder(
                     animation: _rotationController,
                     builder: (context, child) {
-                      // Slow elegant orbit drift (15% of standard rotation speed)
+                      final double elapsedSeconds =
+                          _stopwatch.elapsedMilliseconds / 1000.0;
+                      // Slowly drift 360 degrees every 80 seconds
                       final double driftAngle =
-                          _rotationController.value * 0.15 * 2.0 * math.pi;
-                      final double angle =
-                          (index * 2.0 * math.pi / devices.length) + driftAngle;
+                          (elapsedSeconds / 80.0) * 2.0 * math.pi;
+                      // Use a stable, unique base angle for each device based on its IP address
+                      // to prevent devices from jumping or rearranging when other devices are found
+                      final double baseAngle = _getDeviceBaseAngle(device.ip);
+                      final double angle = baseAngle + driftAngle;
 
-                      // Bobbing weightlessness effect
                       final double bobbing =
                           math.sin(
-                            _rotationController.value * 2.0 * math.pi * 3 +
-                                index,
+                            elapsedSeconds * 2.0 * math.pi / 4.0 + index,
                           ) *
                           3.0.rx(isDesktop);
 
@@ -164,68 +202,75 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                             device.name,
                             isDesktop,
                           ),
-                          child: Container(
-                            width: nodeWidth,
-                            height: nodeHeight,
-                            color: Colors.transparent,
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                // Translucent glassmorphic planet node with glowing brand-blue device silhouette
-                                Container(
-                                  width: 42.rx(isDesktop),
-                                  height: 42.rx(isDesktop),
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    gradient: LinearGradient(
-                                      colors: [
-                                        Colors.black54,
-                                        AppColors.primary.withAlpha(20),
-                                      ],
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
-                                    ),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: AppColors.primary.withAlpha(20),
-                                        blurRadius: 6,
-                                        spreadRadius: 1,
+                          child: MouseRegion(
+                            cursor: SystemMouseCursors.click,
+                            child: Container(
+                              width: nodeWidth,
+                              height: nodeHeight,
+                              color: Colors.transparent,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  // Device node with glass-bubble effect
+                                  Container(
+                                    width: 44.rx(isDesktop),
+                                    height: 44.rx(isDesktop),
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      gradient: LinearGradient(
+                                        colors: [
+                                          AppColors.primary.withAlpha(30),
+                                          AppColors.primary.withAlpha(8),
+                                        ],
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
                                       ),
-                                    ],
-                                    border: Border.all(
-                                      color: AppColors.primary.withAlpha(80),
-                                      width: 1.0,
-                                    ),
-                                  ),
-                                  child: Center(
-                                    child: SleekDeviceIcon(
-                                      isLaptop: isLaptopDevice,
-                                      color: AppColors.primary.withAlpha(200),
-                                      size: 18.rx(isDesktop),
-                                    ),
-                                  ),
-                                ),
-                                SizedBox(height: 5.rh(isDesktop)),
-                                // Label Text
-                                Expanded(
-                                  child: Text(
-                                    device.name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 10.rx(isDesktop),
-                                      fontWeight: FontWeight.bold,
-                                      shadows: const [
-                                        Shadow(
-                                          color: Colors.black,
-                                          blurRadius: 4,
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: AppColors.primary.withAlpha(
+                                            25,
+                                          ),
+                                          blurRadius: 12,
+                                          spreadRadius: 2,
                                         ),
                                       ],
+                                      border: Border.all(
+                                        color: AppColors.primary.withAlpha(70),
+                                        width: 1.0,
+                                      ),
+                                    ),
+                                    child: Center(
+                                      child: SleekDeviceIcon(
+                                        isLaptop: isLaptopDevice,
+                                        color: AppColors.primaryLight.withAlpha(
+                                          200,
+                                        ),
+                                        size: 18.rx(isDesktop),
+                                      ),
                                     ),
                                   ),
-                                ),
-                              ],
+                                  SizedBox(height: 5.rh(isDesktop)),
+                                  // Label Text
+                                  Expanded(
+                                    child: Text(
+                                      device.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: AppColors.textSecondary,
+                                        fontSize: 10.rx(isDesktop),
+                                        fontWeight: FontWeight.w600,
+                                        shadows: const [
+                                          Shadow(
+                                            color: Colors.black,
+                                            blurRadius: 4,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ),
@@ -234,7 +279,7 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                   );
                 }),
 
-                // 4. Central Node (Us! Styled like a glowing premium brand primary core)
+                // 5. Central Node — glowing premium core
                 GestureDetector(
                   onTap: () {
                     if (state.isReceiving) {
@@ -250,47 +295,61 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                       cubit.startReceiver();
                     }
                   },
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 300),
-                    width: (radarSize * 0.288).rx(isDesktop),
-                    height: (radarSize * 0.288).rx(isDesktop),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        colors: state.isReceiving
-                            ? [Colors.black87, AppColors.primary.withAlpha(30)]
-                            : [Colors.black87, Colors.white.withAlpha(10)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: state.isReceiving
-                              ? AppColors.primary.withAlpha(80)
-                              : AppColors.primary.withAlpha(15),
-                          blurRadius: state.isReceiving ? 26 : 10,
-                          spreadRadius: state.isReceiving ? 2 : 0,
+                  child: AnimatedBuilder(
+                    animation: _pulseController,
+                    builder: (context, child) {
+                      final glowIntensity = state.isReceiving
+                          ? 60 + (_pulseController.value * 30).toInt()
+                          : 10;
+                      return AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        width: (radarSize * 0.28).rx(isDesktop),
+                        height: (radarSize * 0.28).rx(isDesktop),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: LinearGradient(
+                            colors: state.isReceiving
+                                ? [
+                                    AppColors.primary.withAlpha(20),
+                                    AppColors.primary.withAlpha(8),
+                                  ]
+                                : [
+                                    Colors.white.withAlpha(8),
+                                    Colors.white.withAlpha(3),
+                                  ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: state.isReceiving
+                                  ? AppColors.primary.withAlpha(glowIntensity)
+                                  : AppColors.primary.withAlpha(10),
+                              blurRadius: state.isReceiving ? 30 : 10,
+                              spreadRadius: state.isReceiving ? 3 : 0,
+                            ),
+                          ],
+                          border: Border.all(
+                            color: state.isReceiving
+                                ? AppColors.primary.withAlpha(180)
+                                : Colors.white.withAlpha(20),
+                            width: 1.5,
+                          ),
                         ),
-                      ],
-                      border: Border.all(
-                        color: state.isReceiving
-                            ? AppColors.primary
-                            : Colors.white24,
-                        width: 1.5,
-                      ),
-                    ),
-                    child: Center(
-                      child: SleekDeviceIcon(
-                        isLaptop:
-                            Platform.isWindows ||
-                            Platform.isMacOS ||
-                            Platform.isLinux,
-                        color: state.isReceiving
-                            ? AppColors.primary
-                            : Colors.white30,
-                        size: (radarSize * 0.104).rx(isDesktop),
-                      ),
-                    ),
+                        child: Center(
+                          child: SleekDeviceIcon(
+                            isLaptop:
+                                Platform.isWindows ||
+                                Platform.isMacOS ||
+                                Platform.isLinux,
+                            color: state.isReceiving
+                                ? AppColors.primary
+                                : AppColors.textMuted,
+                            size: (radarSize * 0.1).rx(isDesktop),
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 ),
               ],
@@ -300,12 +359,46 @@ class _OrbitalRadarState extends State<OrbitalRadar>
       },
     );
   }
+
+  List<Widget> _buildCardinalLabels(double radarSize, bool isDesktop) {
+    final labels = ['N', 'E', 'S', 'W'];
+    final offsets = [
+      Offset(0, -(radarSize * 0.48).rx(isDesktop)),
+      Offset((radarSize * 0.48).rx(isDesktop), 0),
+      Offset(0, (radarSize * 0.48).rx(isDesktop)),
+      Offset(-(radarSize * 0.48).rx(isDesktop), 0),
+    ];
+    return List.generate(4, (i) {
+      return Positioned(
+        left: (radarSize / 2).rx(isDesktop) + offsets[i].dx - 6,
+        top: (radarSize / 2).rx(isDesktop) + offsets[i].dy - 6,
+        child: Text(
+          labels[i],
+          style: TextStyle(
+            color: AppColors.textMuted.withAlpha(80),
+            fontSize: 9.rx(isDesktop),
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.0,
+          ),
+        ),
+      );
+    });
+  }
+
+  double _getDeviceBaseAngle(String input) {
+    int hash = 0;
+    for (int i = 0; i < input.length; i++) {
+      hash = input.codeUnitAt(i) + ((hash << 5) - hash);
+    }
+    // Return a stable angle between 0 and 2*pi
+    return (hash.abs() % 360) * math.pi / 180.0;
+  }
 }
 
 class RadarSweepPainter extends CustomPainter {
   final double angle;
   final bool isScanning;
-  final Color color; // Orbits & Sweep color (AppColors.primary)
+  final Color color;
 
   RadarSweepPainter({
     required this.angle,
@@ -318,7 +411,6 @@ class RadarSweepPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final maxRadius = size.width / 2;
 
-    // Precise concentric orbit bounds exactly matching the screenshot
     final double r1 = maxRadius * 0.28;
     final double r2 = maxRadius * 0.48;
     final double r3 = maxRadius * 0.72;
@@ -326,23 +418,51 @@ class RadarSweepPainter extends CustomPainter {
 
     final paintRing = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0;
+      ..strokeWidth = 0.8;
 
-    // Elegant Brand Blue orbits that fade out beautifully
-    canvas.drawCircle(center, r1, paintRing..color = color.withAlpha(20));
+    // Concentric orbit rings with subtle glow
+    canvas.drawCircle(center, r1, paintRing..color = color.withAlpha(18));
     canvas.drawCircle(center, r2, paintRing..color = color.withAlpha(12));
     canvas.drawCircle(center, r3, paintRing..color = color.withAlpha(7));
     canvas.drawCircle(center, r4, paintRing..color = color.withAlpha(3));
 
-    // Dynamic sweeping sector with elegant Brand Blue gradient (Always scanning to keep visual life!)
+    // Crosshair lines
+    final crosshairPaint = Paint()
+      ..color = color.withAlpha(8)
+      ..strokeWidth = 0.5
+      ..style = PaintingStyle.stroke;
+    canvas.drawLine(
+      Offset(center.dx, center.dy - r4),
+      Offset(center.dx, center.dy + r4),
+      crosshairPaint,
+    );
+    canvas.drawLine(
+      Offset(center.dx - r4, center.dy),
+      Offset(center.dx + r4, center.dy),
+      crosshairPaint,
+    );
+
+    // Grid dots at cardinal points on each ring
+    final dotPaint = Paint()
+      ..style = PaintingStyle.fill
+      ..color = color.withAlpha(25);
+    for (final r in [r1, r2, r3, r4]) {
+      for (int i = 0; i < 4; i++) {
+        final a = i * math.pi / 2;
+        canvas.drawCircle(
+          Offset(center.dx + r * math.cos(a), center.dy + r * math.sin(a)),
+          1.5,
+          dotPaint,
+        );
+      }
+    }
+
+    // Sweeping sector
     if (isScanning) {
       final rect = Rect.fromCircle(center: center, radius: r4);
       final sweepPaint = Paint()
         ..shader = SweepGradient(
-          colors: [
-            color.withAlpha(0),
-            color.withAlpha(16), // Beautiful glowing brand-blue sweep sector
-          ],
+          colors: [color.withAlpha(0), color.withAlpha(14)],
           stops: const [0.75, 1.0],
           transform: GradientRotation(angle),
         ).createShader(rect)
@@ -350,15 +470,33 @@ class RadarSweepPainter extends CustomPainter {
 
       canvas.drawCircle(center, r4, sweepPaint);
 
-      // The sweeping radial leading edge line (glowing primary brand blue)
+      // Leading edge line with glow
       final paintSweepLine = Paint()
-        ..color = color.withAlpha(65)
+        ..color = color.withAlpha(50)
         ..strokeWidth = 1.0
         ..style = PaintingStyle.stroke;
 
       final double endX = center.dx + r4 * math.cos(angle);
       final double endY = center.dy + r4 * math.sin(angle);
       canvas.drawLine(center, Offset(endX, endY), paintSweepLine);
+
+      // Particle trail behind sweep line (small dots fading out)
+      for (int i = 1; i <= 5; i++) {
+        final trailAngle = angle - (i * 0.08);
+        final trailR = r4 * (0.3 + i * 0.13);
+        final trailAlpha = (30 - i * 5).clamp(0, 255);
+        final trailPaint = Paint()
+          ..style = PaintingStyle.fill
+          ..color = color.withAlpha(trailAlpha);
+        canvas.drawCircle(
+          Offset(
+            center.dx + trailR * math.cos(trailAngle),
+            center.dy + trailR * math.sin(trailAngle),
+          ),
+          1.2,
+          trailPaint,
+        );
+      }
     }
   }
 
@@ -385,14 +523,12 @@ class SleekDeviceIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (isLaptop) {
-      // Custom Sleek minimalist Laptop base + screen
       return SizedBox(
         width: size * 1.35,
         height: size,
         child: Stack(
           alignment: Alignment.center,
           children: [
-            // Laptop screen bezel
             Positioned(
               top: size * 0.08,
               child: Container(
@@ -405,7 +541,6 @@ class SleekDeviceIcon extends StatelessWidget {
                 ),
               ),
             ),
-            // Screen webcam dot
             Positioned(
               top: size * 0.14,
               child: Container(
@@ -414,7 +549,6 @@ class SleekDeviceIcon extends StatelessWidget {
                 decoration: BoxDecoration(shape: BoxShape.circle, color: color),
               ),
             ),
-            // Laptop keyboard base line
             Positioned(
               bottom: size * 0.12,
               child: Container(
@@ -433,14 +567,12 @@ class SleekDeviceIcon extends StatelessWidget {
         ),
       );
     } else {
-      // Custom Sleek bezel-less Smartphone
       return SizedBox(
         width: size,
         height: size,
         child: Stack(
           alignment: Alignment.center,
           children: [
-            // Phone body
             Container(
               width: size * 0.56,
               height: size * 0.94,
@@ -450,7 +582,6 @@ class SleekDeviceIcon extends StatelessWidget {
                 color: color.withAlpha(10),
               ),
             ),
-            // Phone notch speaker line / punch hole
             Positioned(
               top: size * 0.12,
               child: Container(
@@ -462,7 +593,6 @@ class SleekDeviceIcon extends StatelessWidget {
                 ),
               ),
             ),
-            // Phone bottom home bar indicator
             Positioned(
               bottom: size * 0.08,
               child: Container(

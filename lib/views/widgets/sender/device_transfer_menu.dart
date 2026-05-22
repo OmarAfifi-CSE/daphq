@@ -39,7 +39,7 @@ class DeviceTransferMenu extends StatelessWidget {
             height: 520,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.white10),
+              border: Border.all(color: Colors.white.withAlpha(10)),
             ),
             child: DeviceTransferMenu(ip: ip, name: name, isDesktop: true),
           ),
@@ -77,45 +77,130 @@ class DeviceTransferMenu extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // Header
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    "Send to $name",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18.rx(isDesktop),
-                      fontWeight: FontWeight.bold,
+              if (!isDesktop) ...[
+                Row(
+                  children: [
+                    Container(
+                      padding: EdgeInsets.all(8.rr(isDesktop)),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withAlpha(15),
+                        borderRadius: BorderRadius.circular(10.rr(isDesktop)),
+                      ),
+                      child: Icon(
+                        Icons.send_rounded,
+                        color: AppColors.primaryLight,
+                        size: 18.rx(isDesktop),
+                      ),
+                    ),
+                    SizedBox(width: 10.rw(isDesktop)),
+                    Expanded(
+                      child: Text(
+                        "Send to $name",
+                        style: TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 17.rx(isDesktop),
+                          fontWeight: FontWeight.w700,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+                if (state.selectedPaths.isNotEmpty) ...[
+                  SizedBox(height: 8.rh(isDesktop)),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () => cubit.clearSelection(),
+                      icon: Icon(
+                        Icons.clear_all_rounded,
+                        color: AppColors.danger,
+                        size: 16.rx(isDesktop),
+                      ),
+                      label: Text(
+                        "Clear All",
+                        style: TextStyle(
+                          color: AppColors.danger,
+                          fontSize: 13.rx(isDesktop),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: TextButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
                     ),
                   ),
-                  Row(
-                    children: [
-                      if (state.selectedPaths.isNotEmpty)
-                        TextButton(
-                          onPressed: () => cubit.clearSelection(),
-                          child: Text(
-                            "Clear All",
-                            style: TextStyle(
-                              color: AppColors.danger,
-                              fontSize: 13.rx(isDesktop),
+                ],
+              ] else ...[
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: EdgeInsets.all(8.rr(isDesktop)),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withAlpha(15),
+                              borderRadius: BorderRadius.circular(
+                                10.rr(isDesktop),
+                              ),
+                            ),
+                            child: Icon(
+                              Icons.send_rounded,
+                              color: AppColors.primaryLight,
+                              size: 18.rx(isDesktop),
                             ),
                           ),
-                        ),
-                      if (isDesktop) ...[
-                        SizedBox(width: 10.rw(isDesktop)),
+                          SizedBox(width: 10.rw(isDesktop)),
+                          Expanded(
+                            child: Text(
+                              "Send to $name",
+                              style: TextStyle(
+                                color: AppColors.textPrimary,
+                                fontSize: 17.rx(isDesktop),
+                                fontWeight: FontWeight.w700,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        if (state.selectedPaths.isNotEmpty)
+                          TextButton(
+                            onPressed: () => cubit.clearSelection(),
+                            child: Text(
+                              "Clear All",
+                              style: TextStyle(
+                                color: AppColors.danger,
+                                fontSize: 13.rx(isDesktop),
+                              ),
+                            ),
+                          ),
+                        SizedBox(width: 8.rw(isDesktop)),
                         IconButton(
-                          icon: const Icon(Icons.close, color: Colors.white60),
+                          icon: Icon(
+                            Icons.close,
+                            color: AppColors.textMuted,
+                            size: 20.rx(isDesktop),
+                          ),
                           onPressed: () => Navigator.pop(context),
                         ),
                       ],
-                    ],
-                  ),
-                ],
-              ),
-              const Divider(color: Colors.white10, height: 30),
+                    ),
+                  ],
+                ),
+              ],
+              Divider(color: Colors.white.withAlpha(8), height: 28),
 
               // Add Buttons
-              // Unified Add Button
               UnifiedAddButton(isDesktop: isDesktop),
 
               SizedBox(height: 20.rh(isDesktop)),
@@ -127,17 +212,25 @@ class DeviceTransferMenu extends StatelessWidget {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(
-                              Icons.cloud_upload_outlined,
-                              size: 50.rx(isDesktop),
-                              color: Colors.white24,
+                            Container(
+                              padding: EdgeInsets.all(16.rr(isDesktop)),
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: AppColors.primary.withAlpha(8),
+                              ),
+                              child: Icon(
+                                Icons.cloud_upload_outlined,
+                                size: 40.rx(isDesktop),
+                                color: AppColors.textMuted.withAlpha(60),
+                              ),
                             ),
-                            SizedBox(height: 10.rh(isDesktop)),
+                            SizedBox(height: 12.rh(isDesktop)),
                             Text(
                               "No items selected yet",
                               style: TextStyle(
-                                color: Colors.white38,
+                                color: AppColors.textMuted,
                                 fontSize: 14.rx(isDesktop),
+                                fontWeight: FontWeight.w500,
                               ),
                             ),
                           ],
@@ -145,8 +238,10 @@ class DeviceTransferMenu extends StatelessWidget {
                       )
                     : ListView.separated(
                         itemCount: state.selectedPaths.length,
-                        separatorBuilder: (context, index) =>
-                            const Divider(color: Colors.white10, height: 1),
+                        separatorBuilder: (context, index) => Divider(
+                          color: Colors.white.withAlpha(6),
+                          height: 1,
+                        ),
                         itemBuilder: (context, index) {
                           final path = state.selectedPaths[index];
                           final isDir = FileSystemEntity.isDirectorySync(path);
@@ -158,28 +253,67 @@ class DeviceTransferMenu extends StatelessWidget {
                               ? segments.last
                               : path.replaceAll(RegExp(r'[\\/]+$'), '');
 
-                          return ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: Icon(
-                              isDir ? Icons.folder : Icons.insert_drive_file,
-                              color: isDir ? AppColors.primary : Colors.white70,
+                          // Staggered entrance
+                          return TweenAnimationBuilder<double>(
+                            tween: Tween(begin: 0.0, end: 1.0),
+                            duration: Duration(
+                              milliseconds: 250 + (index * 40).clamp(0, 200),
                             ),
-                            title: Text(
-                              name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 14.rx(isDesktop),
+                            curve: Curves.easeOutCubic,
+                            builder: (context, value, child) {
+                              return Opacity(
+                                opacity: value,
+                                child: Transform.translate(
+                                  offset: Offset(10 * (1 - value), 0),
+                                  child: child,
+                                ),
+                              );
+                            },
+                            child: ListTile(
+                              contentPadding: EdgeInsets.symmetric(
+                                horizontal: 4.rw(isDesktop),
+                                vertical: 2.rh(isDesktop),
                               ),
-                            ),
-                            trailing: IconButton(
-                              icon: const Icon(
-                                Icons.close,
-                                color: Colors.white38,
-                                size: 18,
+                              leading: Container(
+                                padding: EdgeInsets.all(8.rr(isDesktop)),
+                                decoration: BoxDecoration(
+                                  color:
+                                      (isDir
+                                              ? AppColors.primary
+                                              : AppColors.textMuted)
+                                          .withAlpha(12),
+                                  borderRadius: BorderRadius.circular(
+                                    8.rr(isDesktop),
+                                  ),
+                                ),
+                                child: Icon(
+                                  isDir
+                                      ? Icons.folder
+                                      : Icons.insert_drive_file,
+                                  color: isDir
+                                      ? AppColors.primary
+                                      : AppColors.textSecondary,
+                                  size: 18.rx(isDesktop),
+                                ),
                               ),
-                              onPressed: () => cubit.removeSelectedPath(path),
+                              title: Text(
+                                name,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: AppColors.textPrimary,
+                                  fontSize: 13.rx(isDesktop),
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              trailing: IconButton(
+                                icon: Icon(
+                                  Icons.close_rounded,
+                                  color: AppColors.textMuted,
+                                  size: 16.rx(isDesktop),
+                                ),
+                                onPressed: () => cubit.removeSelectedPath(path),
+                              ),
                             ),
                           );
                         },
@@ -187,7 +321,7 @@ class DeviceTransferMenu extends StatelessWidget {
               ),
 
               // Send Button
-              SizedBox(height: 20.rh(isDesktop)),
+              SizedBox(height: 16.rh(isDesktop)),
               AnimatedPressButton(
                 isDesktop: isDesktop,
                 onPressed: state.selectedPaths.isEmpty || state.isTransferring
@@ -207,7 +341,7 @@ class DeviceTransferMenu extends StatelessWidget {
                     Icon(
                       Icons.send_rounded,
                       color: Colors.white,
-                      size: 20.rx(isDesktop),
+                      size: 18.rx(isDesktop),
                     ),
                     SizedBox(width: 10.rw(isDesktop)),
                     Text(
@@ -216,8 +350,8 @@ class DeviceTransferMenu extends StatelessWidget {
                           : "Send ${state.selectedPaths.length} Items",
                       style: TextStyle(
                         color: Colors.white,
-                        fontSize: 16.rx(isDesktop),
-                        fontWeight: FontWeight.bold,
+                        fontSize: 15.rx(isDesktop),
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   ],

@@ -21,27 +21,34 @@ class AnimatedPressButton extends StatefulWidget {
 }
 
 class _AnimatedPressButtonState extends State<AnimatedPressButton>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
+    with TickerProviderStateMixin {
+  late AnimationController _pressController;
   late Animation<double> _scaleAnimation;
+  late AnimationController _shimmerController;
+  bool _isHovered = false;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
+    _pressController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 150),
-      reverseDuration: const Duration(milliseconds: 150),
+      duration: const Duration(milliseconds: 120),
+      reverseDuration: const Duration(milliseconds: 200),
     );
     _scaleAnimation = Tween<double>(
       begin: 1.0,
-      end: 0.95,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
+      end: 0.96,
+    ).animate(CurvedAnimation(parent: _pressController, curve: Curves.easeInOut));
+    _shimmerController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat();
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _pressController.dispose();
+    _shimmerController.dispose();
     super.dispose();
   }
 
@@ -49,13 +56,13 @@ class _AnimatedPressButtonState extends State<AnimatedPressButton>
 
   void _onTapDown(TapDownDetails details) {
     if (_isEnabled) {
-      _controller.forward();
+      _pressController.forward();
     }
   }
 
   void _onTapUp(TapUpDetails details) {
     if (_isEnabled) {
-      _controller.reverse();
+      _pressController.reverse();
       if (!widget.isDesktop) {
         HapticFeedback.lightImpact();
       }
@@ -65,54 +72,102 @@ class _AnimatedPressButtonState extends State<AnimatedPressButton>
 
   void _onTapCancel() {
     if (_isEnabled) {
-      _controller.reverse();
+      _pressController.reverse();
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final double minHeight = 50.0.rh(widget.isDesktop);
-    final double borderRadius = 15.0.rr(widget.isDesktop);
+    final double minHeight = 48.0.rh(widget.isDesktop);
+    final double borderRadius = 14.0.rr(widget.isDesktop);
 
-    return GestureDetector(
-      onTapDown: _onTapDown,
-      onTapUp: _onTapUp,
-      onTapCancel: _onTapCancel,
-      behavior: HitTestBehavior.opaque,
-      child: AnimatedBuilder(
-        animation: _scaleAnimation,
-        builder: (context, child) {
-          return Transform.scale(scale: _scaleAnimation.value, child: child);
-        },
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 300),
-          constraints: BoxConstraints(minHeight: minHeight),
-          padding: EdgeInsets.symmetric(
-            vertical: 8.rh(widget.isDesktop),
-            horizontal: 12.rw(widget.isDesktop),
-          ),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(borderRadius),
-            gradient: _isEnabled
-                ? LinearGradient(
-                    colors: widget.gradientColors,
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  )
-                : const LinearGradient(
-                    colors: [Colors.white12, Colors.white12],
-                  ),
-            boxShadow: _isEnabled
-                ? [
-                    BoxShadow(
-                      color: widget.gradientColors.first.withAlpha(76),
-                      blurRadius: 15,
-                      offset: const Offset(0, 4),
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      cursor: _isEnabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      child: GestureDetector(
+        onTapDown: _onTapDown,
+        onTapUp: _onTapUp,
+        onTapCancel: _onTapCancel,
+        behavior: HitTestBehavior.opaque,
+        child: AnimatedBuilder(
+          animation: _scaleAnimation,
+          builder: (context, child) {
+            return Transform.scale(scale: _scaleAnimation.value, child: child);
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            constraints: BoxConstraints(minHeight: minHeight),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(borderRadius),
+              gradient: _isEnabled
+                  ? LinearGradient(
+                      colors: widget.gradientColors,
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    )
+                  : LinearGradient(
+                      colors: [Colors.white.withAlpha(10), Colors.white.withAlpha(6)],
                     ),
-                  ]
-                : [],
+              boxShadow: _isEnabled
+                  ? [
+                      BoxShadow(
+                        color: widget.gradientColors.first.withAlpha(
+                          _isHovered ? 100 : 50,
+                        ),
+                        blurRadius: _isHovered ? 24 : 16,
+                        offset: const Offset(0, 4),
+                      ),
+                    ]
+                  : [],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(borderRadius),
+              child: Stack(
+                alignment: Alignment.center,
+                fit: StackFit.passthrough,
+                children: [
+                  // Shimmer sweep overlay
+                  if (_isEnabled && _isHovered)
+                    Positioned.fill(
+                      child: AnimatedBuilder(
+                        animation: _shimmerController,
+                        builder: (context, _) {
+                          return ShaderMask(
+                            shaderCallback: (bounds) {
+                              return LinearGradient(
+                                begin: Alignment(-1.0 + 3.0 * _shimmerController.value, 0),
+                                end: Alignment(-0.5 + 3.0 * _shimmerController.value, 0),
+                                colors: [
+                                  Colors.transparent,
+                                  Colors.white.withAlpha(25),
+                                  Colors.transparent,
+                                ],
+                              ).createShader(bounds);
+                            },
+                            blendMode: BlendMode.srcATop,
+                            child: Container(
+                              color: Colors.white.withAlpha(15),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  // Child content perfectly centered with padding
+                  Padding(
+                    padding: EdgeInsets.symmetric(
+                      vertical: 8.rh(widget.isDesktop),
+                      horizontal: 12.rw(widget.isDesktop),
+                    ),
+                    child: Center(
+                      widthFactor: 1.0,
+                      child: widget.child,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
-          child: Center(child: widget.child),
         ),
       ),
     );
