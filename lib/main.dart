@@ -170,6 +170,7 @@ class DaphqApp extends StatelessWidget {
                     selectionColor: AppColors.primary.withAlpha(100),
                     selectionHandleColor: AppColors.primary,
                   ),
+                  splashFactory: InkSparkle.splashFactory,
                   useMaterial3: true,
                   visualDensity: VisualDensity.adaptivePlatformDensity,
                   fontFamily: 'Roboto',

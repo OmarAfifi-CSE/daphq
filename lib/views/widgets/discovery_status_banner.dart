@@ -92,6 +92,7 @@ class _DiscoveryStatusBannerState extends State<DiscoveryStatusBanner> {
         message: AppConstants.discoveryStatusSearching,
         icon: Icons.loop_rounded,
         isSpinning: true,
+        hasShimmer: true,
         color: AppColors.discoveryRecovering,
       );
     }
@@ -108,10 +109,10 @@ class _DiscoveryStatusBannerState extends State<DiscoveryStatusBanner> {
               context: context,
               builder: (context) => AlertDialog(
                 backgroundColor: AppColors.dialogBackground,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                 title: const Text(
                   AppConstants.discoveryConflictHowTo,
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w700),
                 ),
                 content: const Column(
                   mainAxisSize: MainAxisSize.min,
@@ -119,20 +120,20 @@ class _DiscoveryStatusBannerState extends State<DiscoveryStatusBanner> {
                   children: [
                     Text(
                       AppConstants.discoveryConflictDesc,
-                      style: TextStyle(color: Colors.white70),
+                      style: TextStyle(color: AppColors.textSecondary),
                     ),
                     SizedBox(height: 16),
-                    Text(AppConstants.discoveryConflictStep1, style: TextStyle(color: Colors.white)),
+                    Text(AppConstants.discoveryConflictStep1, style: TextStyle(color: AppColors.textPrimary)),
                     SizedBox(height: 8),
-                    Text(AppConstants.discoveryConflictStep2, style: TextStyle(color: Colors.white)),
+                    Text(AppConstants.discoveryConflictStep2, style: TextStyle(color: AppColors.textPrimary)),
                     SizedBox(height: 8),
-                    Text(AppConstants.discoveryConflictStep3, style: TextStyle(color: Colors.white)),
+                    Text(AppConstants.discoveryConflictStep3, style: TextStyle(color: AppColors.textPrimary)),
                   ],
                 ),
                 actions: [
                   TextButton(
                     onPressed: () => Navigator.pop(context),
-                    child: const Text(AppConstants.discoveryConflictGotIt, style: TextStyle(color: Colors.white70)),
+                    child: const Text(AppConstants.discoveryConflictGotIt, style: TextStyle(color: AppColors.textMuted)),
                   ),
                   ElevatedButton(
                     onPressed: () {
@@ -142,6 +143,7 @@ class _DiscoveryStatusBannerState extends State<DiscoveryStatusBanner> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     ),
                     child: const Text(AppConstants.discoveryConflictTryAgain),
                   ),
@@ -151,7 +153,8 @@ class _DiscoveryStatusBannerState extends State<DiscoveryStatusBanner> {
           },
           style: TextButton.styleFrom(
             foregroundColor: Colors.white,
-            backgroundColor: Colors.white.withValues(alpha: 0.15),
+            backgroundColor: Colors.white.withAlpha(25),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           ),
           child: const Text(AppConstants.discoveryConflictHowTo),
         ),
@@ -171,11 +174,12 @@ class _DiscoveryStatusBannerState extends State<DiscoveryStatusBanner> {
   }
 }
 
-class _BannerContainer extends StatelessWidget {
+class _BannerContainer extends StatefulWidget {
   final String message;
   final IconData icon;
   final Color color;
   final bool isSpinning;
+  final bool hasShimmer;
   final Widget? trailing;
 
   const _BannerContainer({
@@ -184,36 +188,122 @@ class _BannerContainer extends StatelessWidget {
     required this.icon,
     required this.color,
     this.isSpinning = false,
+    this.hasShimmer = false,
     this.trailing,
   });
 
   @override
+  State<_BannerContainer> createState() => _BannerContainerState();
+}
+
+class _BannerContainerState extends State<_BannerContainer>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _shimmerController;
+
+  @override
+  void initState() {
+    super.initState();
+    _shimmerController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2000),
+    );
+    if (widget.hasShimmer) _shimmerController.repeat();
+  }
+
+  @override
+  void dispose() {
+    _shimmerController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Material(
-      color: color,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-        child: Row(
-          children: [
-            if (isSpinning)
-              const _SpinningIcon(icon: Icons.sync_rounded)
-            else
-              Icon(icon, color: Colors.white, size: 20),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Text(
-                message,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 14,
-                ),
-              ),
+    return AnimatedBuilder(
+      animation: _shimmerController,
+      builder: (context, child) {
+        return Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                widget.color,
+                widget.color.withAlpha(200),
+                widget.color,
+              ],
+              stops: widget.hasShimmer
+                  ? [
+                      (_shimmerController.value - 0.3).clamp(0.0, 1.0),
+                      _shimmerController.value,
+                      (_shimmerController.value + 0.3).clamp(0.0, 1.0),
+                    ]
+                  : const [0.0, 0.5, 1.0],
             ),
-            // ignore: use_null_aware_elements
-            if (trailing != null) trailing!,
-          ],
+          ),
+          child: child,
+        );
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        child: Builder(
+          builder: (context) {
+            final bool isMobile = MediaQuery.of(context).size.width < 450;
+            if (isMobile && widget.trailing != null) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (widget.isSpinning)
+                        const _SpinningIcon(icon: Icons.sync_rounded)
+                      else
+                        Icon(widget.icon, color: Colors.white, size: 20),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          widget.message,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: widget.trailing,
+                  ),
+                ],
+              );
+            }
+            return Row(
+              children: [
+                if (widget.isSpinning)
+                  const _SpinningIcon(icon: Icons.sync_rounded)
+                else
+                  Icon(widget.icon, color: Colors.white, size: 20),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Text(
+                    widget.message,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+                // ignore: use_null_aware_elements
+                if (widget.trailing != null) ...[
+                  const SizedBox(width: 12),
+                  widget.trailing!,
+                ],
+              ],
+            );
+          },
         ),
       ),
     );

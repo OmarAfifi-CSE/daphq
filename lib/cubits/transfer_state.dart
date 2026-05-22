@@ -32,6 +32,7 @@ class TransferState {
   final bool isLastTransferIncoming;
   final String? receiveFolder;
   final String targetIp;
+  final bool showProgressView;
 
   // Discovery fields
   final List<DiscoveryModel> discoveredDevices;
@@ -55,6 +56,7 @@ class TransferState {
     this.isLastTransferIncoming = false,
     this.receiveFolder,
     String? targetIp,
+    this.showProgressView = false,
     this.discoveredDevices = const [],
     this.deviceName = 'Unknown Device',
     this.isAdvancedMode = false,
@@ -75,6 +77,7 @@ class TransferState {
     bool? isLastTransferIncoming,
     String? receiveFolder,
     String? targetIp,
+    bool? showProgressView,
     List<DiscoveryModel>? discoveredDevices,
     String? deviceName,
     bool? isAdvancedMode,
@@ -98,6 +101,7 @@ class TransferState {
           isLastTransferIncoming ?? this.isLastTransferIncoming,
       receiveFolder: receiveFolder ?? this.receiveFolder,
       targetIp: targetIp ?? this.targetIp,
+      showProgressView: showProgressView ?? this.showProgressView,
       discoveredDevices: discoveredDevices ?? this.discoveredDevices,
       deviceName: deviceName ?? this.deviceName,
       isAdvancedMode: isAdvancedMode ?? this.isAdvancedMode,

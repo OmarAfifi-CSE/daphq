@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../core/app_colors.dart';
 import '../../../core/responsive_utils.dart';
 
 class StatusText extends StatelessWidget {
@@ -18,8 +19,9 @@ class StatusText extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final style = TextStyle(
-      color: isError ? Colors.redAccent : Colors.greenAccent,
+      color: isError ? AppColors.danger : AppColors.success,
       fontSize: 14.0.rx(isDesktop),
+      fontWeight: FontWeight.w500,
     );
 
     if (tooltip != null) {

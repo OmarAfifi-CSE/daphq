@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:window_manager/window_manager.dart';
@@ -8,8 +9,8 @@ import '../core/app_constants.dart';
 import 'widgets/common/info_dialog.dart';
 import 'widgets/common/history_dialog.dart';
 import 'widgets/common/transfer_progress_view.dart';
-import 'widgets/receiver/receiver_section.dart';
-import 'widgets/sender/sender_section.dart';
+import 'widgets/common/unified_dashboard.dart';
+import 'widgets/common/animated_background.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../cubits/transfer_cubit.dart';
@@ -69,7 +70,7 @@ class _HomePageState extends State<HomePage> {
               duration: const Duration(seconds: 3),
               action: SnackBarAction(
                 label: "DISABLE",
-                textColor: Colors.indigoAccent,
+                textColor: AppColors.primaryLight,
                 onPressed: () =>
                     Permission.ignoreBatteryOptimizations.request(),
               ),
@@ -84,18 +85,18 @@ class _HomePageState extends State<HomePage> {
               builder: (dialogContext) => AlertDialog(
                 backgroundColor: AppColors.dialogBackground,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(16),
                 ),
                 content: const Text(
                   AppConstants.storagePermissionRequired,
-                  style: TextStyle(color: Colors.white),
+                  style: TextStyle(color: AppColors.textPrimary),
                 ),
                 actions: [
                   TextButton(
                     onPressed: () => Navigator.pop(dialogContext),
                     child: const Text(
                       AppConstants.cancel,
-                      style: TextStyle(color: Colors.white70),
+                      style: TextStyle(color: AppColors.textMuted),
                     ),
                   ),
                   TextButton(
@@ -105,7 +106,7 @@ class _HomePageState extends State<HomePage> {
                     },
                     child: const Text(
                       AppConstants.openSettings,
-                      style: TextStyle(color: Colors.blue),
+                      style: TextStyle(color: AppColors.primary),
                     ),
                   ),
                 ],
@@ -121,11 +122,11 @@ class _HomePageState extends State<HomePage> {
               builder: (dialogContext) => AlertDialog(
                 backgroundColor: AppColors.dialogBackground,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(16),
                 ),
                 content: const Text(
                   AppConstants.notificationPermissionWarning,
-                  style: TextStyle(color: Colors.white),
+                  style: TextStyle(color: AppColors.textPrimary),
                 ),
                 actions: [
                   TextButton(
@@ -135,7 +136,7 @@ class _HomePageState extends State<HomePage> {
                     },
                     child: const Text(
                       AppConstants.proceedAnyway,
-                      style: TextStyle(color: Colors.white70),
+                      style: TextStyle(color: AppColors.textMuted),
                     ),
                   ),
                   TextButton(
@@ -146,7 +147,7 @@ class _HomePageState extends State<HomePage> {
                     },
                     child: const Text(
                       AppConstants.openSettings,
-                      style: TextStyle(color: Colors.blue),
+                      style: TextStyle(color: AppColors.primary),
                     ),
                   ),
                 ],
@@ -167,231 +168,319 @@ class _HomePageState extends State<HomePage> {
             });
           }
         },
-        child: Scaffold(
-          extendBodyBehindAppBar: true,
-          backgroundColor: Colors.transparent,
-          appBar: (Platform.isWindows || Platform.isLinux || Platform.isMacOS)
-              ? PreferredSize(
-                  preferredSize: const Size.fromHeight(kWindowCaptionHeight),
-                  child: WindowCaption(
-                    brightness: Brightness.dark,
-                    backgroundColor: AppColors.appBarBackground,
-                    title: Row(
-                      children: [
-                        Image.asset(
-                          'assets/logo.png',
-                          width: 16,
-                          height: 16,
-                          filterQuality: FilterQuality.high,
+        child: BlocBuilder<TransferCubit, TransferState>(
+          builder: (context, state) {
+            return PopScope(
+              canPop:
+                  !state.showProgressView ||
+                  state.isTransferring ||
+                  state.isReceivingActive,
+              onPopInvokedWithResult: (didPop, result) {
+                if (didPop) return;
+                if (state.showProgressView &&
+                    !state.isTransferring &&
+                    !state.isReceivingActive) {
+                  context.read<TransferCubit>().dismissProgress();
+                }
+              },
+              child: Scaffold(
+                extendBodyBehindAppBar: true,
+                backgroundColor: Colors.transparent,
+                appBar:
+                    (Platform.isWindows || Platform.isLinux || Platform.isMacOS)
+                    ? PreferredSize(
+                        preferredSize: const Size.fromHeight(
+                          kWindowCaptionHeight,
                         ),
-                        const SizedBox(width: 8),
-                        const Text(
-                          AppConstants.appName,
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              : AppBar(
-                  scrolledUnderElevation: 0,
-                  leading: IconButton(
-                    onPressed: () => InfoDialog.show(context),
-                    icon: const Icon(
-                      Icons.info_outline_rounded,
-                      color: Colors.white70,
-                    ),
-                    tooltip: "How to use",
-                  ),
-                  title: Text(
-                    AppConstants.appName,
-                    style: TextStyle(color: Colors.white, fontSize: 20.sp),
-                  ),
-                  centerTitle: true,
-                  elevation: 0,
-                  backgroundColor: Colors.transparent,
-                  iconTheme: IconThemeData(color: Colors.white, size: 24.sp),
-                  actions: [
-                    IconButton(
-                      onPressed: () =>
-                          HistoryDialog.show(context, isDesktop: false),
-                      icon: const Icon(
-                        Icons.history_rounded,
-                        color: Colors.white70,
-                      ),
-                      tooltip: "Transfer History",
-                    ),
-                  ],
-                ),
-          body: Container(
-            color: AppColors.background,
-            child: SafeArea(
-              child: Column(
-                children: [
-                  DiscoveryStatusBanner(
-                    discoveryService: context.read<TransferCubit>().discovery,
-                  ),
-                  Expanded(
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        bool isDesktopWide = constraints.maxWidth > 800;
-                        final bool isDesktopOS =
-                            Platform.isWindows ||
-                            Platform.isMacOS ||
-                            Platform.isLinux;
-
-                        if (isDesktopWide) {
-                          return Align(
-                            alignment: Alignment.center,
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 1100),
-                              child: Padding(
-                                padding: const EdgeInsets.all(20.0),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  children: [
-                                    Expanded(
-                                      flex: 1,
-                                      child: SingleChildScrollView(
-                                        physics: const BouncingScrollPhysics(),
-                                        child: Column(
-                                          children: [
-                                            _animatedStagger(
-                                              index: 0,
-                                              child: TransferProgressView(
-                                                isDesktop: isDesktopOS,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 20),
-                                    Expanded(
-                                      flex: 1,
-                                      child: SingleChildScrollView(
-                                        physics: const BouncingScrollPhysics(),
-                                        child: Column(
-                                          children: [
-                                            _animatedStagger(
-                                              index: 2,
-                                              child: ReceiverSection(
-                                                isDesktop: isDesktopOS,
-                                              ),
-                                            ),
-                                            const SizedBox(height: 20),
-                                            _animatedStagger(
-                                              index: 3,
-                                              child: SenderSection(
-                                                isDesktop: isDesktopOS,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ],
+                        child: WindowCaption(
+                          brightness: Brightness.dark,
+                          backgroundColor: AppColors.appBarBackground,
+                          title: Row(
+                            children: [
+                              Image.asset(
+                                'assets/logo.png',
+                                width: 16,
+                                height: 16,
+                                filterQuality: FilterQuality.high,
+                              ),
+                              const SizedBox(width: 8),
+                              const Text(
+                                AppConstants.appName,
+                                style: TextStyle(
+                                  color: AppColors.textPrimary,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0.5,
                                 ),
                               ),
+                            ],
+                          ),
+                        ),
+                      )
+                    : AppBar(
+                        scrolledUnderElevation: 0,
+                        leadingWidth: 60.w,
+                        flexibleSpace: ClipRect(
+                          child: BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: AppColors.background.withAlpha(140),
+                              ),
                             ),
-                          );
-                        }
-
-                        return Align(
-                          alignment: Alignment.topCenter,
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 500),
-                            child: SingleChildScrollView(
-                              physics: isDesktopOS
-                                  ? const ClampingScrollPhysics()
-                                  : const BouncingScrollPhysics(),
-                              padding: isDesktopOS
-                                  ? const EdgeInsets.all(20.0)
-                                  : EdgeInsets.fromLTRB(20.w, 10.w, 20.w, 20.w),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  _animatedStagger(
-                                    index: 0,
-                                    child: TransferProgressView(
-                                      isDesktop: isDesktopOS,
-                                    ),
-                                  ),
-                                  SizedBox(height: isDesktopOS ? 15.0 : 15.h),
-                                  _animatedStagger(
-                                    index: 1,
-                                    child: ReceiverSection(
-                                      isDesktop: isDesktopOS,
-                                    ),
-                                  ),
-                                  SizedBox(height: isDesktopOS ? 15.0 : 15.h),
-                                  _animatedStagger(
-                                    index: 2,
-                                    child: SenderSection(
-                                      isDesktop: isDesktopOS,
-                                    ),
+                          ),
+                        ),
+                        leading: Padding(
+                          padding: EdgeInsets.only(left: 12.w),
+                          child: Center(
+                            child: Container(
+                              width: 38.w,
+                              height: 38.w,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: AppColors.primary.withAlpha(25),
+                                border: Border.all(
+                                  color: AppColors.primary.withAlpha(90),
+                                  width: 1.0,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: AppColors.primary.withAlpha(15),
+                                    blurRadius: 8,
+                                    spreadRadius: 1,
                                   ),
                                 ],
                               ),
+                              child: IconButton(
+                                padding: EdgeInsets.zero,
+                                onPressed: () => InfoDialog.show(context),
+                                icon: Icon(
+                                  Icons.info_outline_rounded,
+                                  color: AppColors.primaryLight.withAlpha(220),
+                                  size: 18.sp,
+                                ),
+                                tooltip: "How to use",
+                              ),
                             ),
                           ),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          floatingActionButton:
-              (Platform.isWindows || Platform.isLinux || Platform.isMacOS)
-              ? Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    FloatingActionButton.small(
-                      heroTag: 'history_fab',
-                      onPressed: () =>
-                          HistoryDialog.show(context, isDesktop: true),
-                      backgroundColor: AppColors.primary.withAlpha(25),
-                      elevation: 0,
-                      hoverElevation: 2,
-                      highlightElevation: 0,
-                      tooltip: "Transfer History",
-                      child: Icon(
-                        Icons.history_rounded,
-                        color: AppColors.primaryLight.withAlpha(90),
-                        size: 20,
+                        ),
+                        title: ShaderMask(
+                          shaderCallback: (bounds) => const LinearGradient(
+                            colors: [
+                              Color(0xFFE3F2FD), // Icy soft white
+                              AppColors.primaryLight, // Cyber blue accent
+                            ],
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                          ).createShader(bounds),
+                          child: Text(
+                            "DAPHQ",
+                            style: TextStyle(
+                              fontSize: 22.sp,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 2.0,
+                              fontFamily: 'Roboto',
+                              color: Colors.white,
+                              shadows: [
+                                Shadow(
+                                  color: AppColors.primary.withAlpha(140),
+                                  blurRadius: 10,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        centerTitle: true,
+                        elevation: 0,
+                        backgroundColor: Colors.transparent,
+                        actions: [
+                          Padding(
+                            padding: EdgeInsets.only(right: 12.w),
+                            child: Center(
+                              child: Container(
+                                width: 38.w,
+                                height: 38.w,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: AppColors.primary.withAlpha(25),
+                                  border: Border.all(
+                                    color: AppColors.primary.withAlpha(90),
+                                    width: 1.0,
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: AppColors.primary.withAlpha(15),
+                                      blurRadius: 8,
+                                      spreadRadius: 1,
+                                    ),
+                                  ],
+                                ),
+                                child: IconButton(
+                                  padding: EdgeInsets.zero,
+                                  onPressed: () => HistoryDialog.show(
+                                    context,
+                                    isDesktop: false,
+                                  ),
+                                  icon: Icon(
+                                    Icons.history_rounded,
+                                    color: AppColors.primaryLight.withAlpha(
+                                      220,
+                                    ),
+                                    size: 18.sp,
+                                  ),
+                                  tooltip: "Transfer History",
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    FloatingActionButton.small(
-                      heroTag: 'info_fab',
-                      onPressed: () => InfoDialog.show(context),
-                      backgroundColor: AppColors.primary.withAlpha(25),
-                      elevation: 0,
-                      hoverElevation: 2,
-                      highlightElevation: 0,
-                      tooltip: "How to use",
-                      child: Icon(
-                        Icons.info_outline_rounded,
-                        color: AppColors.primaryLight.withAlpha(90),
-                        size: 20,
+                body: Stack(
+                  children: [
+                    // Background layer
+                    Container(color: AppColors.background),
+                    // Animated particle field
+                    const AnimatedBackground(),
+                    // Main content
+                    SafeArea(
+                      child: Column(
+                        children: [
+                          DiscoveryStatusBanner(
+                            discoveryService: context
+                                .read<TransferCubit>()
+                                .discovery,
+                          ),
+                          Expanded(
+                            child: BlocBuilder<TransferCubit, TransferState>(
+                              builder: (context, state) {
+                                return LayoutBuilder(
+                                  builder: (context, constraints) {
+                                    final bool isDesktopOS =
+                                        Platform.isWindows ||
+                                        Platform.isMacOS ||
+                                        Platform.isLinux;
+
+                                    return Align(
+                                      alignment: Alignment.center,
+                                      child: ConstrainedBox(
+                                        constraints: const BoxConstraints(
+                                          maxWidth: 500,
+                                        ),
+                                        child: SingleChildScrollView(
+                                          physics: isDesktopOS
+                                              ? const ClampingScrollPhysics()
+                                              : const BouncingScrollPhysics(),
+                                          padding: isDesktopOS
+                                              ? const EdgeInsets.all(20.0)
+                                              : EdgeInsets.fromLTRB(
+                                                  20.w,
+                                                  10.w,
+                                                  20.w,
+                                                  20.w,
+                                                ),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.stretch,
+                                            children: [
+                                              AnimatedSwitcher(
+                                                duration: const Duration(
+                                                  milliseconds: 300,
+                                                ),
+                                                switchInCurve:
+                                                    Curves.easeInOutCubic,
+                                                switchOutCurve:
+                                                    Curves.easeInOutCubic,
+                                                child: state.showProgressView
+                                                    ? _animatedStagger(
+                                                        key: const ValueKey(
+                                                          'progress_view',
+                                                        ),
+                                                        index: 0,
+                                                        child:
+                                                            TransferProgressView(
+                                                              isDesktop:
+                                                                  isDesktopOS,
+                                                            ),
+                                                      )
+                                                    : _animatedStagger(
+                                                        key: const ValueKey(
+                                                          'unified_dashboard',
+                                                        ),
+                                                        index: 0,
+                                                        child: UnifiedDashboard(
+                                                          isDesktop:
+                                                              isDesktopOS,
+                                                        ),
+                                                      ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                );
+                              },
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
-                )
-              : null,
+                ),
+                floatingActionButton:
+                    (Platform.isWindows || Platform.isLinux || Platform.isMacOS)
+                    ? Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          FloatingActionButton.small(
+                            heroTag: 'history_fab',
+                            onPressed: () =>
+                                HistoryDialog.show(context, isDesktop: true),
+                            backgroundColor: AppColors.primary.withAlpha(20),
+                            elevation: 0,
+                            hoverElevation: 4,
+                            highlightElevation: 0,
+                            tooltip: "Transfer History",
+                            child: Icon(
+                              Icons.history_rounded,
+                              color: AppColors.primaryLight.withAlpha(120),
+                              size: 20,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          FloatingActionButton.small(
+                            heroTag: 'info_fab',
+                            onPressed: () => InfoDialog.show(context),
+                            backgroundColor: AppColors.primary.withAlpha(20),
+                            elevation: 0,
+                            hoverElevation: 4,
+                            highlightElevation: 0,
+                            tooltip: "How to use",
+                            child: Icon(
+                              Icons.info_outline_rounded,
+                              color: AppColors.primaryLight.withAlpha(120),
+                              size: 20,
+                            ),
+                          ),
+                        ],
+                      )
+                    : null,
+              ),
+            );
+          },
         ),
       ),
     );
   }
 
-  Widget _animatedStagger({required int index, required Widget child}) {
+  Widget _animatedStagger({
+    Key? key,
+    required int index,
+    required Widget child,
+  }) {
     return TweenAnimationBuilder<double>(
+      key: key,
       tween: Tween(begin: 0.0, end: 1.0),
       duration: const Duration(milliseconds: 500),
       curve: Curves.easeOutCubic,
