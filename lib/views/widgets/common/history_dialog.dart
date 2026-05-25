@@ -8,6 +8,7 @@ import '../../../cubits/transfer_cubit.dart';
 import '../../../cubits/transfer_state.dart';
 import '../../../core/app_colors.dart';
 import '../../../services/history_service.dart';
+import 'package:open_filex/open_filex.dart';
 
 class HistoryDialog extends StatefulWidget {
   final bool isDesktop;
@@ -100,6 +101,35 @@ class _HistoryDialogState extends State<HistoryDialog> {
     }
   }
 
+  Future<void> _openFile(String path) async {
+    try {
+      if (await FileSystemEntity.isDirectory(path)) {
+        await _openFolder(path);
+        return;
+      }
+      final result = await OpenFilex.open(path);
+      if (result.type != ResultType.done &&
+          result.type != ResultType.noAppToOpen &&
+          mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not open file: ${result.message}'),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not open file.'),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _openFolder(String path) async {
     try {
       String targetPath = path;
@@ -135,6 +165,53 @@ class _HistoryDialogState extends State<HistoryDialog> {
           ),
         );
       }
+    }
+  }
+
+  IconData _getFileIcon(String fileName) {
+    final ext = p.extension(fileName).toLowerCase();
+    switch (ext) {
+      case '.jpg':
+      case '.jpeg':
+      case '.png':
+      case '.gif':
+      case '.webp':
+      case '.heic':
+        return Icons.photo_library_rounded; // More premium than basic image
+      case '.mp4':
+      case '.mkv':
+      case '.avi':
+      case '.mov':
+      case '.webm':
+        return Icons.smart_display_rounded; // Sleek TV/Play icon
+      case '.mp3':
+      case '.wav':
+      case '.m4a':
+      case '.flac':
+      case '.ogg':
+        return Icons.headphones_rounded; // Premium audio feel
+      case '.pdf':
+        return Icons.picture_as_pdf_rounded;
+      case '.doc':
+      case '.docx':
+      case '.txt':
+      case '.rtf':
+      case '.md':
+        return Icons.notes_rounded;
+      case '.zip':
+      case '.rar':
+      case '.7z':
+      case '.tar':
+      case '.gz':
+        return Icons.archive_rounded; // Professional archive icon
+      case '.apk':
+        return Icons.android_rounded;
+      case '.exe':
+      case '.msi':
+        return Icons.terminal_rounded; // Dev/System feel
+      default:
+        if (ext.isEmpty) return Icons.folder_copy_rounded;
+        return Icons.insert_drive_file_rounded;
     }
   }
 
@@ -347,7 +424,7 @@ class _HistoryDialogState extends State<HistoryDialog> {
           borderRadius: BorderRadius.circular(12),
           hoverColor: AppColors.primary.withAlpha(8),
           onTap: (isSuccess && entry.localPath != null)
-              ? () => _openFolder(entry.localPath!)
+              ? () => _openFile(entry.localPath!)
               : null,
           child: Padding(
             padding: EdgeInsets.symmetric(
@@ -356,25 +433,53 @@ class _HistoryDialogState extends State<HistoryDialog> {
             ),
             child: Row(
               children: [
-                // Direction icon
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: (isSend ? AppColors.primary : AppColors.success)
-                        .withAlpha(15),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    isSend
-                        ? Icons.arrow_upward_rounded
-                        : Icons.arrow_downward_rounded,
-                    color: isSend
-                        ? AppColors.primaryLight
-                        : AppColors.successLight,
-                    size: widget.isDesktop ? 18 : 18.sp,
-                  ),
+                // Premium Icon with Direction Badge
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: (isSend ? AppColors.primary : AppColors.success)
+                            .withAlpha(15),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color:
+                              (isSend ? AppColors.primary : AppColors.success)
+                                  .withAlpha(30),
+                        ),
+                      ),
+                      child: Icon(
+                        _getFileIcon(entry.fileName),
+                        color: isSend ? AppColors.primary : AppColors.success,
+                        size: widget.isDesktop ? 22 : 20.sp,
+                      ),
+                    ),
+                    Positioned(
+                      bottom: -4,
+                      right: -4,
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: BoxDecoration(
+                          color: isSend ? AppColors.primary : AppColors.success,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: AppColors.background,
+                            width: 2.5,
+                          ),
+                        ),
+                        child: Icon(
+                          isSend
+                              ? Icons.arrow_upward_rounded
+                              : Icons.arrow_downward_rounded,
+                          color: Colors.white,
+                          size: widget.isDesktop ? 10 : 9.sp,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 12),
+                SizedBox(width: widget.isDesktop ? 16 : 14.w),
                 // Details
                 Expanded(
                   child: Column(
@@ -456,10 +561,14 @@ class _HistoryDialogState extends State<HistoryDialog> {
                 ),
                 // Folder open icon
                 if (isSuccess && entry.localPath != null)
-                  Icon(
-                    Icons.folder_open_rounded,
-                    color: AppColors.primaryLight.withAlpha(120),
-                    size: widget.isDesktop ? 20 : 20.sp,
+                  IconButton(
+                    icon: Icon(
+                      Icons.folder_open_rounded,
+                      color: AppColors.primaryLight.withAlpha(120),
+                      size: widget.isDesktop ? 20 : 20.sp,
+                    ),
+                    tooltip: 'Show in folder',
+                    onPressed: () => _openFolder(entry.localPath!),
                   ),
               ],
             ),

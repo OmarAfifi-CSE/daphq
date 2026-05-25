@@ -85,7 +85,7 @@ class HistoryEntryInput {
 }
 
 class HistoryService {
-  static const int _maxHistoryItems = 50;
+  static const int _maxHistoryItems = 2000;
 
   static Future<File> _getFile() async {
     final dir = await getApplicationSupportDirectory();
