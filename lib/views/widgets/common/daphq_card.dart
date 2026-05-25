@@ -55,8 +55,8 @@ class _DaphqCardState extends State<DaphqCard>
             boxShadow: [
               BoxShadow(
                 color: glow.withAlpha(18),
-                blurRadius: 24,
-                offset: const Offset(0, 8),
+                blurRadius: 5,
+                offset: const Offset(0, 2),
               ),
             ],
           ),

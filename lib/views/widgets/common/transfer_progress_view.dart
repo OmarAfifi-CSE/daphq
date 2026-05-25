@@ -42,11 +42,16 @@ class TransferProgressView extends StatelessWidget {
         final bool isDone =
             status.contains("complete") || status.contains("success");
         final bool isFailed =
+            (!(state.isTransferring || state.isReceivingActive) && !isDone) ||
             status.contains("error") ||
             status.contains("failed") ||
             status.contains("cancelled") ||
             status.contains("rejected") ||
-            status.contains("stopped");
+            status.contains("stopped") ||
+            status.contains("timeout") ||
+            status.contains("refused") ||
+            status.contains("not found") ||
+            status.contains("unreachable");
 
         return AnimatedSize(
           duration: const Duration(milliseconds: 350),
