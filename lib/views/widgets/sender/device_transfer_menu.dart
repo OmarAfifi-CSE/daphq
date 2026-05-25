@@ -253,67 +253,49 @@ class DeviceTransferMenu extends StatelessWidget {
                               ? segments.last
                               : path.replaceAll(RegExp(r'[\\/]+$'), '');
 
-                          // Staggered entrance
-                          return TweenAnimationBuilder<double>(
-                            tween: Tween(begin: 0.0, end: 1.0),
-                            duration: Duration(
-                              milliseconds: 250 + (index * 40).clamp(0, 200),
+                          // Staggered entrance animation removed for performance on large lists
+                          return ListTile(
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 4.rw(isDesktop),
+                              vertical: 2.rh(isDesktop),
                             ),
-                            curve: Curves.easeOutCubic,
-                            builder: (context, value, child) {
-                              return Opacity(
-                                opacity: value,
-                                child: Transform.translate(
-                                  offset: Offset(10 * (1 - value), 0),
-                                  child: child,
-                                ),
-                              );
-                            },
-                            child: ListTile(
-                              contentPadding: EdgeInsets.symmetric(
-                                horizontal: 4.rw(isDesktop),
-                                vertical: 2.rh(isDesktop),
-                              ),
-                              leading: Container(
-                                padding: EdgeInsets.all(8.rr(isDesktop)),
-                                decoration: BoxDecoration(
-                                  color:
-                                      (isDir
-                                              ? AppColors.primary
-                                              : AppColors.textMuted)
-                                          .withAlpha(12),
-                                  borderRadius: BorderRadius.circular(
-                                    8.rr(isDesktop),
-                                  ),
-                                ),
-                                child: Icon(
-                                  isDir
-                                      ? Icons.folder
-                                      : Icons.insert_drive_file,
-                                  color: isDir
-                                      ? AppColors.primary
-                                      : AppColors.textSecondary,
-                                  size: 18.rx(isDesktop),
+                            leading: Container(
+                              padding: EdgeInsets.all(8.rr(isDesktop)),
+                              decoration: BoxDecoration(
+                                color:
+                                    (isDir
+                                            ? AppColors.primary
+                                            : AppColors.textMuted)
+                                        .withAlpha(12),
+                                borderRadius: BorderRadius.circular(
+                                  8.rr(isDesktop),
                                 ),
                               ),
-                              title: Text(
-                                name,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: AppColors.textPrimary,
-                                  fontSize: 13.rx(isDesktop),
-                                  fontWeight: FontWeight.w500,
-                                ),
+                              child: Icon(
+                                isDir ? Icons.folder : Icons.insert_drive_file,
+                                color: isDir
+                                    ? AppColors.primary
+                                    : AppColors.textSecondary,
+                                size: 18.rx(isDesktop),
                               ),
-                              trailing: IconButton(
-                                icon: Icon(
-                                  Icons.close_rounded,
-                                  color: AppColors.textMuted,
-                                  size: 16.rx(isDesktop),
-                                ),
-                                onPressed: () => cubit.removeSelectedPath(path),
+                            ),
+                            title: Text(
+                              name,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: AppColors.textPrimary,
+                                fontSize: 13.rx(isDesktop),
+                                fontWeight: FontWeight.w500,
                               ),
+                            ),
+                            trailing: IconButton(
+                              icon: Icon(
+                                Icons.close_rounded,
+                                color: AppColors.textMuted,
+                                size: 16.rx(isDesktop),
+                              ),
+                              onPressed: () => cubit.removeSelectedPath(path),
                             ),
                           );
                         },

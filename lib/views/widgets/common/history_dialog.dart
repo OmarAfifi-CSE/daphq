@@ -333,149 +333,135 @@ class _HistoryDialogState extends State<HistoryDialog> {
       }
     }
 
-    // Staggered entrance animation
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0.0, end: 1.0),
-      duration: Duration(milliseconds: 300 + (index * 50).clamp(0, 300)),
-      curve: Curves.easeOutCubic,
-      builder: (context, value, child) {
-        return Opacity(
-          opacity: value,
-          child: Transform.translate(
-            offset: Offset(0, 12 * (1 - value)),
-            child: child,
-          ),
-        );
-      },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        decoration: BoxDecoration(
-          color: Colors.white.withAlpha(6),
+    // Staggered entrance animation removed for performance on large lists
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withAlpha(6),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withAlpha(8)),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.white.withAlpha(8)),
-        ),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            hoverColor: AppColors.primary.withAlpha(8),
-            onTap: (isSuccess && entry.localPath != null)
-                ? () => _openFolder(entry.localPath!)
-                : null,
-            child: Padding(
-              padding: EdgeInsets.symmetric(
-                horizontal: widget.isDesktop ? 14.0 : 12.w,
-                vertical: 10,
-              ),
-              child: Row(
-                children: [
-                  // Direction icon
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: (isSend ? AppColors.primary : AppColors.success)
-                          .withAlpha(15),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      isSend
-                          ? Icons.arrow_upward_rounded
-                          : Icons.arrow_downward_rounded,
-                      color: isSend
-                          ? AppColors.primaryLight
-                          : AppColors.successLight,
-                      size: widget.isDesktop ? 18 : 18.sp,
-                    ),
+          hoverColor: AppColors.primary.withAlpha(8),
+          onTap: (isSuccess && entry.localPath != null)
+              ? () => _openFolder(entry.localPath!)
+              : null,
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: widget.isDesktop ? 14.0 : 12.w,
+              vertical: 10,
+            ),
+            child: Row(
+              children: [
+                // Direction icon
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: (isSend ? AppColors.primary : AppColors.success)
+                        .withAlpha(15),
+                    shape: BoxShape.circle,
                   ),
-                  const SizedBox(width: 12),
-                  // Details
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          entry.fileName,
-                          style: TextStyle(
-                            color: AppColors.textPrimary,
-                            fontWeight: FontWeight.w600,
-                            fontSize: widget.isDesktop ? 14 : 14.sp,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
+                  child: Icon(
+                    isSend
+                        ? Icons.arrow_upward_rounded
+                        : Icons.arrow_downward_rounded,
+                    color: isSend
+                        ? AppColors.primaryLight
+                        : AppColors.successLight,
+                    size: widget.isDesktop ? 18 : 18.sp,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // Details
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        entry.fileName,
+                        style: TextStyle(
+                          color: AppColors.textPrimary,
+                          fontWeight: FontWeight.w600,
+                          fontSize: widget.isDesktop ? 14 : 14.sp,
                         ),
-                        const SizedBox(height: 4),
-                        Wrap(
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          spacing: 6,
-                          runSpacing: 2,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Wrap(
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 6,
+                        runSpacing: 2,
+                        children: [
+                          Text(
+                            entry.formattedSize,
+                            style: TextStyle(
+                              color: AppColors.textMuted,
+                              fontSize: widget.isDesktop ? 12 : 11.sp,
+                            ),
+                          ),
+                          Container(
+                            width: 3,
+                            height: 3,
+                            decoration: BoxDecoration(
+                              color: AppColors.textMuted.withAlpha(60),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          Text(
+                            entry.formattedDate,
+                            style: TextStyle(
+                              color: AppColors.textMuted,
+                              fontSize: widget.isDesktop ? 12 : 11.sp,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      // Status pill
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: statusColor.withAlpha(15),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text(
-                              entry.formattedSize,
-                              style: TextStyle(
-                                color: AppColors.textMuted,
-                                fontSize: widget.isDesktop ? 12 : 11.sp,
-                              ),
+                            Icon(
+                              statusIcon,
+                              color: statusColor,
+                              size: widget.isDesktop ? 11 : 11.sp,
                             ),
-                            Container(
-                              width: 3,
-                              height: 3,
-                              decoration: BoxDecoration(
-                                color: AppColors.textMuted.withAlpha(60),
-                                shape: BoxShape.circle,
-                              ),
-                            ),
+                            const SizedBox(width: 4),
                             Text(
-                              entry.formattedDate,
+                              statusText,
                               style: TextStyle(
-                                color: AppColors.textMuted,
-                                fontSize: widget.isDesktop ? 12 : 11.sp,
+                                color: statusColor,
+                                fontSize: widget.isDesktop ? 10 : 10.sp,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 4),
-                        // Status pill
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: statusColor.withAlpha(15),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                statusIcon,
-                                color: statusColor,
-                                size: widget.isDesktop ? 11 : 11.sp,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                statusText,
-                                style: TextStyle(
-                                  color: statusColor,
-                                  fontSize: widget.isDesktop ? 10 : 10.sp,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                  // Folder open icon
-                  if (isSuccess && entry.localPath != null)
-                    Icon(
-                      Icons.folder_open_rounded,
-                      color: AppColors.primaryLight.withAlpha(120),
-                      size: widget.isDesktop ? 20 : 20.sp,
-                    ),
-                ],
-              ),
+                ),
+                // Folder open icon
+                if (isSuccess && entry.localPath != null)
+                  Icon(
+                    Icons.folder_open_rounded,
+                    color: AppColors.primaryLight.withAlpha(120),
+                    size: widget.isDesktop ? 20 : 20.sp,
+                  ),
+              ],
             ),
           ),
         ),
