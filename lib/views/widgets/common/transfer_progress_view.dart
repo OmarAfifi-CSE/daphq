@@ -6,38 +6,35 @@ import '../../../core/app_colors.dart';
 import '../../../core/responsive_utils.dart';
 import 'animated_press_button.dart';
 import 'custom_snackbar.dart';
+import 'direct_transfer_tip_dialog.dart';
 
-class TransferProgressView extends StatelessWidget {
+class TransferProgressView extends StatefulWidget {
   final bool isDesktop;
 
   const TransferProgressView({super.key, this.isDesktop = false});
 
   @override
-  Widget build(BuildContext context) {
-    final scale = isDesktop ? context.desktopScale : 1.0;
+  State<TransferProgressView> createState() => _TransferProgressViewState();
+}
 
-    return BlocBuilder<TransferCubit, TransferState>(
-      buildWhen: (previous, current) {
-        final p = previous.model;
-        final c = current.model;
-        return p.progress != c.progress ||
-            p.speed != c.speed ||
-            p.status != c.status ||
-            p.transferred != c.transferred ||
-            p.totalSize != c.totalSize ||
-            p.fileName != c.fileName ||
-            p.analyzeCount != c.analyzeCount ||
+class _TransferProgressViewState extends State<TransferProgressView> {
+  int _slowCount = 0;
+  int _fastCount = 0;
+  bool _showSlowSpeedBanner = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final scale = widget.isDesktop ? context.desktopScale : 1.0;
+    final isDesktop = widget.isDesktop;
+
+    return BlocListener<TransferCubit, TransferState>(
+      listenWhen: (previous, current) {
+        return previous.model.speed != current.model.speed ||
             previous.isTransferring != current.isTransferring ||
-            previous.isReceiving != current.isReceiving ||
-            previous.isLastTransferIncoming != current.isLastTransferIncoming ||
-            previous.showProgressView != current.showProgressView;
+            previous.isReceivingActive != current.isReceivingActive;
       },
-      builder: (context, state) {
+      listener: (context, state) {
         final model = state.model;
-        final bool hasProgress =
-            model.totalSize > 0 ||
-            model.progress > 0 ||
-            model.analyzeCount != null;
         final status = model.status.toLowerCase();
         final bool isDone =
             status.contains("complete") || status.contains("success");
@@ -46,198 +43,476 @@ class TransferProgressView extends StatelessWidget {
             status.contains("error") ||
             status.contains("failed") ||
             status.contains("cancelled") ||
-            status.contains("rejected") ||
-            status.contains("stopped") ||
-            status.contains("timeout") ||
-            status.contains("refused") ||
-            status.contains("not found") ||
-            status.contains("unreachable");
+            status.contains("rejected");
 
-        return AnimatedSize(
-          duration: const Duration(milliseconds: 350),
-          alignment: Alignment.topCenter,
-          child: Container(
-            padding: EdgeInsets.all(22.0.rw(isDesktop, desktopScale: scale)),
-            decoration: BoxDecoration(
-              color: AppColors.cardOverlay,
-              borderRadius: BorderRadius.circular(
-                22.0.rr(isDesktop, desktopScale: scale),
-              ),
-              border: Border.all(color: AppColors.cardBorder),
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.primary.withAlpha(isDone ? 15 : 8),
-                  blurRadius: 30,
-                  offset: const Offset(0, 10),
+        final bool isActive =
+            (state.isTransferring || state.isReceivingActive) &&
+            !isDone &&
+            !isFailed;
+
+        if (!isActive) {
+          if (_showSlowSpeedBanner) {
+            setState(() {
+              _showSlowSpeedBanner = false;
+            });
+          }
+          _slowCount = 0;
+          _fastCount = 0;
+          return;
+        }
+
+        // Monitor speed for sustained 3 seconds (6 frames of 500ms)
+        if (model.speed < 2.0) {
+          _fastCount = 0;
+          _slowCount++;
+          if (_slowCount >= 6) {
+            if (!_showSlowSpeedBanner) {
+              setState(() {
+                _showSlowSpeedBanner = true;
+              });
+            }
+          }
+        } else {
+          _slowCount = 0;
+          _fastCount++;
+          if (_fastCount >= 6) {
+            if (_showSlowSpeedBanner) {
+              setState(() {
+                _showSlowSpeedBanner = false;
+              });
+            }
+          }
+        }
+      },
+      child: BlocBuilder<TransferCubit, TransferState>(
+        buildWhen: (previous, current) {
+          final p = previous.model;
+          final c = current.model;
+          return p.progress != c.progress ||
+              p.speed != c.speed ||
+              p.status != c.status ||
+              p.transferred != c.transferred ||
+              p.totalSize != c.totalSize ||
+              p.fileName != c.fileName ||
+              p.analyzeCount != c.analyzeCount ||
+              previous.isTransferring != current.isTransferring ||
+              previous.isReceiving != current.isReceiving ||
+              previous.isLastTransferIncoming !=
+                  current.isLastTransferIncoming ||
+              previous.showProgressView != current.showProgressView;
+        },
+        builder: (context, state) {
+          final model = state.model;
+          final bool hasProgress =
+              model.totalSize > 0 ||
+              model.progress > 0 ||
+              model.analyzeCount != null;
+          final status = model.status.toLowerCase();
+          final bool isDone =
+              status.contains("complete") || status.contains("success");
+          final bool isFailed =
+              (!(state.isTransferring || state.isReceivingActive) && !isDone) ||
+              status.contains("error") ||
+              status.contains("failed") ||
+              status.contains("cancelled") ||
+              status.contains("rejected") ||
+              status.contains("stopped") ||
+              status.contains("timeout") ||
+              status.contains("refused") ||
+              status.contains("not found") ||
+              status.contains("unreachable");
+
+          return AnimatedSize(
+            duration: const Duration(milliseconds: 350),
+            alignment: Alignment.topCenter,
+            child: Container(
+              padding: EdgeInsets.all(22.0.rw(isDesktop, desktopScale: scale)),
+              decoration: BoxDecoration(
+                color: AppColors.cardOverlay,
+                borderRadius: BorderRadius.circular(
+                  22.0.rr(isDesktop, desktopScale: scale),
                 ),
-              ],
-            ),
-            child: Column(
-              children: [
-                // 1. Status Header
-                Container(
-                  width: double.infinity,
-                  alignment: Alignment.center,
-                  child: Text(
-                    model.status.isEmpty ? "Ready & Waiting" : model.status,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: _getStatusColor(model.status),
-                      fontSize: 18.0.rx(isDesktop, desktopScale: scale),
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.3,
-                    ),
+                border: Border.all(color: AppColors.cardBorder),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.primary.withAlpha(isDone ? 15 : 8),
+                    blurRadius: 30,
+                    offset: const Offset(0, 10),
                   ),
-                ),
-                SizedBox(height: 10.0.rh(isDesktop, desktopScale: scale)),
-
-                // 2. Speed Display — or File Count during analyze phase
-                if (model.analyzeCount != null)
-                  TweenAnimationBuilder<double>(
-                    tween: Tween<double>(begin: 0, end: 1),
-                    duration: const Duration(milliseconds: 800),
-                    curve: Curves.easeInOut,
-                    builder: (context, value, _) {
-                      final label = model.analyzeCount! == 0
-                          ? "..."
-                          : "${_formatCount(model.analyzeCount!)} files";
-                      return Text(
-                        label,
-                        style: TextStyle(
-                          color: AppColors.textPrimary.withAlpha(
-                            (180 + (75 * value)).toInt(),
-                          ),
-                          fontSize: 38.0.rx(isDesktop, desktopScale: scale),
-                          fontWeight: FontWeight.bold,
-                          shadows: [
-                            Shadow(
-                              color: AppColors.primary.withAlpha(120),
-                              blurRadius: 20,
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  )
-                else
-                  _SpeedDisplay(speed: model.speed, isDesktop: isDesktop),
-
-                // 3. Avg Speed & Time Info / Estimated Time
-                if (model.avgSpeed != null || model.totalTime != null)
-                  Padding(
-                    padding: EdgeInsets.only(
-                      top: 5.0.rh(isDesktop, desktopScale: scale),
-                    ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  // 1. Status Header
+                  Container(
+                    width: double.infinity,
+                    alignment: Alignment.center,
                     child: Text(
-                      "${model.avgSpeed != null ? "Avg: ${model.avgSpeed} MB/s" : ""}${model.avgSpeed != null && model.totalTime != null ? " | " : ""}${_formatCompletedTime(model.totalTime)}",
+                      model.status.isEmpty ? "Ready & Waiting" : model.status,
+                      textAlign: TextAlign.center,
                       style: TextStyle(
-                        color: AppColors.success.withAlpha(200),
-                        fontSize: 15.0.rx(isDesktop, desktopScale: scale),
-                        fontWeight: FontWeight.w500,
+                        color: _getStatusColor(model.status),
+                        fontSize: 18.0.rx(isDesktop, desktopScale: scale),
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.3,
                       ),
                     ),
-                  )
-                else if (hasProgress && !isDone && !isFailed && model.speed > 0)
-                  Padding(
-                    padding: EdgeInsets.only(
-                      top: 5.0.rh(isDesktop, desktopScale: scale),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.timer_outlined,
-                          color: AppColors.primaryLight,
-                          size: 16.0.rx(isDesktop, desktopScale: scale),
-                        ),
-                        SizedBox(width: 6.0.rw(isDesktop, desktopScale: scale)),
-                        Text(
-                          "Est. time: ${_formatEstimatedTime((model.totalSize - model.transferred) / model.speed)}",
+                  ),
+                  SizedBox(height: 10.0.rh(isDesktop, desktopScale: scale)),
+
+                  // 2. Speed Display — or File Count during analyze phase
+                  if (model.analyzeCount != null)
+                    TweenAnimationBuilder<double>(
+                      tween: Tween<double>(begin: 0, end: 1),
+                      duration: const Duration(milliseconds: 800),
+                      curve: Curves.easeInOut,
+                      builder: (context, value, _) {
+                        final label = model.analyzeCount! == 0
+                            ? "..."
+                            : "${_formatCount(model.analyzeCount!)} files";
+                        return Text(
+                          label,
                           style: TextStyle(
+                            color: AppColors.textPrimary.withAlpha(
+                              (180 + (75 * value)).toInt(),
+                            ),
+                            fontSize: 38.0.rx(isDesktop, desktopScale: scale),
+                            fontWeight: FontWeight.bold,
+                            shadows: [
+                              Shadow(
+                                color: AppColors.primary.withAlpha(120),
+                                blurRadius: 20,
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    )
+                  else
+                    _SpeedDisplay(speed: model.speed, isDesktop: isDesktop),
+
+                  // 3. Avg Speed & Time Info / Estimated Time
+                  if (model.avgSpeed != null || model.totalTime != null)
+                    Padding(
+                      padding: EdgeInsets.only(
+                        top: 5.0.rh(isDesktop, desktopScale: scale),
+                      ),
+                      child: Text(
+                        "${model.avgSpeed != null ? "Avg: ${model.avgSpeed} MB/s" : ""}${model.avgSpeed != null && model.totalTime != null ? " | " : ""}${_formatCompletedTime(model.totalTime)}",
+                        style: TextStyle(
+                          color: AppColors.success.withAlpha(200),
+                          fontSize: 15.0.rx(isDesktop, desktopScale: scale),
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    )
+                  else if (hasProgress &&
+                      !isDone &&
+                      !isFailed &&
+                      model.speed > 0)
+                    Padding(
+                      padding: EdgeInsets.only(
+                        top: 5.0.rh(isDesktop, desktopScale: scale),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.timer_outlined,
                             color: AppColors.primaryLight,
-                            fontSize: 15.0.rx(isDesktop, desktopScale: scale),
-                            fontWeight: FontWeight.w500,
+                            size: 16.0.rx(isDesktop, desktopScale: scale),
+                          ),
+                          SizedBox(
+                            width: 6.0.rw(isDesktop, desktopScale: scale),
+                          ),
+                          Text(
+                            "Est. time: ${_formatEstimatedTime((model.totalSize - model.transferred) / model.speed)}",
+                            style: TextStyle(
+                              color: AppColors.primaryLight,
+                              fontSize: 15.0.rx(isDesktop, desktopScale: scale),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                  model.analyzeCount != null || hasProgress
+                      ? SizedBox(
+                          height: 15.0.rh(isDesktop, desktopScale: scale),
+                        )
+                      : SizedBox(
+                          height: 20.0.rh(isDesktop, desktopScale: scale),
+                        ),
+
+                  // 4. Compact Progress Section
+                  if (hasProgress) ...[
+                    // File Name
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        model.fileName.isEmpty
+                            ? "Preparing transfer..."
+                            : model.fileName,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 14.0.rx(isDesktop, desktopScale: scale),
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: 8.0.rh(isDesktop, desktopScale: scale)),
+
+                    // The Progress Bar
+                    if (model.analyzeCount != null)
+                      _AnalyzePulseBar(isDesktop: isDesktop)
+                    else
+                      _GlowingProgressBar(
+                        progress: model.progress,
+                        isDesktop: isDesktop,
+                        isDone: isDone,
+                        isFailed: isFailed,
+                      ),
+                    SizedBox(height: 8.0.rh(isDesktop, desktopScale: scale)),
+
+                    // Progress Stats
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          isDone
+                              ? "Transfer Complete"
+                              : (isFailed
+                                    ? "Transfer Cancelled"
+                                    : "${(model.progress * 100).toInt()}% complete"),
+                          style: TextStyle(
+                            color: isDone
+                                ? AppColors.success
+                                : (isFailed
+                                      ? AppColors.danger
+                                      : AppColors.primaryLight),
+                            fontSize: 12.0.rx(isDesktop, desktopScale: scale),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        Text(
+                          "${_formatSize(model.transferred)}${model.totalSize > 0 ? " / ${_formatSize(model.totalSize)}" : ""}",
+                          style: TextStyle(
+                            color: AppColors.textMuted,
+                            fontSize: 12.0.rx(isDesktop, desktopScale: scale),
                           ),
                         ),
                       ],
                     ),
-                  ),
 
-                model.analyzeCount != null || hasProgress
-                    ? SizedBox(height: 15.0.rh(isDesktop, desktopScale: scale))
-                    : SizedBox(height: 20.0.rh(isDesktop, desktopScale: scale)),
-
-                // 4. Compact Progress Section
-                if (hasProgress) ...[
-                  // File Name
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      model.fileName.isEmpty
-                          ? "Preparing transfer..."
-                          : model.fileName,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: AppColors.textPrimary,
-                        fontSize: 14.0.rx(isDesktop, desktopScale: scale),
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                  SizedBox(height: 8.0.rh(isDesktop, desktopScale: scale)),
-
-                  // The Progress Bar
-                  if (model.analyzeCount != null)
-                    _AnalyzePulseBar(isDesktop: isDesktop)
-                  else
-                    _GlowingProgressBar(
-                      progress: model.progress,
-                      isDesktop: isDesktop,
-                      isDone: isDone,
-                      isFailed: isFailed,
-                    ),
-                  SizedBox(height: 8.0.rh(isDesktop, desktopScale: scale)),
-
-                  // Progress Stats
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        isDone
-                            ? "Transfer Complete"
-                            : (isFailed
-                                  ? "Transfer Cancelled"
-                                  : "${(model.progress * 100).toInt()}% complete"),
-                        style: TextStyle(
-                          color: isDone
-                              ? AppColors.success
-                              : (isFailed
-                                    ? AppColors.danger
-                                    : AppColors.primaryLight),
-                          fontSize: 12.0.rx(isDesktop, desktopScale: scale),
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      Text(
-                        "${_formatSize(model.transferred)}${model.totalSize > 0 ? " / ${_formatSize(model.totalSize)}" : ""}",
-                        style: TextStyle(
-                          color: AppColors.textMuted,
-                          fontSize: 12.0.rx(isDesktop, desktopScale: scale),
+                    // Smart Connection Quality / Speed Alert Banner
+                    if (_showSlowSpeedBanner) ...[
+                      SizedBox(height: 12.0.rh(isDesktop, desktopScale: scale)),
+                      Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: () => DirectTransferTipDialog.show(
+                            context,
+                            isDesktop: isDesktop,
+                          ),
+                          borderRadius: BorderRadius.circular(
+                            12.rr(isDesktop, desktopScale: scale),
+                          ),
+                          child: Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 12.0.rw(
+                                isDesktop,
+                                desktopScale: scale,
+                              ),
+                              vertical: 10.0.rh(isDesktop, desktopScale: scale),
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withAlpha(12),
+                              borderRadius: BorderRadius.circular(
+                                12.rr(isDesktop, desktopScale: scale),
+                              ),
+                              border: Border.all(
+                                color: AppColors.primary.withAlpha(25),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.bolt_rounded,
+                                  color: AppColors.primaryLight,
+                                  size: 18.0.rx(isDesktop, desktopScale: scale),
+                                ),
+                                SizedBox(
+                                  width: 8.0.rw(isDesktop, desktopScale: scale),
+                                ),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        "Slow speed? Get 10x faster speed now!",
+                                        style: TextStyle(
+                                          color: AppColors.textPrimary,
+                                          fontSize: 12.0.rx(
+                                            isDesktop,
+                                            desktopScale: scale,
+                                          ),
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      SizedBox(
+                                        height: 2.0.rh(
+                                          isDesktop,
+                                          desktopScale: scale,
+                                        ),
+                                      ),
+                                      Text(
+                                        "Tap to learn how to bypass router throttling.",
+                                        style: TextStyle(
+                                          color: AppColors.textSecondary,
+                                          fontSize: 10.5.rx(
+                                            isDesktop,
+                                            desktopScale: scale,
+                                          ),
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Icon(
+                                  Icons.keyboard_arrow_right_rounded,
+                                  color: AppColors.primaryLight,
+                                  size: 18.0.rx(isDesktop, desktopScale: scale),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
                     ],
-                  ),
-                  // Action Buttons
-                  SizedBox(height: 18.0.rh(isDesktop, desktopScale: scale)),
-                  (isDone || isFailed)
-                      ? (isDesktop
-                            ? Row(
-                                children: [
-                                  if (state.isLastTransferIncoming &&
-                                      isDone) ...[
+
+                    // Action Buttons
+                    SizedBox(height: 18.0.rh(isDesktop, desktopScale: scale)),
+                    (isDone || isFailed)
+                        ? (isDesktop
+                              ? Row(
+                                  children: [
+                                    if (state.isLastTransferIncoming &&
+                                        isDone) ...[
+                                      Expanded(
+                                        child: AnimatedPressButton(
+                                          isDesktop: isDesktop,
+                                          onPressed: () => context
+                                              .read<TransferCubit>()
+                                              .openReceivedFolder(),
+                                          gradientColors: const [
+                                            AppColors.primary,
+                                            AppColors.primaryLight,
+                                          ],
+                                          child: Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            children: [
+                                              Icon(
+                                                Icons.folder_open_rounded,
+                                                color: Colors.white,
+                                                size: 18.0.rx(
+                                                  isDesktop,
+                                                  desktopScale: scale,
+                                                ),
+                                              ),
+                                              SizedBox(
+                                                width: 6.rw(
+                                                  isDesktop,
+                                                  desktopScale: scale,
+                                                ),
+                                              ),
+                                              Text(
+                                                "Open Folder",
+                                                style: TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 13.0.rx(
+                                                    isDesktop,
+                                                    desktopScale: scale,
+                                                  ),
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                      SizedBox(
+                                        width: 10.rw(
+                                          isDesktop,
+                                          desktopScale: scale,
+                                        ),
+                                      ),
+                                    ],
                                     Expanded(
                                       child: AnimatedPressButton(
+                                        isDesktop: isDesktop,
+                                        onPressed: () => context
+                                            .read<TransferCubit>()
+                                            .dismissProgress(),
+                                        gradientColors: isDone
+                                            ? const [
+                                                AppColors.success,
+                                                AppColors.successLight,
+                                              ]
+                                            : [
+                                                Colors.white.withAlpha(15),
+                                                Colors.white.withAlpha(8),
+                                              ],
+                                        child: Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            Icon(
+                                              Icons
+                                                  .check_circle_outline_rounded,
+                                              color: isDone
+                                                  ? Colors.black87
+                                                  : AppColors.textSecondary,
+                                              size: 18.0.rx(
+                                                isDesktop,
+                                                desktopScale: scale,
+                                              ),
+                                            ),
+                                            SizedBox(
+                                              width: 6.rw(
+                                                isDesktop,
+                                                desktopScale: scale,
+                                              ),
+                                            ),
+                                            Text(
+                                              isDone ? "Done" : "Dismiss",
+                                              style: TextStyle(
+                                                color: isDone
+                                                    ? Colors.black87
+                                                    : AppColors.textPrimary,
+                                                fontSize: 13.0.rx(
+                                                  isDesktop,
+                                                  desktopScale: scale,
+                                                ),
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              : Column(
+                                  children: [
+                                    if (state.isLastTransferIncoming &&
+                                        isDone) ...[
+                                      AnimatedPressButton(
                                         isDesktop: isDesktop,
                                         onPressed: () => context
                                             .read<TransferCubit>()
@@ -278,16 +553,14 @@ class TransferProgressView extends StatelessWidget {
                                           ],
                                         ),
                                       ),
-                                    ),
-                                    SizedBox(
-                                      width: 10.rw(
-                                        isDesktop,
-                                        desktopScale: scale,
+                                      SizedBox(
+                                        height: 10.rh(
+                                          isDesktop,
+                                          desktopScale: scale,
+                                        ),
                                       ),
-                                    ),
-                                  ],
-                                  Expanded(
-                                    child: AnimatedPressButton(
+                                    ],
+                                    AnimatedPressButton(
                                       isDesktop: isDesktop,
                                       onPressed: () => context
                                           .read<TransferCubit>()
@@ -337,175 +610,71 @@ class TransferProgressView extends StatelessWidget {
                                         ],
                                       ),
                                     ),
-                                  ),
-                                ],
-                              )
-                            : Column(
-                                children: [
-                                  if (state.isLastTransferIncoming &&
-                                      isDone) ...[
-                                    AnimatedPressButton(
-                                      isDesktop: isDesktop,
-                                      onPressed: () => context
-                                          .read<TransferCubit>()
-                                          .openReceivedFolder(),
-                                      gradientColors: const [
-                                        AppColors.primary,
-                                        AppColors.primaryLight,
-                                      ],
-                                      child: Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        children: [
-                                          Icon(
-                                            Icons.folder_open_rounded,
-                                            color: Colors.white,
-                                            size: 18.0.rx(
-                                              isDesktop,
-                                              desktopScale: scale,
-                                            ),
-                                          ),
-                                          SizedBox(
-                                            width: 6.rw(
-                                              isDesktop,
-                                              desktopScale: scale,
-                                            ),
-                                          ),
-                                          Text(
-                                            "Open Folder",
-                                            style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 13.0.rx(
-                                                isDesktop,
-                                                desktopScale: scale,
-                                              ),
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      height: 10.rh(
-                                        isDesktop,
-                                        desktopScale: scale,
-                                      ),
-                                    ),
                                   ],
-                                  AnimatedPressButton(
-                                    isDesktop: isDesktop,
-                                    onPressed: () => context
-                                        .read<TransferCubit>()
-                                        .dismissProgress(),
-                                    gradientColors: isDone
-                                        ? const [
-                                            AppColors.success,
-                                            AppColors.successLight,
-                                          ]
-                                        : [
-                                            Colors.white.withAlpha(15),
-                                            Colors.white.withAlpha(8),
-                                          ],
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Icon(
-                                          Icons.check_circle_outline_rounded,
-                                          color: isDone
-                                              ? Colors.black87
-                                              : AppColors.textSecondary,
-                                          size: 18.0.rx(
-                                            isDesktop,
-                                            desktopScale: scale,
-                                          ),
-                                        ),
-                                        SizedBox(
-                                          width: 6.rw(
-                                            isDesktop,
-                                            desktopScale: scale,
-                                          ),
-                                        ),
-                                        Text(
-                                          isDone ? "Done" : "Dismiss",
-                                          style: TextStyle(
-                                            color: isDone
-                                                ? Colors.black87
-                                                : AppColors.textPrimary,
-                                            fontSize: 13.0.rx(
-                                              isDesktop,
-                                              desktopScale: scale,
-                                            ),
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ))
-                      : ((state.isTransferring || state.isReceivingActive)
-                            ? AnimatedPressButton(
-                                isDesktop: isDesktop,
-                                onPressed: () {
-                                  CustomSnackBar.hide();
-                                  if (state.isTransferring) {
-                                    context
-                                        .read<TransferCubit>()
-                                        .cancelSending();
-                                  } else {
-                                    context
-                                        .read<TransferCubit>()
-                                        .cancelReceiving();
-                                  }
-                                },
-                                gradientColors: const [
-                                  AppColors.danger,
-                                  AppColors.dangerLight,
-                                ],
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.cancel_rounded,
-                                      color: Colors.white,
-                                      size: 18.0.rx(
-                                        isDesktop,
-                                        desktopScale: scale,
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      width: 8.rw(
-                                        isDesktop,
-                                        desktopScale: scale,
-                                      ),
-                                    ),
-                                    Text(
-                                      state.isTransferring
-                                          ? "Cancel Transfer"
-                                          : "Cancel Receiving",
-                                      style: TextStyle(
+                                ))
+                        : ((state.isTransferring || state.isReceivingActive)
+                              ? AnimatedPressButton(
+                                  isDesktop: isDesktop,
+                                  onPressed: () {
+                                    CustomSnackBar.hide();
+                                    if (state.isTransferring) {
+                                      context
+                                          .read<TransferCubit>()
+                                          .cancelSending();
+                                    } else {
+                                      context
+                                          .read<TransferCubit>()
+                                          .cancelReceiving();
+                                    }
+                                  },
+                                  gradientColors: const [
+                                    AppColors.danger,
+                                    AppColors.dangerLight,
+                                  ],
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.cancel_rounded,
                                         color: Colors.white,
-                                        fontSize: 14.0.rx(
+                                        size: 18.0.rx(
                                           isDesktop,
                                           desktopScale: scale,
                                         ),
-                                        fontWeight: FontWeight.bold,
                                       ),
-                                    ),
-                                  ],
-                                ),
-                              )
-                            : const SizedBox.shrink()),
-                ] else ...[
-                  // Minimal Placeholder
-                  const SizedBox.shrink(),
+                                      SizedBox(
+                                        width: 8.rw(
+                                          isDesktop,
+                                          desktopScale: scale,
+                                        ),
+                                      ),
+                                      Text(
+                                        state.isTransferring
+                                            ? "Cancel Transfer"
+                                            : "Cancel Receiving",
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 14.0.rx(
+                                            isDesktop,
+                                            desktopScale: scale,
+                                          ),
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                )
+                              : const SizedBox.shrink()),
+                  ] else ...[
+                    // Minimal Placeholder
+                    const SizedBox.shrink(),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 
