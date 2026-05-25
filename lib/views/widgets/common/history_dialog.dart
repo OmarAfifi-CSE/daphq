@@ -303,6 +303,38 @@ class _HistoryDialogState extends State<HistoryDialog> {
                     vertical: 10,
                   ),
                   itemCount: _history.length,
+                  prototypeItem: Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.transparent),
+                    ),
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: widget.isDesktop ? 14.0 : 12.w,
+                        vertical: 10,
+                      ),
+                      child: Row(
+                        children: [
+                          const SizedBox(width: 48, height: 48),
+                          SizedBox(width: widget.isDesktop ? 16 : 14.w),
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text('', maxLines: 2),
+                                SizedBox(height: 4),
+                                Text('', maxLines: 1),
+                                SizedBox(height: 4),
+                                Text('', maxLines: 1),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                   itemBuilder: (context, index) {
                     return _buildHistoryItem(_history[index], index);
                   },
