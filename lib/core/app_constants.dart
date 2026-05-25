@@ -29,6 +29,9 @@ class AppConstants {
   static const String defaultTargetIp = '192.168.137.1';
 
   /// Flush threshold for socket buffer (1 MB).
+  /// At typical hotspot speeds (~25 MB/s), this creates natural backpressure
+  /// so the send loop runs at network speed, not disk speed — ensuring smooth
+  /// progress updates on fast-storage devices (e.g. UFS 4.0).
   static const int socketFlushThresholdBytes = 1 * 1024 * 1024;
 
   /// UI update interval during transfers (milliseconds).

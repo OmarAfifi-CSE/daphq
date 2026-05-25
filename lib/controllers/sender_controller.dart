@@ -290,10 +290,11 @@ class SenderController {
             bytesBuffered += bytes.length;
 
             if (bytesBuffered >= AppConstants.socketFlushThresholdBytes) {
-              await socket.flush().timeout(
-                const Duration(seconds: AppConstants.transferTimeoutSeconds),
-                onTimeout: () => throw "Transfer Timeout",
-              );
+              // Awaited flush: provides backpressure so the disk read loop
+              // runs at network speed, not disk speed. Without this, a fast
+              // UFS device would read the entire file in <500ms before any
+              // onUpdate fires, causing the snapshot/stutter UI bug.
+              await socket.flush();
               bytesBuffered = 0;
             }
           } catch (e) {
@@ -314,12 +315,11 @@ class SenderController {
                 socket.add(chunk);
                 bytesBuffered += chunk.length;
                 if (bytesBuffered >= AppConstants.socketFlushThresholdBytes) {
-                  await socket.flush().timeout(
-                    const Duration(
-                      seconds: AppConstants.transferTimeoutSeconds,
-                    ),
-                    onTimeout: () => throw "Transfer Timeout",
-                  ); // Prevent OOM by awaiting buffer flush
+                  // Awaited flush: provides backpressure so the disk read loop
+                  // runs at network speed, not disk speed. Without this, a fast
+                  // UFS device would read the entire file in <500ms before any
+                  // onUpdate fires, causing the snapshot/stutter UI bug.
+                  await socket.flush();
                   bytesBuffered = 0;
                 }
               } catch (e) {
@@ -334,6 +334,28 @@ class SenderController {
               if (_isCancelled) throw "Transfer Cancelled";
               sentBytes += chunk.length;
               bytesSinceUpdate += chunk.length;
+
+              // Trigger speed/progress UI update if needed inside the chunk streaming loop
+              final now = DateTime.now();
+              final elapsedMs = now.difference(lastUpdate).inMilliseconds;
+              if (elapsedMs > AppConstants.speedUpdateIntervalMs) {
+                double speed =
+                    (bytesSinceUpdate / 1024 / 1024) / (elapsedMs / 1000.0);
+                onUpdate(
+                  TransferModel(
+                    speed: speed,
+                    transferred: sentBytes / 1024 / 1024,
+                    fileName: p.basename(f["path"]),
+                    status: "Pumping Data...",
+                    totalSize: totalSizeBytes / 1024 / 1024,
+                    progress: totalSizeBytes > 0
+                        ? sentBytes / totalSizeBytes
+                        : 0.0,
+                  ),
+                );
+                bytesSinceUpdate = 0;
+                lastUpdate = now;
+              }
             }
           } finally {}
         }

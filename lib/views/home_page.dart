@@ -51,7 +51,10 @@ class _HomePageState extends State<HomePage> {
                 current.showStorageSettingsDialog) ||
             (previous.showNotificationWarningDialog !=
                     current.showNotificationWarningDialog &&
-                current.showNotificationWarningDialog),
+                current.showNotificationWarningDialog) ||
+            (previous.showBatteryOptimizationSnackBar !=
+                    current.showBatteryOptimizationSnackBar &&
+                current.showBatteryOptimizationSnackBar),
         listener: (context, state) {
           final cubit = context.read<TransferCubit>();
 

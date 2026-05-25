@@ -193,33 +193,13 @@ class ReceiverController {
                 );
                 double totalSizeMB = totalExpectedBytes / 1024 / 1024;
 
-                // 1. Free Space Check
-                try {
-                  StorageSpace freeSpace = await getStorageSpace(
-                    lowOnSpaceThreshold: 0,
-                    fractionDigits: 1,
-                  );
-                  if (freeSpace.free < totalExpectedBytes) {
-                    client.write(
-                      "${jsonEncode({"status": "REJECTED", "reason": "OUT_OF_SPACE"})}\n",
-                    );
-                    await client.flush();
-                    client.destroy();
-                    isRejected = true;
-                    onUpdate(
-                      TransferModel(
-                        status:
-                            "Transfer rejected: Not enough space "
-                            "(need ${(totalSizeMB).toStringAsFixed(1)} MB, "
-                            "${freeSpace.freeSize} available). Ready & Waiting...",
-                      ),
-                    );
-                    break;
-                  }
-                } catch (e) {
-                  // If space check fails for some reason (e.g. platform error),
-                  // we proceed to auth as a fallback rather than blocking the transfer.
-                }
+                // Pre-fetch storage space concurrently in the background while the user is viewing the authorization dialog!
+                // This ensures we never block the dialog display and never delay the ready signal after the user accepts.
+                final Future<StorageSpace?> freeSpaceFuture =
+                    getStorageSpace(lowOnSpaceThreshold: 0, fractionDigits: 1)
+                        .timeout(const Duration(milliseconds: 1500))
+                        .then<StorageSpace?>((val) => val)
+                        .catchError((_) => null);
 
                 bool isAccepted = await onRequestAuth(
                   client.remoteAddress.address,
@@ -242,6 +222,41 @@ class ReceiverController {
                   );
                   break;
                 } else {
+                  // Update UI immediately to let the user know we accepted and are starting!
+                  onUpdate(
+                    TransferModel(
+                      status: "Connecting & Starting...",
+                      totalSize: totalExpectedBytes / 1024 / 1024,
+                      progress: 0.0,
+                    ),
+                  );
+
+                  // Post-acceptance Free Space Check (Awaiting the pre-fetched future, which is already resolved in 0ms)
+                  try {
+                    StorageSpace? freeSpace = await freeSpaceFuture;
+                    if (freeSpace != null &&
+                        freeSpace.free < totalExpectedBytes) {
+                      client.write(
+                        "${jsonEncode({"status": "REJECTED", "reason": "OUT_OF_SPACE"})}\n",
+                      );
+                      await client.flush();
+                      client.destroy();
+                      isRejected = true;
+                      onUpdate(
+                        TransferModel(
+                          status:
+                              "Transfer rejected: Not enough space "
+                              "(need ${(totalSizeMB).toStringAsFixed(1)} MB, "
+                              "${freeSpace.freeSize} available). Ready & Waiting...",
+                        ),
+                      );
+                      break;
+                    }
+                  } catch (e) {
+                    // If space check fails for some reason (e.g. platform error),
+                    // we proceed as a fallback rather than blocking the transfer.
+                  }
+
                   try {
                     String originalName = metadata["fileName"];
                     // CRITICAL: Sanitize for the current OS (e.g., removing ':' on Windows)

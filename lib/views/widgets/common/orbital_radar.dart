@@ -150,170 +150,188 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                   ),
 
                 // 4. Orbiting Devices
-                ...List.generate(devices.length, (index) {
-                  final device = devices[index];
-                  final nodeWidth = 60.0.rx(isDesktop, desktopScale: scale);
-                  final nodeHeight = 75.0.rx(isDesktop, desktopScale: scale);
-                  final orbitRadius = (radarSize * 0.36).rx(isDesktop);
+                // Sort devices by their IP hash for a stable order, then
+                // distribute evenly across 360° to guarantee zero overlap.
+                ...() {
+                  final sorted = [...devices];
+                  sorted.sort(
+                    (a, b) =>
+                        _getDeviceHash(a.ip).compareTo(_getDeviceHash(b.ip)),
+                  );
+                  final count = sorted.length;
+                  return List.generate(count, (index) {
+                    final device = sorted[index];
+                    final nodeWidth = 60.0.rx(isDesktop, desktopScale: scale);
+                    final nodeHeight = 75.0.rx(isDesktop, desktopScale: scale);
+                    final orbitRadius = (radarSize * 0.36).rx(isDesktop);
 
-                  final String lowerName = device.name.toLowerCase();
-                  final bool isLaptopDevice =
-                      lowerName.contains("pc") ||
-                      lowerName.contains("laptop") ||
-                      lowerName.contains("desktop") ||
-                      lowerName.contains("computer") ||
-                      lowerName.contains("macbook") ||
-                      lowerName.contains("imac") ||
-                      lowerName.contains("windows") ||
-                      lowerName.contains("linux") ||
-                      lowerName.contains("mac-");
+                    final String lowerName = device.name.toLowerCase();
+                    final bool isLaptopDevice =
+                        lowerName.contains("pc") ||
+                        lowerName.contains("laptop") ||
+                        lowerName.contains("desktop") ||
+                        lowerName.contains("computer") ||
+                        lowerName.contains("macbook") ||
+                        lowerName.contains("imac") ||
+                        lowerName.contains("windows") ||
+                        lowerName.contains("linux") ||
+                        lowerName.contains("mac-");
 
-                  return AnimatedBuilder(
-                    animation: _rotationController,
-                    builder: (context, child) {
-                      final double elapsedSeconds =
-                          _stopwatch.elapsedMilliseconds / 1000.0;
-                      // Slowly drift 360 degrees every 80 seconds
-                      final double driftAngle =
-                          (elapsedSeconds / 80.0) * 2.0 * math.pi;
-                      // Use a stable, unique base angle for each device based on its IP address
-                      // to prevent devices from jumping or rearranging when other devices are found
-                      final double baseAngle = _getDeviceBaseAngle(device.ip);
-                      final double angle = baseAngle + driftAngle;
+                    return AnimatedBuilder(
+                      key: ValueKey(device.ip),
+                      animation: _rotationController,
+                      builder: (context, child) {
+                        final double elapsedSeconds =
+                            _stopwatch.elapsedMilliseconds / 1000.0;
+                        // Evenly distribute devices: each gets 360°/count
+                        // Use IP hash only to determine the stable starting
+                        // slot — not the raw angle — so no two devices overlap.
+                        final double sliceAngle = count > 0
+                            ? (2.0 * math.pi / count)
+                            : 0;
+                        final double baseAngle = sliceAngle * index;
+                        // Slowly drift all devices together over 80 seconds
+                        final double driftAngle =
+                            (elapsedSeconds / 80.0) * 2.0 * math.pi;
+                        final double angle = baseAngle + driftAngle;
 
-                      final double bobbing =
-                          math.sin(
-                            elapsedSeconds * 2.0 * math.pi / 4.0 + index,
-                          ) *
-                          3.0.rx(isDesktop, desktopScale: scale);
+                        final double bobbing =
+                            math.sin(
+                              elapsedSeconds * 2.0 * math.pi / 4.0 + index,
+                            ) *
+                            3.0.rx(isDesktop, desktopScale: scale);
 
-                      final double x =
-                          (orbitRadius + bobbing) * math.cos(angle);
-                      final double y =
-                          (orbitRadius + bobbing) * math.sin(angle);
+                        final double x =
+                            (orbitRadius + bobbing) * math.cos(angle);
+                        final double y =
+                            (orbitRadius + bobbing) * math.sin(angle);
 
-                      return Positioned(
-                        left:
-                            (radarSize / 2).rx(isDesktop) + x - (nodeWidth / 2),
-                        top:
-                            (radarSize / 2).rx(isDesktop) +
-                            y -
-                            (nodeHeight / 2),
-                        child: GestureDetector(
-                          onTap: () => DeviceTransferMenu.show(
-                            context,
-                            device.ip,
-                            device.name,
-                            isDesktop,
-                          ),
-                          child: MouseRegion(
-                            cursor: SystemMouseCursors.click,
-                            child: Container(
-                              width: nodeWidth,
-                              height: nodeHeight,
-                              color: Colors.transparent,
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  // Device node with glass-bubble effect
-                                  Container(
-                                    width: 44.rx(
-                                      isDesktop,
-                                      desktopScale: scale,
-                                    ),
-                                    height: 44.rx(
-                                      isDesktop,
-                                      desktopScale: scale,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      gradient: LinearGradient(
-                                        colors: [
-                                          AppColors.primary.withAlpha(30),
-                                          AppColors.primary.withAlpha(8),
-                                        ],
-                                        begin: Alignment.topLeft,
-                                        end: Alignment.bottomRight,
-                                      ),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: AppColors.primary.withAlpha(
-                                            25,
-                                          ),
-                                          blurRadius: 12.rr(
-                                            isDesktop,
-                                            desktopScale: scale,
-                                          ),
-                                          spreadRadius: 2.rr(
-                                            isDesktop,
-                                            desktopScale: scale,
-                                          ),
-                                        ),
-                                      ],
-                                      border: Border.all(
-                                        color: AppColors.primary.withAlpha(70),
-                                        width: 1.0,
-                                      ),
-                                    ),
-                                    child: Center(
-                                      child: SleekDeviceIcon(
-                                        isLaptop: isLaptopDevice,
-                                        color: AppColors.primaryLight.withAlpha(
-                                          200,
-                                        ),
-                                        size: 18.rx(
-                                          isDesktop,
-                                          desktopScale: scale,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  SizedBox(
-                                    height: 5.rh(
-                                      isDesktop,
-                                      desktopScale: scale,
-                                    ),
-                                  ),
-                                  // Label Text
-                                  Expanded(
-                                    child: OverflowBox(
-                                      maxWidth: 180.0.rx(
+                        return Positioned(
+                          left:
+                              (radarSize / 2).rx(isDesktop) +
+                              x -
+                              (nodeWidth / 2),
+                          top:
+                              (radarSize / 2).rx(isDesktop) +
+                              y -
+                              (nodeHeight / 2),
+                          child: GestureDetector(
+                            onTap: () => DeviceTransferMenu.show(
+                              context,
+                              device.ip,
+                              device.name,
+                              isDesktop,
+                            ),
+                            child: MouseRegion(
+                              cursor: SystemMouseCursors.click,
+                              child: Container(
+                                width: nodeWidth,
+                                height: nodeHeight,
+                                color: Colors.transparent,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    // Device node with glass-bubble effect
+                                    Container(
+                                      width: 44.rx(
                                         isDesktop,
                                         desktopScale: scale,
                                       ),
-                                      minWidth: 0,
-                                      child: Text(
-                                        device.name,
-                                        textAlign: TextAlign.center,
-                                        maxLines: 1,
-                                        softWrap: false,
-                                        overflow: TextOverflow.visible,
-                                        style: TextStyle(
-                                          color: AppColors.textSecondary,
-                                          fontSize: 10.rx(
+                                      height: 44.rx(
+                                        isDesktop,
+                                        desktopScale: scale,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        gradient: LinearGradient(
+                                          colors: [
+                                            AppColors.primary.withAlpha(30),
+                                            AppColors.primary.withAlpha(8),
+                                          ],
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                        ),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: AppColors.primary.withAlpha(
+                                              25,
+                                            ),
+                                            blurRadius: 12.rr(
+                                              isDesktop,
+                                              desktopScale: scale,
+                                            ),
+                                            spreadRadius: 2.rr(
+                                              isDesktop,
+                                              desktopScale: scale,
+                                            ),
+                                          ),
+                                        ],
+                                        border: Border.all(
+                                          color: AppColors.primary.withAlpha(
+                                            70,
+                                          ),
+                                          width: 1.0,
+                                        ),
+                                      ),
+                                      child: Center(
+                                        child: SleekDeviceIcon(
+                                          isLaptop: isLaptopDevice,
+                                          color: AppColors.primaryLight
+                                              .withAlpha(200),
+                                          size: 18.rx(
                                             isDesktop,
                                             desktopScale: scale,
                                           ),
-                                          fontWeight: FontWeight.w600,
-                                          shadows: const [
-                                            Shadow(
-                                              color: Colors.black,
-                                              blurRadius: 4,
-                                            ),
-                                          ],
                                         ),
                                       ),
                                     ),
-                                  ),
-                                ],
+                                    SizedBox(
+                                      height: 5.rh(
+                                        isDesktop,
+                                        desktopScale: scale,
+                                      ),
+                                    ),
+                                    // Label Text
+                                    Expanded(
+                                      child: OverflowBox(
+                                        maxWidth: 180.0.rx(
+                                          isDesktop,
+                                          desktopScale: scale,
+                                        ),
+                                        minWidth: 0,
+                                        child: Text(
+                                          device.name,
+                                          textAlign: TextAlign.center,
+                                          maxLines: 1,
+                                          softWrap: false,
+                                          overflow: TextOverflow.visible,
+                                          style: TextStyle(
+                                            color: AppColors.textSecondary,
+                                            fontSize: 10.rx(
+                                              isDesktop,
+                                              desktopScale: scale,
+                                            ),
+                                            fontWeight: FontWeight.w600,
+                                            shadows: const [
+                                              Shadow(
+                                                color: Colors.black,
+                                                blurRadius: 4,
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      );
-                    },
-                  );
-                }),
+                        );
+                      },
+                    );
+                  });
+                }(),
 
                 // 5. Central Node — glowing premium core
                 GestureDetector(
@@ -431,13 +449,14 @@ class _OrbitalRadarState extends State<OrbitalRadar>
     });
   }
 
-  double _getDeviceBaseAngle(String input) {
+  /// Returns a stable integer hash for a device IP, used only for
+  /// deterministic sort ordering — NOT for direct angle calculation.
+  int _getDeviceHash(String input) {
     int hash = 0;
     for (int i = 0; i < input.length; i++) {
       hash = input.codeUnitAt(i) + ((hash << 5) - hash);
     }
-    // Return a stable angle between 0 and 2*pi
-    return (hash.abs() % 360) * math.pi / 180.0;
+    return hash.abs();
   }
 }
 
