@@ -53,12 +53,14 @@ document.addEventListener('DOMContentLoaded', () => {
     let isAndroid = /android/i.test(userAgent);
     let isWindows = /windows/i.test(userAgent);
 
-    // Initial OS Text Setup for main button
-    if (mainDownloadBtn) {
+    // Initial OS Text Setup for main and secondary buttons
+    if (mainDownloadBtn && heroAndBtn) {
         if (isAndroid) {
             mainDownloadBtn.innerHTML = '<i class="fab fa-android"></i> Download for Android';
-        } else if (isWindows) {
+            heroAndBtn.innerHTML = '<i class="fab fa-windows"></i> Download for Windows';
+        } else {
             mainDownloadBtn.innerHTML = '<i class="fab fa-windows"></i> Download for Windows';
+            heroAndBtn.innerHTML = '<i class="fab fa-android"></i> Download for Android';
         }
     }
 
@@ -101,15 +103,15 @@ document.addEventListener('DOMContentLoaded', () => {
             // Update bottom CTA buttons
             if (winBtn && windowsUrl) winBtn.href = windowsUrl;
             if (andBtn && apkUrl) andBtn.href = apkUrl;
-            if (heroAndBtn && apkUrl) heroAndBtn.href = apkUrl;
 
-            // Update main hero button based on OS
-            if (mainDownloadBtn) {
-                if (isAndroid && apkUrl) {
-                    mainDownloadBtn.href = apkUrl;
-                } else if (windowsUrl) {
-                    // Default to Windows if not Android, or if explicitly Windows
-                    mainDownloadBtn.href = windowsUrl;
+            // Update hero buttons based on OS
+            if (mainDownloadBtn && heroAndBtn) {
+                if (isAndroid) {
+                    if (apkUrl) mainDownloadBtn.href = apkUrl;
+                    if (windowsUrl) heroAndBtn.href = windowsUrl;
+                } else {
+                    if (windowsUrl) mainDownloadBtn.href = windowsUrl;
+                    if (apkUrl) heroAndBtn.href = apkUrl;
                 }
             }
         } catch (error) {
