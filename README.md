@@ -60,7 +60,7 @@ This guarantees zero-copy byte slicing and atomic file writes, drastically reduc
 Daphq's performance has been rigorously tested to ensure it pushes hardware to its physical limits:
 
 - **Wi-Fi 5 (802.11ac) 5GHz Hotspot** *(Negotiated at 866 Mbps Link)*: 
-  Consistently saturates the maximum physical bandwidth, peaking at **80 - 85 MB/s**.
+  Consistently saturates the maximum physical bandwidth, peaking at **80 - 90 MB/s**.
   - **Efficiency**: Achieves an astounding **~93% effective throughput** of the raw physical link.
   - **Zero Overhead**: Bypasses the heavy lifting of standard HTTP/REST implementations, utilizing raw TCP streaming for near-zero protocol overhead.
 
@@ -70,21 +70,23 @@ Daphq's performance has been rigorously tested to ensure it pushes hardware to i
 
 - **Extreme Throughput (TCP)**: Bypasses HTTP/REST overhead using raw TCP sockets with `tcpNoDelay` for near-zero protocol latency (Speeds up to 100+ MB/s).
 - **Seamless Auto-Discovery**: Instant device pairing on the same network. I've included manual IP entry as a fallback to ensure connectivity even in complex network environments.
+- **Smart Discovery Engine**: Connectivity-aware engine with watchdog recovery and IP caching for near-instant device pairing.
 - **System-Wide File Sharing**: Direct file sharing from any app. Includes native **Android Share Menu** integration and a **Windows Context Menu** ("Send via Daphq") shell extension.
 - **Atomic Directory Sync**: Recursive traversal and reconstruction of exact directory trees with intelligent collision management and auto-renaming.
-- **Batch Transfer Support**: Ability to select, stage, and transfer multiple files or entire directories simultaneously with a single click.
-- **Smart Add Button**: Features a `UnifiedAddButton` that provides platform-specific smart menus (such as direct shortcuts to Photos and Videos) for an intuitive experience.
-- **Smart Discovery Engine**: Connectivity-aware engine with watchdog recovery and IP caching for near-instant device pairing.
 - **Uninterruptible Background Sync**: (Android) Foreground Services keep transfers alive even when the app is closed or the screen is off.
-- **Secure Authorization**: Full receiver control—view payload size and file count before explicitly authorizing any transfer.
+- **Unified Dashboard & Orbital Radar**: A seamless, unified dashboard centered around a premium, animated "Orbital Radar" to visually manage and discover device connections.
+- **Batch Transfer Support**: Ability to select, stage, and transfer multiple files or entire directories simultaneously with a single click.
+- **Persistent Transfer History**: Built-in transfer history system to track past sends and receives, check their success status, and instantly open file locations directly from the app.
 - **Advanced Transfer Tracking**: Precise real-time tracking of transfer speeds (MB/s), total payload progress, and estimated time remaining.
+- **Secure Authorization**: Full receiver control—view payload size and file count before explicitly authorizing any transfer.
+- **Smart Add Button**: Features a `UnifiedAddButton` that provides platform-specific smart menus (such as direct shortcuts to Photos and Videos) for an intuitive experience.
 - **Post-Transfer Quick Access**: A "Show in Folder" button appears automatically after successful transfers, allowing instant access to received files.
 
 ## 📸 Screenshots
 
 | Android UI | Windows Desktop UI |
 | :---: | :---: |
-| <img src="assets/Android-Interface.png" alt="Android Interface" width="250"/> | <img src="assets/Windows-Interface.png" alt="Windows Interface" width="450"/> |
+| <img src="assets/android-interface.png" alt="Android Interface" width="250"/> | <img src="assets/windows-interface.png" alt="Windows Interface" width="450"/> |
 | *Clean, robust mobile layout with background service tracking.* | *Responsive desktop experience.* |
 
 ## 🔬 Under the Hood (Technical Audit Highlights)
