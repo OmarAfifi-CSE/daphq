@@ -27,6 +27,8 @@ dependencies:
   connectivity_plus: ^7.1.1
   storage_space: ^1.2.0
   ffi: ^2.2.0
+  flutter_markdown: ^0.7.7+1
+  open_filex: ^4.7.0
 
 dev_dependencies:
   flutter_test:

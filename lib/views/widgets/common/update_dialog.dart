@@ -1,10 +1,17 @@
+import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
+import 'package:open_filex/open_filex.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/app_colors.dart';
+import '../../../core/app_constants.dart';
 import '../../../core/responsive_utils.dart';
 
-class UpdateDialog extends StatelessWidget {
+class UpdateDialog extends StatefulWidget {
   final String newVersion;
   final String whatsNew;
   final String downloadUrl;
@@ -18,30 +25,141 @@ class UpdateDialog extends StatelessWidget {
     required this.isDesktop,
   });
 
-  Future<void> _launchUpdateUrl() async {
-    final Uri url = Uri.parse(downloadUrl);
+  @override
+  State<UpdateDialog> createState() => _UpdateDialogState();
+}
+
+class _UpdateDialogState extends State<UpdateDialog> {
+  bool _isDownloading = false;
+  double _downloadProgress = 0.0;
+  String _downloadStatus = '';
+  String _errorMessage = '';
+
+  Future<void> _launchUpdateUrlFallback() async {
+    final Uri url = Uri.parse(AppConstants.websiteUrl);
     try {
       await launchUrl(url, mode: LaunchMode.externalApplication);
     } catch (_) {}
+  }
+
+  Future<void> _downloadAndInstall() async {
+    setState(() {
+      _isDownloading = true;
+      _errorMessage = '';
+      _downloadProgress = 0.0;
+      _downloadStatus = 'Starting download...';
+    });
+
+    try {
+      final request = http.Request('GET', Uri.parse(widget.downloadUrl));
+      final http.StreamedResponse response = await http.Client().send(request);
+
+      if (response.statusCode != 200) {
+        throw Exception('Download failed with status: ${response.statusCode}');
+      }
+
+      final contentLength = response.contentLength;
+
+      Directory tempDir;
+      if (Platform.isAndroid) {
+        tempDir =
+            (await getExternalStorageDirectory()) ??
+            await getTemporaryDirectory();
+      } else {
+        tempDir = await getTemporaryDirectory();
+      }
+
+      // Clean up old update files
+      try {
+        final List<FileSystemEntity> entities = tempDir.listSync();
+        for (final entity in entities) {
+          if (entity is File &&
+              (entity.path.endsWith('.apk') || entity.path.endsWith('.exe'))) {
+            entity.deleteSync();
+          }
+        }
+      } catch (_) {}
+
+      final String fileName = widget.downloadUrl.split('/').last;
+      final File file = File(p.join(tempDir.path, fileName));
+      final IOSink sink = file.openWrite();
+
+      int downloaded = 0;
+      await for (final chunk in response.stream) {
+        sink.add(chunk);
+        downloaded += chunk.length;
+        if (contentLength != null && contentLength > 0) {
+          if (mounted) {
+            setState(() {
+              _downloadProgress = downloaded / contentLength;
+              final String downloadedMb = (downloaded / (1024 * 1024))
+                  .toStringAsFixed(1);
+              final String totalMb = (contentLength / (1024 * 1024))
+                  .toStringAsFixed(1);
+              _downloadStatus = '$downloadedMb MB / $totalMb MB';
+            });
+          }
+        } else {
+          if (mounted) {
+            setState(() {
+              final String downloadedMb = (downloaded / (1024 * 1024))
+                  .toStringAsFixed(1);
+              _downloadStatus = '$downloadedMb MB downloaded';
+            });
+          }
+        }
+      }
+
+      await sink.flush();
+      await sink.close();
+
+      if (mounted) {
+        setState(() {
+          _downloadStatus = 'Installing...';
+          _downloadProgress = 1.0;
+        });
+      }
+
+      if (Platform.isWindows) {
+        await Process.start(file.path, []);
+        exit(0);
+      } else if (Platform.isAndroid) {
+        final result = await OpenFilex.open(file.path);
+        if (result.type != ResultType.done) {
+          throw Exception(result.message);
+        }
+        if (mounted) Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isDownloading = false;
+          _errorMessage = 'Failed to download update. Please try again.';
+        });
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Dialog(
       backgroundColor: Colors.transparent,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(20.rr(isDesktop)),
+        borderRadius: BorderRadius.circular(20.rr(widget.isDesktop)),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
           child: Container(
             constraints: BoxConstraints(
-              maxWidth: isDesktop ? 500 : double.infinity,
+              maxWidth: widget.isDesktop ? 500 : double.infinity,
+              maxHeight: MediaQuery.of(context).size.height * 0.85,
             ),
-            padding: EdgeInsets.all(24.rw(isDesktop)),
+            padding: EdgeInsets.all(
+              widget.isDesktop ? 24.rw(true) : 20.rw(false),
+            ),
             decoration: BoxDecoration(
               color: AppColors.dialogBackground.withAlpha(230),
-              borderRadius: BorderRadius.circular(20.rr(isDesktop)),
+              borderRadius: BorderRadius.circular(20.rr(widget.isDesktop)),
               border: Border.all(color: Colors.white.withAlpha(12)),
               boxShadow: [
                 BoxShadow(
@@ -51,218 +169,396 @@ class UpdateDialog extends StatelessWidget {
                 ),
               ],
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: EdgeInsets.all(10.rr(widget.isDesktop)),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withAlpha(15),
+                          borderRadius: BorderRadius.circular(
+                            12.rr(widget.isDesktop),
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.system_update_alt,
+                          color: AppColors.primaryLight,
+                          size: 24.0.rx(widget.isDesktop),
+                        ),
+                      ),
+                      SizedBox(width: 14.0.rw(widget.isDesktop)),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Update Available',
+                              style: TextStyle(
+                                color: AppColors.textPrimary,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 18.0.rx(widget.isDesktop),
+                              ),
+                            ),
+                            SizedBox(height: 2.rh(widget.isDesktop)),
+                            Text(
+                              'Version ${widget.newVersion} is now available.',
+                              style: TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 13.0.rx(widget.isDesktop),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 20.0.rh(widget.isDesktop)),
+                  Text(
+                    "What's New:",
+                    style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15.0.rx(widget.isDesktop),
+                    ),
+                  ),
+                  SizedBox(height: 10.0.rh(widget.isDesktop)),
+                  Container(
+                    width: double.infinity,
+                    constraints: BoxConstraints(
+                      // Safe to make large because the entire dialog is now scrollable
+                      maxHeight: widget.isDesktop
+                          ? 350.rh(true)
+                          : 380.rh(false),
+                    ),
+                    padding: EdgeInsets.all(14.0.rw(widget.isDesktop)),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withAlpha(6),
+                      borderRadius: BorderRadius.circular(
+                        12.0.rr(widget.isDesktop),
+                      ),
+                      border: Border.all(color: Colors.white.withAlpha(8)),
+                    ),
+                    child: SingleChildScrollView(
+                      physics: const BouncingScrollPhysics(),
+                      child: MarkdownBody(
+                        data: widget.whatsNew,
+                        styleSheet: MarkdownStyleSheet(
+                          p: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 13.0.rx(widget.isDesktop),
+                            height: 1.5,
+                          ),
+                          listBullet: TextStyle(
+                            color: AppColors.primaryLight,
+                            fontSize: 13.0.rx(widget.isDesktop),
+                          ),
+                          strong: TextStyle(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13.0.rx(widget.isDesktop),
+                          ),
+                          h1: TextStyle(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 18.0.rx(widget.isDesktop),
+                          ),
+                          h2: TextStyle(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16.0.rx(widget.isDesktop),
+                          ),
+                          h3: TextStyle(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14.0.rx(widget.isDesktop),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: 24.0.rh(widget.isDesktop)),
+                  if (_errorMessage.isNotEmpty) ...[
                     Container(
-                      padding: EdgeInsets.all(10.rr(isDesktop)),
+                      padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: AppColors.primary.withAlpha(15),
-                        borderRadius: BorderRadius.circular(12.rr(isDesktop)),
+                        color: AppColors.danger.withAlpha(15),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: AppColors.danger.withAlpha(30),
+                        ),
                       ),
-                      child: Icon(
-                        Icons.system_update_alt,
-                        color: AppColors.primaryLight,
-                        size: 24.0.rx(isDesktop),
-                      ),
-                    ),
-                    SizedBox(width: 14.0.rw(isDesktop)),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      child: Row(
                         children: [
-                          Text(
-                            'Update Available',
-                            style: TextStyle(
-                              color: AppColors.textPrimary,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 18.0.rx(isDesktop),
-                            ),
+                          Icon(
+                            Icons.error_outline_rounded,
+                            color: AppColors.danger,
+                            size: 18.rx(widget.isDesktop),
                           ),
-                          SizedBox(height: 2.rh(isDesktop)),
-                          Text(
-                            'Version $newVersion is now available.',
-                            style: TextStyle(
-                              color: AppColors.textSecondary,
-                              fontSize: 13.0.rx(isDesktop),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _errorMessage,
+                              style: TextStyle(
+                                color: AppColors.danger,
+                                fontSize: 12.0.rx(widget.isDesktop),
+                                fontWeight: FontWeight.w500,
+                              ),
                             ),
                           ),
                         ],
                       ),
                     ),
+                    SizedBox(height: 16.0.rh(widget.isDesktop)),
                   ],
-                ),
-                SizedBox(height: 20.0.rh(isDesktop)),
-                Text(
-                  "What's New:",
-                  style: TextStyle(
-                    color: AppColors.textPrimary,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 15.0.rx(isDesktop),
-                  ),
-                ),
-                SizedBox(height: 10.0.rh(isDesktop)),
-                Container(
-                  width: double.infinity,
-                  constraints: BoxConstraints(maxHeight: 200.rh(isDesktop)),
-                  padding: EdgeInsets.all(14.0.rw(isDesktop)),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withAlpha(6),
-                    borderRadius: BorderRadius.circular(12.0.rr(isDesktop)),
-                    border: Border.all(color: Colors.white.withAlpha(8)),
-                  ),
-                  child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(),
-                    child: Text(
-                      whatsNew,
-                      style: TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 13.0.rx(isDesktop),
-                        height: 1.5,
-                      ),
-                    ),
-                  ),
-                ),
-                SizedBox(height: 24.0.rh(isDesktop)),
-                !isDesktop
-                    ? Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Material(
-                            color: Colors.transparent,
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(
-                                12.rr(isDesktop),
+                  if (_isDownloading)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              _downloadStatus,
+                              style: TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 12.rx(widget.isDesktop),
                               ),
-                              onTap: () {
-                                Navigator.of(context).pop();
-                                _launchUpdateUrl();
-                              },
-                              child: Container(
-                                padding: EdgeInsets.symmetric(
-                                  vertical: 12.rh(isDesktop),
-                                ),
-                                decoration: BoxDecoration(
-                                  gradient: const LinearGradient(
-                                    colors: [
-                                      AppColors.primary,
-                                      AppColors.primaryLight,
-                                    ],
-                                  ),
-                                  borderRadius: BorderRadius.circular(
-                                    12.rr(isDesktop),
-                                  ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: AppColors.primary.withAlpha(60),
-                                      blurRadius: 12,
-                                      offset: const Offset(0, 4),
+                            ),
+                            Text(
+                              '${(_downloadProgress * 100).toStringAsFixed(0)}%',
+                              style: TextStyle(
+                                color: AppColors.primaryLight,
+                                fontSize: 12.rx(widget.isDesktop),
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: 8.rh(widget.isDesktop)),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: LinearProgressIndicator(
+                            value: _downloadProgress > 0
+                                ? _downloadProgress
+                                : null,
+                            minHeight: 6.rh(widget.isDesktop),
+                            backgroundColor: AppColors.primary.withAlpha(20),
+                            valueColor: const AlwaysStoppedAnimation<Color>(
+                              AppColors.primary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    )
+                  else
+                    !widget.isDesktop
+                        ? Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: TextButton(
+                                      onPressed: () =>
+                                          Navigator.of(context).pop(),
+                                      style: TextButton.styleFrom(
+                                        padding: EdgeInsets.symmetric(
+                                          vertical: 10.rh(widget.isDesktop),
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            10.rr(widget.isDesktop),
+                                          ),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        'Later',
+                                        style: TextStyle(
+                                          color: AppColors.textMuted,
+                                          fontSize: 13.0.rx(widget.isDesktop),
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
                                     ),
-                                  ],
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    'Update Now',
+                                  ),
+                                  SizedBox(width: 12.rw(widget.isDesktop)),
+                                  Expanded(
+                                    flex: 2,
+                                    child: Material(
+                                      color: Colors.transparent,
+                                      child: InkWell(
+                                        borderRadius: BorderRadius.circular(
+                                          10.rr(widget.isDesktop),
+                                        ),
+                                        onTap: _downloadAndInstall,
+                                        child: Container(
+                                          padding: EdgeInsets.symmetric(
+                                            vertical: 10.rh(widget.isDesktop),
+                                          ),
+                                          decoration: BoxDecoration(
+                                            gradient: const LinearGradient(
+                                              colors: [
+                                                AppColors.primary,
+                                                AppColors.primaryLight,
+                                              ],
+                                            ),
+                                            borderRadius: BorderRadius.circular(
+                                              10.rr(widget.isDesktop),
+                                            ),
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: AppColors.primary
+                                                    .withAlpha(60),
+                                                blurRadius: 10,
+                                                offset: const Offset(0, 4),
+                                              ),
+                                            ],
+                                          ),
+                                          child: Center(
+                                            child: Text(
+                                              _errorMessage.isNotEmpty
+                                                  ? 'Retry'
+                                                  : 'Update Now',
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.w700,
+                                                fontSize: 13.0.rx(
+                                                  widget.isDesktop,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              if (_errorMessage.isNotEmpty) ...[
+                                SizedBox(height: 12.rh(widget.isDesktop)),
+                                TextButton.icon(
+                                  onPressed: _launchUpdateUrlFallback,
+                                  icon: Icon(
+                                    Icons.open_in_browser,
+                                    size: 16.rx(widget.isDesktop),
+                                    color: AppColors.primaryLight,
+                                  ),
+                                  label: Text(
+                                    'Download from Website',
                                     style: TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 14.0.rx(isDesktop),
+                                      color: AppColors.primaryLight,
+                                      fontSize: 13.rx(widget.isDesktop),
+                                      fontWeight: FontWeight.w600,
                                     ),
                                   ),
                                 ),
-                              ),
-                            ),
-                          ),
-                          SizedBox(height: 8.rh(isDesktop)),
-                          TextButton(
-                            onPressed: () => Navigator.of(context).pop(),
-                            style: TextButton.styleFrom(
-                              padding: EdgeInsets.symmetric(
-                                vertical: 12.rh(isDesktop),
-                              ),
-                            ),
-                            child: Text(
-                              'Later',
-                              style: TextStyle(
-                                color: AppColors.textMuted,
-                                fontSize: 14.0.rx(isDesktop),
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                        ],
-                      )
-                    : Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          TextButton(
-                            onPressed: () => Navigator.of(context).pop(),
-                            style: TextButton.styleFrom(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 16.rw(isDesktop),
-                                vertical: 10.rh(isDesktop),
-                              ),
-                            ),
-                            child: Text(
-                              'Later',
-                              style: TextStyle(
-                                color: AppColors.textMuted,
-                                fontSize: 14.0.rx(isDesktop),
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                          SizedBox(width: 8.rw(isDesktop)),
-                          Material(
-                            color: Colors.transparent,
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(
-                                12.rr(isDesktop),
-                              ),
-                              onTap: () {
-                                Navigator.of(context).pop();
-                                _launchUpdateUrl();
-                              },
-                              child: Container(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: 20.rw(isDesktop),
-                                  vertical: 12.rh(isDesktop),
-                                ),
-                                decoration: BoxDecoration(
-                                  gradient: const LinearGradient(
-                                    colors: [
-                                      AppColors.primary,
-                                      AppColors.primaryLight,
-                                    ],
-                                  ),
-                                  borderRadius: BorderRadius.circular(
-                                    12.rr(isDesktop),
-                                  ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: AppColors.primary.withAlpha(60),
-                                      blurRadius: 12,
-                                      offset: const Offset(0, 4),
+                              ],
+                            ],
+                          )
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(),
+                                    style: TextButton.styleFrom(
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal: 16.rw(widget.isDesktop),
+                                        vertical: 10.rh(widget.isDesktop),
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(
+                                          10.rr(widget.isDesktop),
+                                        ),
+                                      ),
                                     ),
-                                  ],
-                                ),
-                                child: Text(
-                                  'Update Now',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 14.0.rx(isDesktop),
+                                    child: Text(
+                                      'Later',
+                                      style: TextStyle(
+                                        color: AppColors.textMuted,
+                                        fontSize: 13.0.rx(widget.isDesktop),
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(width: 12.rw(widget.isDesktop)),
+                                  Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(
+                                        10.rr(widget.isDesktop),
+                                      ),
+                                      onTap: _downloadAndInstall,
+                                      child: Container(
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: 20.rw(widget.isDesktop),
+                                          vertical: 10.rh(widget.isDesktop),
+                                        ),
+                                        decoration: BoxDecoration(
+                                          gradient: const LinearGradient(
+                                            colors: [
+                                              AppColors.primary,
+                                              AppColors.primaryLight,
+                                            ],
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            10.rr(widget.isDesktop),
+                                          ),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: AppColors.primary
+                                                  .withAlpha(60),
+                                              blurRadius: 10,
+                                              offset: const Offset(0, 4),
+                                            ),
+                                          ],
+                                        ),
+                                        child: Text(
+                                          _errorMessage.isNotEmpty
+                                              ? 'Retry'
+                                              : 'Update Now',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 13.0.rx(widget.isDesktop),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              if (_errorMessage.isNotEmpty) ...[
+                                SizedBox(height: 12.rh(widget.isDesktop)),
+                                TextButton.icon(
+                                  onPressed: _launchUpdateUrlFallback,
+                                  icon: Icon(
+                                    Icons.open_in_browser,
+                                    size: 16.rx(widget.isDesktop),
+                                    color: AppColors.primaryLight,
+                                  ),
+                                  label: Text(
+                                    'Download from Website',
+                                    style: TextStyle(
+                                      color: AppColors.primaryLight,
+                                      fontSize: 13.rx(widget.isDesktop),
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ),
+                              ],
+                            ],
                           ),
-                        ],
-                      ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

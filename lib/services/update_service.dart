@@ -21,7 +21,7 @@ class UpdateService {
             data['body'] ?? 'No release notes available.';
 
         // Smart URL detection based on platform
-        String downloadUrl = AppConstants.websiteUrl; // Default fallback
+        String downloadUrl = '';
         final List<dynamic> assets = data['assets'] ?? [];
         bool hasAssetForPlatform = false;
 
