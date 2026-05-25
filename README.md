@@ -86,7 +86,7 @@ Daphq's performance has been rigorously tested to ensure it pushes hardware to i
 
 | Android UI | Windows Desktop UI |
 | :---: | :---: |
-| <img src="assets/android-interface.png" alt="Android Interface" width="250"/> | <img src="assets/windows-interface.png" alt="Windows Interface" width="450"/> |
+| <img src="assets/Android-Interface.png" alt="Android Interface" width="250"/> | <img src="assets/Windows-Interface.png" alt="Windows Interface" width="450"/> |
 | *Clean, robust mobile layout with background service tracking.* | *Responsive desktop experience.* |
 
 ## 🔬 Under the Hood (Technical Audit Highlights)
