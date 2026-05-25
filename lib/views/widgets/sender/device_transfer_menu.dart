@@ -8,6 +8,8 @@ import '../../../core/responsive_utils.dart';
 import '../common/animated_press_button.dart';
 import '../common/unified_add_button.dart';
 
+final Map<String, bool> _isDirCache = {};
+
 class DeviceTransferMenu extends StatelessWidget {
   final String ip;
   final String name;
@@ -236,15 +238,31 @@ class DeviceTransferMenu extends StatelessWidget {
                           ],
                         ),
                       )
-                    : ListView.separated(
+                    : ListView.builder(
                         itemCount: state.selectedPaths.length,
-                        separatorBuilder: (context, index) => Divider(
-                          color: Colors.white.withAlpha(6),
-                          height: 1,
+                        prototypeItem: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            ListTile(
+                              contentPadding: EdgeInsets.symmetric(
+                                horizontal: 4.rw(isDesktop),
+                                vertical: 2.rh(isDesktop),
+                              ),
+                              leading: const SizedBox(width: 34, height: 34),
+                              title: const Text('Prototype'),
+                            ),
+                            Divider(
+                              color: Colors.white.withAlpha(6),
+                              height: 1,
+                            ),
+                          ],
                         ),
                         itemBuilder: (context, index) {
                           final path = state.selectedPaths[index];
-                          final isDir = FileSystemEntity.isDirectorySync(path);
+                          final isDir = _isDirCache.putIfAbsent(
+                            path,
+                            () => FileSystemEntity.isDirectorySync(path),
+                          );
                           final segments = path
                               .split(Platform.pathSeparator)
                               .where((s) => s.isNotEmpty)
@@ -254,49 +272,61 @@ class DeviceTransferMenu extends StatelessWidget {
                               : path.replaceAll(RegExp(r'[\\/]+$'), '');
 
                           // Staggered entrance animation removed for performance on large lists
-                          return ListTile(
-                            contentPadding: EdgeInsets.symmetric(
-                              horizontal: 4.rw(isDesktop),
-                              vertical: 2.rh(isDesktop),
-                            ),
-                            leading: Container(
-                              padding: EdgeInsets.all(8.rr(isDesktop)),
-                              decoration: BoxDecoration(
-                                color:
-                                    (isDir
-                                            ? AppColors.primary
-                                            : AppColors.textMuted)
-                                        .withAlpha(12),
-                                borderRadius: BorderRadius.circular(
-                                  8.rr(isDesktop),
+                          return Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              ListTile(
+                                contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 4.rw(isDesktop),
+                                  vertical: 2.rh(isDesktop),
+                                ),
+                                leading: Container(
+                                  padding: EdgeInsets.all(8.rr(isDesktop)),
+                                  decoration: BoxDecoration(
+                                    color:
+                                        (isDir
+                                                ? AppColors.primary
+                                                : AppColors.textMuted)
+                                            .withAlpha(12),
+                                    borderRadius: BorderRadius.circular(
+                                      8.rr(isDesktop),
+                                    ),
+                                  ),
+                                  child: Icon(
+                                    isDir
+                                        ? Icons.folder
+                                        : Icons.insert_drive_file,
+                                    color: isDir
+                                        ? AppColors.primary
+                                        : AppColors.textSecondary,
+                                    size: 18.rx(isDesktop),
+                                  ),
+                                ),
+                                title: Text(
+                                  name,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: AppColors.textPrimary,
+                                    fontSize: 13.rx(isDesktop),
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                trailing: IconButton(
+                                  icon: Icon(
+                                    Icons.close_rounded,
+                                    color: AppColors.textMuted,
+                                    size: 16.rx(isDesktop),
+                                  ),
+                                  onPressed: () =>
+                                      cubit.removeSelectedPath(path),
                                 ),
                               ),
-                              child: Icon(
-                                isDir ? Icons.folder : Icons.insert_drive_file,
-                                color: isDir
-                                    ? AppColors.primary
-                                    : AppColors.textSecondary,
-                                size: 18.rx(isDesktop),
+                              Divider(
+                                color: Colors.white.withAlpha(6),
+                                height: 1,
                               ),
-                            ),
-                            title: Text(
-                              name,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: AppColors.textPrimary,
-                                fontSize: 13.rx(isDesktop),
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            trailing: IconButton(
-                              icon: Icon(
-                                Icons.close_rounded,
-                                color: AppColors.textMuted,
-                                size: 16.rx(isDesktop),
-                              ),
-                              onPressed: () => cubit.removeSelectedPath(path),
-                            ),
+                            ],
                           );
                         },
                       ),
