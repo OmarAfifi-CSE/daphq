@@ -8,6 +8,7 @@ import '../../../cubits/transfer_cubit.dart';
 import '../../../cubits/transfer_state.dart';
 import '../../../core/app_colors.dart';
 import '../../../services/history_service.dart';
+import '../../../core/file_utils.dart';
 import 'package:open_filex/open_filex.dart';
 
 class HistoryDialog extends StatefulWidget {
@@ -165,53 +166,6 @@ class _HistoryDialogState extends State<HistoryDialog> {
           ),
         );
       }
-    }
-  }
-
-  IconData _getFileIcon(String fileName) {
-    final ext = p.extension(fileName).toLowerCase();
-    switch (ext) {
-      case '.jpg':
-      case '.jpeg':
-      case '.png':
-      case '.gif':
-      case '.webp':
-      case '.heic':
-        return Icons.photo_library_rounded; // More premium than basic image
-      case '.mp4':
-      case '.mkv':
-      case '.avi':
-      case '.mov':
-      case '.webm':
-        return Icons.smart_display_rounded; // Sleek TV/Play icon
-      case '.mp3':
-      case '.wav':
-      case '.m4a':
-      case '.flac':
-      case '.ogg':
-        return Icons.headphones_rounded; // Premium audio feel
-      case '.pdf':
-        return Icons.picture_as_pdf_rounded;
-      case '.doc':
-      case '.docx':
-      case '.txt':
-      case '.rtf':
-      case '.md':
-        return Icons.notes_rounded;
-      case '.zip':
-      case '.rar':
-      case '.7z':
-      case '.tar':
-      case '.gz':
-        return Icons.archive_rounded; // Professional archive icon
-      case '.apk':
-        return Icons.android_rounded;
-      case '.exe':
-      case '.msi':
-        return Icons.terminal_rounded; // Dev/System feel
-      default:
-        if (ext.isEmpty) return Icons.folder_copy_rounded;
-        return Icons.insert_drive_file_rounded;
     }
   }
 
@@ -450,7 +404,7 @@ class _HistoryDialogState extends State<HistoryDialog> {
                         ),
                       ),
                       child: Icon(
-                        _getFileIcon(entry.fileName),
+                        FileUtils.getFileIcon(entry.fileName),
                         color: isSend ? AppColors.primary : AppColors.success,
                         size: widget.isDesktop ? 22 : 20.sp,
                       ),

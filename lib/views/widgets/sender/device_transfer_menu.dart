@@ -5,6 +5,7 @@ import '../../../cubits/transfer_cubit.dart';
 import '../../../cubits/transfer_state.dart';
 import '../../../core/app_colors.dart';
 import '../../../core/responsive_utils.dart';
+import '../../../core/file_utils.dart';
 import '../common/animated_press_button.dart';
 import '../common/unified_add_button.dart';
 
@@ -281,24 +282,21 @@ class DeviceTransferMenu extends StatelessWidget {
                                   vertical: 2.rh(isDesktop),
                                 ),
                                 leading: Container(
-                                  padding: EdgeInsets.all(8.rr(isDesktop)),
+                                  padding: EdgeInsets.all(10.rr(isDesktop)),
                                   decoration: BoxDecoration(
-                                    color:
-                                        (isDir
-                                                ? AppColors.primary
-                                                : AppColors.textMuted)
-                                            .withAlpha(12),
+                                    color: AppColors.primary.withAlpha(15),
                                     borderRadius: BorderRadius.circular(
-                                      8.rr(isDesktop),
+                                      12.rr(isDesktop),
+                                    ),
+                                    border: Border.all(
+                                      color: AppColors.primary.withAlpha(30),
                                     ),
                                   ),
                                   child: Icon(
                                     isDir
-                                        ? Icons.folder
-                                        : Icons.insert_drive_file,
-                                    color: isDir
-                                        ? AppColors.primary
-                                        : AppColors.textSecondary,
+                                        ? Icons.folder_copy_rounded
+                                        : FileUtils.getFileIcon(name),
+                                    color: AppColors.primary,
                                     size: 18.rx(isDesktop),
                                   ),
                                 ),
