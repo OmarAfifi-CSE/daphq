@@ -98,8 +98,11 @@ class TransferProgressView extends StatelessWidget {
                     duration: const Duration(milliseconds: 800),
                     curve: Curves.easeInOut,
                     builder: (context, value, _) {
+                      final label = model.analyzeCount! == 0
+                          ? "..."
+                          : "${_formatCount(model.analyzeCount!)} files";
                       return Text(
-                        "${_formatCount(model.analyzeCount!)} files",
+                        label,
                         style: TextStyle(
                           color: AppColors.textPrimary.withAlpha(
                             (180 + (75 * value)).toInt(),

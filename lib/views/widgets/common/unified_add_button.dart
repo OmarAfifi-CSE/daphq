@@ -5,6 +5,7 @@ import 'dart:io';
 import '../../../core/app_colors.dart';
 import '../../../core/responsive_utils.dart';
 import '../../../cubits/transfer_cubit.dart';
+import '../../../cubits/transfer_state.dart';
 import 'animated_press_button.dart';
 
 class UnifiedAddButton extends StatefulWidget {
@@ -130,7 +131,6 @@ class _UnifiedAddButtonState extends State<UnifiedAddButton> {
 
   @override
   Widget build(BuildContext context) {
-    final cubit = context.read<TransferCubit>();
     final isDesktop =
         widget.isDesktop ||
         Platform.isWindows ||
@@ -138,102 +138,140 @@ class _UnifiedAddButtonState extends State<UnifiedAddButton> {
         Platform.isLinux;
     final scale = isDesktop ? context.desktopScale : 1.0;
 
-    if (!isDesktop) {
-      return AnimatedPressButton(
-        isDesktop: false,
-        onPressed: () => _showMobileMenu(context, cubit),
-        gradientColors: const [AppColors.primary, AppColors.primaryLight],
-        child: _buildButtonContent(false, 1.0),
-      );
-    }
+    return BlocBuilder<TransferCubit, TransferState>(
+      builder: (context, state) {
+        final cubit = context.read<TransferCubit>();
+        final isLoading = state.isAddingFiles;
 
-    return Theme(
-      data: Theme.of(context).copyWith(
-        hoverColor: Colors.transparent,
-        splashColor: Colors.transparent,
-        highlightColor: Colors.transparent,
-      ),
-      child: PopupMenuButton<int>(
-        key: _menuKey,
-        offset: Offset(0, 55.rh(isDesktop, desktopScale: scale)),
-        color: AppColors.dialogBackground,
-        elevation: 20,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(
-            18.rr(isDesktop, desktopScale: scale),
+        if (!isDesktop) {
+          return AnimatedPressButton(
+            isDesktop: false,
+            onPressed: isLoading ? null : () => _showMobileMenu(context, cubit),
+            gradientColors: isLoading
+                ? [
+                    AppColors.textMuted.withAlpha(20),
+                    AppColors.textMuted.withAlpha(20),
+                  ]
+                : const [AppColors.primary, AppColors.primaryLight],
+            child: _buildButtonContent(false, 1.0, isLoading: isLoading),
+          );
+        }
+
+        return Theme(
+          data: Theme.of(context).copyWith(
+            hoverColor: Colors.transparent,
+            splashColor: Colors.transparent,
+            highlightColor: Colors.transparent,
           ),
-          side: BorderSide(color: Colors.white.withAlpha(10), width: 1),
-        ),
-        onSelected: (value) => _handleSelection(value, cubit),
-        itemBuilder: (context) => [
-          _buildDesktopItem(
-            1,
-            Icons.insert_drive_file_outlined,
-            "All Files",
-            "Browse any file",
-            isDesktop,
-            scale,
+          child: PopupMenuButton<int>(
+            key: _menuKey,
+            enabled: !isLoading,
+            offset: Offset(0, 55.rh(isDesktop, desktopScale: scale)),
+            color: AppColors.dialogBackground,
+            elevation: 20,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(
+                18.rr(isDesktop, desktopScale: scale),
+              ),
+              side: BorderSide(color: Colors.white.withAlpha(10), width: 1),
+            ),
+            onSelected: (value) => _handleSelection(value, cubit),
+            itemBuilder: (context) => [
+              _buildDesktopItem(
+                1,
+                Icons.insert_drive_file_outlined,
+                "All Files",
+                "Browse any file",
+                isDesktop,
+                scale,
+              ),
+              _buildDesktopItem(
+                2,
+                Icons.folder_outlined,
+                "Folders",
+                "Select full directories",
+                isDesktop,
+                scale,
+              ),
+              _buildDesktopItem(
+                3,
+                Icons.image_outlined,
+                "Images",
+                "Gallery photos",
+                isDesktop,
+                scale,
+              ),
+              _buildDesktopItem(
+                4,
+                Icons.movie_outlined,
+                "Videos",
+                "Camera recordings",
+                isDesktop,
+                scale,
+              ),
+            ],
+            child: AnimatedPressButton(
+              isDesktop: isDesktop,
+              onPressed: isLoading
+                  ? null
+                  : () => _menuKey.currentState?.showButtonMenu(),
+              gradientColors: isLoading
+                  ? [
+                      AppColors.textMuted.withAlpha(20),
+                      AppColors.textMuted.withAlpha(20),
+                    ]
+                  : const [AppColors.primary, AppColors.primaryLight],
+              child: _buildButtonContent(
+                isDesktop,
+                scale,
+                isLoading: isLoading,
+              ),
+            ),
           ),
-          _buildDesktopItem(
-            2,
-            Icons.folder_outlined,
-            "Folders",
-            "Select full directories",
-            isDesktop,
-            scale,
-          ),
-          _buildDesktopItem(
-            3,
-            Icons.image_outlined,
-            "Images",
-            "Gallery photos",
-            isDesktop,
-            scale,
-          ),
-          _buildDesktopItem(
-            4,
-            Icons.movie_outlined,
-            "Videos",
-            "Camera recordings",
-            isDesktop,
-            scale,
-          ),
-        ],
-        child: AnimatedPressButton(
-          isDesktop: isDesktop,
-          onPressed: () => _menuKey.currentState?.showButtonMenu(),
-          gradientColors: const [AppColors.primary, AppColors.primaryLight],
-          child: _buildButtonContent(isDesktop, scale),
-        ),
-      ),
+        );
+      },
     );
   }
 
-  Widget _buildButtonContent(bool isDesktop, double scale) {
+  Widget _buildButtonContent(
+    bool isDesktop,
+    double scale, {
+    bool isLoading = false,
+  }) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Icon(
-          Icons.add_box_rounded,
-          color: Colors.white,
-          size: 24.rx(isDesktop, desktopScale: scale),
-        ),
+        isLoading
+            ? SizedBox(
+                width: 20.rx(isDesktop, desktopScale: scale),
+                height: 20.rx(isDesktop, desktopScale: scale),
+                child: const CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white70),
+                ),
+              )
+            : Icon(
+                Icons.add_box_rounded,
+                color: Colors.white,
+                size: 24.rx(isDesktop, desktopScale: scale),
+              ),
         SizedBox(width: 12.rw(isDesktop, desktopScale: scale)),
         Text(
-          "Add Content",
+          isLoading ? "Processing..." : "Add Content",
           style: TextStyle(
-            color: Colors.white,
+            color: isLoading ? Colors.white70 : Colors.white,
             fontSize: 16.rx(isDesktop, desktopScale: scale),
             fontWeight: FontWeight.w700,
             letterSpacing: 0.5,
           ),
         ),
         const Spacer(),
-        Icon(
-          Icons.keyboard_arrow_down_rounded,
-          color: Colors.white70,
-          size: 20.rx(isDesktop, desktopScale: scale),
-        ),
+        if (!isLoading)
+          Icon(
+            Icons.keyboard_arrow_down_rounded,
+            color: Colors.white70,
+            size: 20.rx(isDesktop, desktopScale: scale),
+          ),
       ],
     );
   }

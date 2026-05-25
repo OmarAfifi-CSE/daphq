@@ -36,14 +36,11 @@ class SenderController {
     double totalSizeBytes = 0;
     String? originalName;
     try {
-      onUpdate(TransferModel(status: "Analyzing Files..."));
+      onUpdate(TransferModel(status: "Analyzing Files...", analyzeCount: 0));
 
       // 1. Prepare file list from multiple paths
       List<Map<String, dynamic>> fileList = [];
 
-      // Tracks analyze duration; progress is shown only if it takes > 2s.
-      final analyzeWatch = Stopwatch()..start();
-      bool showingProgress = false;
       int discoveredCount = 0;
 
       // Flush a batch of files by calling entity.length() in parallel.
@@ -92,11 +89,9 @@ class SenderController {
               batch.add(entity);
               discoveredCount++;
 
-              // Show progress UI only if analyze is taking longer than 2s.
-              if (!showingProgress && analyzeWatch.elapsedMilliseconds > 2000) {
-                showingProgress = true;
-              }
-              if (showingProgress && discoveredCount % 200 == 0) {
+              // Update the file count every 50 files so the user sees
+              // live progress on slow devices with large directories.
+              if (discoveredCount % 50 == 0) {
                 onUpdate(
                   TransferModel(
                     status: "Analyzing...",

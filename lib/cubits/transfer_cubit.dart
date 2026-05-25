@@ -127,31 +127,48 @@ class TransferCubit extends Cubit<TransferState> {
     emit(state.copyWith(isAdvancedMode: !state.isAdvancedMode));
   }
 
-  void addExternalFiles(List<String> paths) {
+  Future<void> addExternalFiles(List<String> paths) async {
     if (paths.isEmpty) return;
+    emit(state.copyWith(isAddingFiles: true));
 
-    final List<String> cleanedPaths = [];
-    for (var path in paths) {
-      // Clean path: remove quotes that might be added by Windows shell escaping (e.g. "C:\" -> C:")
-      var p = path.trim();
-      if (p.startsWith('"')) p = p.substring(1);
-      if (p.endsWith('"')) p = p.substring(0, p.length - 1);
-      cleanedPaths.add(p);
-    }
+    try {
+      final List<String> cleanedPaths = [];
+      for (var path in paths) {
+        // Clean path: remove quotes that might be added by Windows shell escaping (e.g. "C:\" -> C:")
+        var p = path.trim();
+        if (p.startsWith('"')) p = p.substring(1);
+        if (p.endsWith('"')) p = p.substring(0, p.length - 1);
+        cleanedPaths.add(p);
+      }
 
-    // Check if the path exists as either a file or a directory
-    final validPaths = cleanedPaths
-        .where(
-          (p) => FileSystemEntity.typeSync(p) != FileSystemEntityType.notFound,
-        )
-        .toList();
-
-    if (validPaths.isNotEmpty) {
-      emit(
-        state.copyWith(
-          selectedPaths: {...state.selectedPaths, ...validPaths}.toList(),
-        ),
+      // Check if the path exists as either a file or a directory asynchronously
+      final List<String> validPaths = [];
+      final Map<String, bool> updatedDirs = Map<String, bool>.from(
+        state.selectedPathsIsDir,
       );
+
+      await Future.wait(
+        cleanedPaths.map((p) async {
+          final type = await FileSystemEntity.type(p);
+          if (type != FileSystemEntityType.notFound) {
+            validPaths.add(p);
+            updatedDirs[p] = type == FileSystemEntityType.directory;
+          }
+        }),
+      );
+
+      if (validPaths.isNotEmpty) {
+        emit(
+          state.copyWith(
+            selectedPaths: {...state.selectedPaths, ...validPaths}.toList(),
+            selectedPathsIsDir: updatedDirs,
+          ),
+        );
+      }
+    } catch (e) {
+      emit(state.copyWith(errorMessage: "Error adding external files: $e"));
+    } finally {
+      emit(state.copyWith(isAddingFiles: false));
     }
   }
 
@@ -492,9 +509,31 @@ class TransferCubit extends Cubit<TransferState> {
     emit(state.copyWith(clearFeedback: true));
   }
 
-  void addSelectedPaths(List<String> paths) {
-    final newList = List<String>.from(state.selectedPaths)..addAll(paths);
-    emit(state.copyWith(selectedPaths: newList));
+  Future<void> addSelectedPaths(List<String> paths) async {
+    if (paths.isEmpty) return;
+    emit(state.copyWith(isAddingFiles: true));
+    try {
+      final newList = List<String>.from(state.selectedPaths)..addAll(paths);
+      final Map<String, bool> updatedDirs = Map<String, bool>.from(
+        state.selectedPathsIsDir,
+      );
+
+      await Future.wait(
+        paths.map((p) async {
+          if (!updatedDirs.containsKey(p)) {
+            final isDir = await FileSystemEntity.isDirectory(p);
+            updatedDirs[p] = isDir;
+          }
+        }),
+      );
+
+      emit(
+        state.copyWith(selectedPaths: newList, selectedPathsIsDir: updatedDirs),
+      );
+    } catch (_) {
+    } finally {
+      emit(state.copyWith(isAddingFiles: false));
+    }
   }
 
   void removeSelectedPath(String path) {
@@ -507,6 +546,7 @@ class TransferCubit extends Cubit<TransferState> {
   }
 
   Future<void> pickItems(FileType type) async {
+    emit(state.copyWith(isAddingFiles: true));
     try {
       String? initialDirectory;
 
@@ -538,21 +578,26 @@ class TransferCubit extends Cubit<TransferState> {
       );
 
       if (result != null) {
-        addSelectedPaths(result.paths.whereType<String>().toList());
+        await addSelectedPaths(result.paths.whereType<String>().toList());
       }
     } catch (e) {
       emit(state.copyWith(errorMessage: "Error picking files: $e"));
+    } finally {
+      emit(state.copyWith(isAddingFiles: false));
     }
   }
 
   Future<void> pickFolder() async {
+    emit(state.copyWith(isAddingFiles: true));
     try {
       final path = await FilePicker.getDirectoryPath();
       if (path != null) {
-        addSelectedPaths([path]);
+        await addSelectedPaths([path]);
       }
     } catch (e) {
       emit(state.copyWith(errorMessage: "Error picking folder: $e"));
+    } finally {
+      emit(state.copyWith(isAddingFiles: false));
     }
   }
 

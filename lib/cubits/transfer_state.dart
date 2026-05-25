@@ -47,6 +47,8 @@ class TransferState {
   final bool showBatteryOptimizationSnackBar;
   final AuthRequest? authRequest;
   final List<String> selectedPaths;
+  final Map<String, bool> selectedPathsIsDir;
+  final bool isAddingFiles;
 
   TransferState({
     required this.model,
@@ -67,6 +69,8 @@ class TransferState {
     this.showBatteryOptimizationSnackBar = false,
     this.authRequest,
     this.selectedPaths = const [],
+    this.selectedPathsIsDir = const {},
+    this.isAddingFiles = false,
   }) : targetIp = targetIp ?? AppConstants.defaultTargetIp;
 
   TransferState copyWith({
@@ -88,6 +92,8 @@ class TransferState {
     bool? showBatteryOptimizationSnackBar,
     AuthRequest? authRequest,
     List<String>? selectedPaths,
+    Map<String, bool>? selectedPathsIsDir,
+    bool? isAddingFiles,
     bool clearFeedback = false,
     bool clearAuthRequest = false,
     bool clearSelection = false,
@@ -124,6 +130,10 @@ class TransferState {
       selectedPaths: clearSelection
           ? const []
           : (selectedPaths ?? this.selectedPaths),
+      selectedPathsIsDir: clearSelection
+          ? const {}
+          : (selectedPathsIsDir ?? this.selectedPathsIsDir),
+      isAddingFiles: isAddingFiles ?? this.isAddingFiles,
     );
   }
 }

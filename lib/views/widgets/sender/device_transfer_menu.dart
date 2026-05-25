@@ -9,8 +9,6 @@ import '../../../core/file_utils.dart';
 import '../common/animated_press_button.dart';
 import '../common/unified_add_button.dart';
 
-final Map<String, bool> _isDirCache = {};
-
 class DeviceTransferMenu extends StatelessWidget {
   final String ip;
   final String name;
@@ -210,7 +208,29 @@ class DeviceTransferMenu extends StatelessWidget {
 
               // Selected Items List
               Expanded(
-                child: state.selectedPaths.isEmpty
+                child: state.isAddingFiles
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const CircularProgressIndicator(
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                AppColors.primaryLight,
+                              ),
+                            ),
+                            SizedBox(height: 16.rh(isDesktop)),
+                            Text(
+                              "Processing files...",
+                              style: TextStyle(
+                                color: AppColors.textMuted,
+                                fontSize: 14.rx(isDesktop),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : state.selectedPaths.isEmpty
                     ? Center(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
@@ -260,10 +280,7 @@ class DeviceTransferMenu extends StatelessWidget {
                         ),
                         itemBuilder: (context, index) {
                           final path = state.selectedPaths[index];
-                          final isDir = _isDirCache.putIfAbsent(
-                            path,
-                            () => FileSystemEntity.isDirectorySync(path),
-                          );
+                          final isDir = state.selectedPathsIsDir[path] ?? false;
                           final segments = path
                               .split(Platform.pathSeparator)
                               .where((s) => s.isNotEmpty)
