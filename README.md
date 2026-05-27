@@ -17,6 +17,10 @@
   <a href="#-license">License</a>
 </p>
 
+<p align="center">
+  <img src="assets/Demo.gif" alt="Daphq Demo" width="750"/>
+</p>
+
 ---
 
 ## 🚀 Introduction
