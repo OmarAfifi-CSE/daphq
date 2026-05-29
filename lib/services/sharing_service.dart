@@ -3,6 +3,7 @@ import 'package:share_handler/share_handler.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../cubits/transfer_cubit.dart';
+import '../main.dart';
 
 class SharingService {
   static void init(BuildContext context) async {
@@ -10,11 +11,16 @@ class SharingService {
 
     final cubit = context.read<TransferCubit>();
     final handler = ShareHandlerPlatform.instance;
-    
+
     // Get initial media if app was closed
     final initialMedia = await handler.getInitialSharedMedia();
-    if (initialMedia != null && initialMedia.attachments != null) {
+    if (initialMedia != null &&
+        initialMedia.attachments != null &&
+        initialMedia.attachments!.isNotEmpty) {
       _processAttachments(initialMedia.attachments!, cubit);
+    } else {
+      // Safe to clean cache! App was not launched via Share Intent
+      clearAppCache();
     }
 
     // Listen for sharing while app is running
@@ -25,13 +31,16 @@ class SharingService {
     });
   }
 
-  static void _processAttachments(List<SharedAttachment?> attachments, TransferCubit cubit) {
+  static void _processAttachments(
+    List<SharedAttachment?> attachments,
+    TransferCubit cubit,
+  ) {
     final paths = attachments
         .where((a) => a != null)
         .map((a) => a!.path)
         .whereType<String>()
         .toList();
-    
+
     if (paths.isNotEmpty) {
       cubit.addSelectedPaths(paths);
     }

@@ -239,7 +239,6 @@ class _AppInitState extends State<_AppInit> {
   @override
   void initState() {
     super.initState();
-    clearAppCache(); // Clean up previous session's cached files
     SharingService.init(context);
 
     _externalFilesSubscription = DesktopIntegrationService.fileStream.listen((
