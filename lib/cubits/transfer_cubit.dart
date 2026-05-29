@@ -105,20 +105,36 @@ class TransferCubit extends Cubit<TransferState> {
     if (state.isReceiving) return;
 
     String? defaultPath;
+
+    // 1. Try to load saved custom path first
     try {
-      if (Platform.isAndroid) {
-        // Use external storage downloads
-        defaultPath = "/storage/emulated/0/Download/Daphq";
-      } else {
-        final downloadsDir = await getDownloadsDirectory();
-        if (downloadsDir != null) {
-          defaultPath = p.join(downloadsDir.path, "Daphq");
+      final docDir = await getApplicationDocumentsDirectory();
+      final file = File(p.join(docDir.path, 'daphq_receive_path.txt'));
+      if (file.existsSync()) {
+        final savedPath = await file.readAsString();
+        if (savedPath.isNotEmpty && Directory(savedPath).existsSync()) {
+          defaultPath = savedPath;
         }
       }
     } catch (_) {}
 
+    // 2. If no valid saved path, fallback to OS defaults
+    if (defaultPath == null) {
+      try {
+        if (Platform.isAndroid) {
+          // Use external storage downloads
+          defaultPath = "/storage/emulated/0/Download/Daphq";
+        } else {
+          final downloadsDir = await getDownloadsDirectory();
+          if (downloadsDir != null) {
+            defaultPath = p.join(downloadsDir.path, "Daphq");
+          }
+        }
+      } catch (_) {}
+    }
+
     if (defaultPath != null) {
-      setReceiveFolder(defaultPath);
+      setReceiveFolder(defaultPath, saveToPrefs: false);
       startReceiver();
     }
   }
@@ -309,8 +325,19 @@ class TransferCubit extends Cubit<TransferState> {
     }
   }
 
-  void setReceiveFolder(String path) {
+  void setReceiveFolder(String path, {bool saveToPrefs = true}) {
     emit(state.copyWith(receiveFolder: path));
+
+    // Save to local text file asynchronously
+    if (saveToPrefs) {
+      getApplicationDocumentsDirectory()
+          .then((docDir) {
+            final file = File(p.join(docDir.path, 'daphq_receive_path.txt'));
+            file.writeAsString(path);
+          })
+          .catchError((_) {});
+    }
+
     // If receiver is already running, restart it with the new folder
     // but only if there is no active transfer happening right now.
     if (state.isReceiving && !state.isReceivingActive) {
