@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:async';
+import 'package:path/path.dart' as p;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -41,6 +42,22 @@ class MyTaskHandler extends TaskHandler {
   void onRepeatEvent(DateTime timestamp) {}
 }
 
+void ensureContextMenuIsRegistered() {
+  if (Platform.isWindows) {
+    try {
+      String exePath = Platform.resolvedExecutable;
+      String appDir = p.dirname(exePath);
+      String dllPath = p.join(appDir, 'DaphqShellExt.dll');
+
+      if (File(dllPath).existsSync()) {
+        Process.run('regsvr32', ['/s', dllPath]);
+      }
+    } catch (e) {
+      debugPrint('Failed to register context menu: $e');
+    }
+  }
+}
+
 void main(List<String> args) async {
   // Check for single instance immediately on Windows
   if (Platform.isWindows) {
@@ -49,6 +66,8 @@ void main(List<String> args) async {
   }
 
   WidgetsFlutterBinding.ensureInitialized();
+
+  ensureContextMenuIsRegistered();
 
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
