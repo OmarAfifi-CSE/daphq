@@ -443,6 +443,38 @@ class _HomePageState extends State<HomePage> {
                         ],
                       ),
                     ),
+                    // Elegant Glassmorphic Loading Overlay
+                    if (state.isAddingFiles)
+                      Positioned.fill(
+                        child: ClipRect(
+                          child: BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                            child: Container(
+                              color: AppColors.background.withAlpha(180),
+                              alignment: Alignment.center,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const CircularProgressIndicator(
+                                    color: AppColors.primary,
+                                    strokeWidth: 3,
+                                  ),
+                                  SizedBox(height: 24.h),
+                                  Text(
+                                    "Processing files...",
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16.sp,
+                                      fontWeight: FontWeight.w600,
+                                      letterSpacing: 1.5,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
                 floatingActionButton:

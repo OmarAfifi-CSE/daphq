@@ -147,15 +147,22 @@ class TransferCubit extends Cubit<TransferState> {
         state.selectedPathsIsDir,
       );
 
-      await Future.wait(
-        cleanedPaths.map((p) async {
-          final type = await FileSystemEntity.type(p);
-          if (type != FileSystemEntityType.notFound) {
-            validPaths.add(p);
-            updatedDirs[p] = type == FileSystemEntityType.directory;
-          }
-        }),
-      );
+      // Process in chunks to keep UI responsive
+      const int chunkSize = 50;
+      for (int i = 0; i < cleanedPaths.length; i += chunkSize) {
+        final chunk = cleanedPaths.skip(i).take(chunkSize);
+        await Future.wait(
+          chunk.map((p) async {
+            final type = await FileSystemEntity.type(p);
+            if (type != FileSystemEntityType.notFound) {
+              validPaths.add(p);
+              updatedDirs[p] = type == FileSystemEntityType.directory;
+            }
+          }),
+        );
+        // Yield to event loop
+        await Future.delayed(Duration.zero);
+      }
 
       if (validPaths.isNotEmpty) {
         emit(
@@ -518,14 +525,24 @@ class TransferCubit extends Cubit<TransferState> {
         state.selectedPathsIsDir,
       );
 
-      await Future.wait(
-        paths.map((p) async {
-          if (!updatedDirs.containsKey(p)) {
-            final isDir = await FileSystemEntity.isDirectory(p);
-            updatedDirs[p] = isDir;
-          }
-        }),
-      );
+      // Give UI a chance to render the loading spinner
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // Process in chunks to prevent freezing the event loop
+      const int chunkSize = 50;
+      for (int i = 0; i < paths.length; i += chunkSize) {
+        final chunk = paths.skip(i).take(chunkSize);
+        await Future.wait(
+          chunk.map((p) async {
+            if (!updatedDirs.containsKey(p)) {
+              final isDir = await FileSystemEntity.isDirectory(p);
+              updatedDirs[p] = isDir;
+            }
+          }),
+        );
+        // Yield to event loop
+        await Future.delayed(Duration.zero);
+      }
 
       emit(
         state.copyWith(selectedPaths: newList, selectedPathsIsDir: updatedDirs),
