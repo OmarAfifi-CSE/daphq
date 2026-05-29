@@ -1,25 +1,21 @@
-<p align="center">
-  <img src="assets/logo.png" alt="Daphq Logo" width="150"/>
-  <h1 align="center">Daphq</h1>
-</p>
+<div align="center">
+    <img src="https://readme-typing-svg.herokuapp.com?font=Fira+Code&size=75&duration=1500&pause=1500&color=000000&center=true&vCenter=true&width=435&height=100&lines=DAPHQ" alt="DAPHQ" />
+<br>
+  <a href="https://omarafifi-cse.github.io/daphq/">
+    <img src="assets/logo.png" alt="Daphq Logo" width="160"/>
+  </a>
 
-<p align="center">
-  <b>Blazing Fast, Cross-Platform File Transfer Application over Local Wi-Fi & Hotspots.</b><br/>
-  🌐 <b>Official Website: <a href="https://omarafifi-cse.github.io/daphq/">omarafifi-cse.github.io/daphq/</a></b><br/>
-  Developed by <b>Omar Afifi</b>
-</p>
+  <p><b>Blazing Fast, Cross-Platform File Transfer Application over Local Wi-Fi & Hotspots.</b></p>
 
-<p align="center">
-  <a href="#%EF%B8%8F-core-architecture">Architecture</a> •
-  <a href="#-performance--networking-efficiency">Performance</a> •
-  <a href="#-key-features">Features</a> •
-  <a href="#-under-the-hood-technical-audit-highlights">Under The Hood</a> •
-  <a href="#-license">License</a>
-</p>
+  <p>
+    <a href="https://github.com/omarafifi-cse/daphq/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/omarafifi-cse/daphq?style=for-the-badge&color=448AFF&logo=github&labelColor=0A0A1A"></a>
+    <a href="https://github.com/omarafifi-cse/daphq/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/omarafifi-cse/daphq/total?style=for-the-badge&color=448AFF&logo=github&labelColor=0A0A1A"></a>
+    <a href="https://github.com/omarafifi-cse/daphq/blob/master/LICENSE"><img alt="License" src="https://img.shields.io/github/license/omarafifi-cse/daphq?style=for-the-badge&color=448AFF&labelColor=0A0A1A"></a>
+  </p>
 
-<p align="center">
-  <img src="assets/Demo.gif" alt="Daphq Demo" width="750"/>
-</p>
+  <img src="assets/Demo.gif" alt="Daphq Demo" width="750" />
+
+</div>
 
 ---
 
