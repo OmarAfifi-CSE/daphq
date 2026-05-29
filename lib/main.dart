@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:async';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -54,6 +56,25 @@ void ensureContextMenuIsRegistered() {
       }
     } catch (e) {
       debugPrint('Failed to register context menu: $e');
+    }
+  }
+}
+
+Future<void> clearAppCache() async {
+  if (Platform.isAndroid || Platform.isIOS) {
+    try {
+      // Clear file_picker's cache
+      await FilePicker.clearTemporaryFiles();
+
+      // Clear other temporary files (like those from share_handler)
+      final tempDir = await getTemporaryDirectory();
+      if (tempDir.existsSync()) {
+        tempDir.deleteSync(recursive: true);
+        tempDir.createSync();
+      }
+      debugPrint('App cache cleared successfully!');
+    } catch (e) {
+      debugPrint('Failed to clear app cache: $e');
     }
   }
 }
@@ -218,6 +239,7 @@ class _AppInitState extends State<_AppInit> {
   @override
   void initState() {
     super.initState();
+    clearAppCache(); // Clean up previous session's cached files
     SharingService.init(context);
 
     _externalFilesSubscription = DesktopIntegrationService.fileStream.listen((
