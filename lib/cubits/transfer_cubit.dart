@@ -137,6 +137,10 @@ class TransferCubit extends Cubit<TransferState> {
       setReceiveFolder(defaultPath, saveToPrefs: false);
       startReceiver();
     }
+
+    if (!isClosed) {
+      emit(state.copyWith(isLocatingFolder: false));
+    }
   }
 
   void toggleAdvancedMode() {

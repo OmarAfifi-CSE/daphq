@@ -245,29 +245,43 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                           ),
                         ),
                         SizedBox(width: 12.rw(isDesktop, desktopScale: scale)),
-                        Switch.adaptive(
-                          value: state.isReceiving,
-                          activeThumbColor: Colors.white,
-                          activeTrackColor: AppColors.primary.withAlpha(60),
-                          inactiveThumbColor: AppColors.textMuted,
-                          inactiveTrackColor: Colors.white.withAlpha(8),
-                          onChanged: state.isTransferring
-                              ? null
-                              : (value) {
-                                  if (value) {
-                                    if (state.receiveFolder == null) {
-                                      CustomSnackBar.show(
-                                        context,
-                                        message: AppConstants.selectFolderFirst,
-                                      );
-                                      return;
+                        if (state.isLocatingFolder)
+                          SizedBox(
+                            width: 36.rw(isDesktop, desktopScale: scale),
+                            height: 24.rh(isDesktop, desktopScale: scale),
+                            child: const Center(
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  AppColors.primary,
+                                ),
+                              ),
+                            ),
+                          )
+                        else
+                          Switch.adaptive(
+                            value: state.isReceiving,
+                            activeThumbColor: Colors.white,
+                            activeTrackColor: AppColors.primary.withAlpha(60),
+                            inactiveThumbColor: AppColors.textMuted,
+                            inactiveTrackColor: Colors.white.withAlpha(8),
+                            onChanged: state.isTransferring
+                                ? null
+                                : (value) {
+                                    if (value) {
+                                      if (state.receiveFolder == null) {
+                                        CustomSnackBar.show(
+                                          context,
+                                          message: AppConstants.selectFolderFirst,
+                                        );
+                                        return;
+                                      }
+                                      cubit.startReceiver();
+                                    } else {
+                                      cubit.stopReceiver();
                                     }
-                                    cubit.startReceiver();
-                                  } else {
-                                    cubit.stopReceiver();
-                                  }
-                                },
-                        ),
+                                  },
+                          ),
                       ],
                     ),
                     SizedBox(height: 10.rh(isDesktop, desktopScale: scale)),
@@ -333,15 +347,17 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                           ),
                           Expanded(
                             child: Text(
-                              _isPickingFolder
-                                  ? _pickerLoadingText
-                                  : (state.receiveFolder == null
-                                        ? "Select download folder"
-                                        : _balanceText(
-                                            "Saving to: ",
-                                            state.receiveFolder!,
-                                            threshold: isDesktop ? 60 : 35,
-                                          )),
+                              state.isLocatingFolder
+                                  ? "Locating folder..."
+                                  : _isPickingFolder
+                                      ? _pickerLoadingText
+                                      : (state.receiveFolder == null
+                                            ? "Select download folder"
+                                            : _balanceText(
+                                                "Saving to: ",
+                                                state.receiveFolder!,
+                                                threshold: isDesktop ? 60 : 35,
+                                              )),
                               maxLines: 3,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(

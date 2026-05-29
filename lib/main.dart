@@ -68,9 +68,9 @@ Future<void> clearAppCache() async {
 
       // Clear other temporary files (like those from share_handler)
       final tempDir = await getTemporaryDirectory();
-      if (tempDir.existsSync()) {
-        tempDir.deleteSync(recursive: true);
-        tempDir.createSync();
+      if (await tempDir.exists()) {
+        await tempDir.delete(recursive: true);
+        await tempDir.create();
       }
       debugPrint('App cache cleared successfully!');
     } catch (e) {

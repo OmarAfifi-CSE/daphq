@@ -49,6 +49,7 @@ class TransferState {
   final List<String> selectedPaths;
   final Map<String, bool> selectedPathsIsDir;
   final bool isAddingFiles;
+  final bool isLocatingFolder;
 
   TransferState({
     required this.model,
@@ -71,6 +72,7 @@ class TransferState {
     this.selectedPaths = const [],
     this.selectedPathsIsDir = const {},
     this.isAddingFiles = false,
+    this.isLocatingFolder = true,
   }) : targetIp = targetIp ?? AppConstants.defaultTargetIp;
 
   TransferState copyWith({
@@ -94,6 +96,7 @@ class TransferState {
     List<String>? selectedPaths,
     Map<String, bool>? selectedPathsIsDir,
     bool? isAddingFiles,
+    bool? isLocatingFolder,
     bool clearFeedback = false,
     bool clearAuthRequest = false,
     bool clearSelection = false,
@@ -134,6 +137,7 @@ class TransferState {
           ? const {}
           : (selectedPathsIsDir ?? this.selectedPathsIsDir),
       isAddingFiles: isAddingFiles ?? this.isAddingFiles,
+      isLocatingFolder: isLocatingFolder ?? this.isLocatingFolder,
     );
   }
 }
