@@ -7,6 +7,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../controllers/sender_controller.dart';
 import '../controllers/receiver_controller.dart';
@@ -497,6 +498,20 @@ class TransferCubit extends Cubit<TransferState> {
         }
       },
       onRequestAuth: (senderIp, senderName, count, size) {
+        if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+          windowManager.isMinimized().then((isMinimized) async {
+            if (isMinimized) await windowManager.restore();
+            await windowManager.setAlwaysOnTop(true);
+            await windowManager.show();
+            await windowManager.focus();
+            await Future.delayed(const Duration(milliseconds: 100));
+            await windowManager.setAlwaysOnTop(false);
+          });
+        } else if (Platform.isAndroid) {
+          FlutterForegroundTask.wakeUpScreen();
+          FlutterForegroundTask.launchApp();
+        }
+
         _authCompleter = Completer<bool>();
         emit(
           state.copyWith(
