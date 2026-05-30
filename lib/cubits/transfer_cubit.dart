@@ -548,15 +548,18 @@ class TransferCubit extends Cubit<TransferState> {
     emit(state.copyWith(clearFeedback: true));
   }
 
-  Future<void> addSelectedPaths(List<String> paths, {bool showLoading = true}) async {
+  Future<void> addSelectedPaths(
+    List<String> paths, {
+    bool showLoading = true,
+  }) async {
     if (paths.isEmpty) return;
-    
+
     if (showLoading) {
       emit(state.copyWith(isAddingFiles: true));
     }
-    
+
     final currentRevision = _sessionRevision;
-    
+
     try {
       // 1. Process files asynchronously WITHOUT reading the current state
       final Map<String, bool> newDirs = {};
@@ -570,7 +573,7 @@ class TransferCubit extends Cubit<TransferState> {
       const int chunkSize = 50;
       for (int i = 0; i < paths.length; i += chunkSize) {
         if (_sessionRevision != currentRevision) return; // Abort if cleared
-        
+
         final chunk = paths.skip(i).take(chunkSize);
         await Future.wait(
           chunk.map((p) async {
@@ -581,7 +584,9 @@ class TransferCubit extends Cubit<TransferState> {
         await Future.delayed(Duration.zero);
       }
 
-      if (_sessionRevision != currentRevision) return; // Final check before emitting
+      if (_sessionRevision != currentRevision) {
+        return; // Final check before emitting
+      }
 
       // 2. Synchronously read the LATEST state and update it
       // This prevents race conditions if addSelectedPaths is called concurrently
@@ -926,6 +931,8 @@ class TransferCubit extends Cubit<TransferState> {
   }
 
   void dismissProgress() {
+    clearSelection(); // Aggressively clean cache and reset UI when user is done with the transfer session
+
     emit(
       state.copyWith(
         showProgressView: false,
