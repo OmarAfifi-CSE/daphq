@@ -65,7 +65,9 @@ class DesktopIntegrationService {
     final dir = Directory(queuePath);
     if (!dir.existsSync()) dir.createSync(recursive: true);
 
-    _queueTimer = Timer.periodic(const Duration(milliseconds: 300), (timer) {
+    _queueTimer = Timer.periodic(const Duration(milliseconds: 300), (
+      timer,
+    ) async {
       // Dump buffered paths once UI is listening
       if (_pendingPaths.isNotEmpty && _controller.hasListener) {
         _controller.add(List.from(_pendingPaths));
@@ -94,8 +96,18 @@ class DesktopIntegrationService {
         } else {
           _pendingPaths.addAll(allPaths); // Buffer if UI isn't ready
         }
-        windowManager.show();
-        windowManager.focus();
+
+        bool isMinimized = await windowManager.isMinimized();
+        if (isMinimized) {
+          await windowManager.restore();
+        }
+        
+        // Bypass Windows Focus Stealing Prevention
+        await windowManager.setAlwaysOnTop(true);
+        await windowManager.show();
+        await windowManager.focus();
+        await Future.delayed(const Duration(milliseconds: 100)); // Ensure it registers
+        await windowManager.setAlwaysOnTop(false);
       }
     });
   }

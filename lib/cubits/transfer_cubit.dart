@@ -17,6 +17,7 @@ import '../models/transfer_model.dart';
 import 'transfer_state.dart';
 import '../core/app_constants.dart';
 import 'package:flutter/services.dart';
+import '../services/native_share_service.dart';
 import '../main.dart';
 
 class TransferCubit extends Cubit<TransferState> {
@@ -163,9 +164,7 @@ class TransferCubit extends Cubit<TransferState> {
 
       // Check if the path exists as either a file or a directory asynchronously
       final List<String> validPaths = [];
-      final Map<String, bool> updatedDirs = Map<String, bool>.from(
-        state.selectedPathsIsDir,
-      );
+      final Map<String, bool> newDirs = {};
 
       // Process in chunks to keep UI responsive
       const int chunkSize = 50;
@@ -176,7 +175,7 @@ class TransferCubit extends Cubit<TransferState> {
             final type = await FileSystemEntity.type(p);
             if (type != FileSystemEntityType.notFound) {
               validPaths.add(p);
-              updatedDirs[p] = type == FileSystemEntityType.directory;
+              newDirs[p] = type == FileSystemEntityType.directory;
             }
           }),
         );
@@ -185,6 +184,8 @@ class TransferCubit extends Cubit<TransferState> {
       }
 
       if (validPaths.isNotEmpty) {
+        final updatedDirs = Map<String, bool>.from(state.selectedPathsIsDir)
+          ..addAll(newDirs);
         emit(
           state.copyWith(
             selectedPaths: {...state.selectedPaths, ...validPaths}.toList(),
@@ -547,40 +548,56 @@ class TransferCubit extends Cubit<TransferState> {
     emit(state.copyWith(clearFeedback: true));
   }
 
-  Future<void> addSelectedPaths(List<String> paths) async {
+  Future<void> addSelectedPaths(List<String> paths, {bool showLoading = true}) async {
     if (paths.isEmpty) return;
-    emit(state.copyWith(isAddingFiles: true));
+    
+    if (showLoading) {
+      emit(state.copyWith(isAddingFiles: true));
+    }
+    
+    final currentRevision = _sessionRevision;
+    
     try {
-      final newList = List<String>.from(state.selectedPaths)..addAll(paths);
-      final Map<String, bool> updatedDirs = Map<String, bool>.from(
-        state.selectedPathsIsDir,
-      );
+      // 1. Process files asynchronously WITHOUT reading the current state
+      final Map<String, bool> newDirs = {};
 
-      // Give UI a chance to render the loading spinner
-      await Future.delayed(const Duration(milliseconds: 50));
+      // Give UI a chance to render the loading spinner if needed
+      if (showLoading) {
+        await Future.delayed(const Duration(milliseconds: 50));
+      }
 
       // Process in chunks to prevent freezing the event loop
       const int chunkSize = 50;
       for (int i = 0; i < paths.length; i += chunkSize) {
+        if (_sessionRevision != currentRevision) return; // Abort if cleared
+        
         final chunk = paths.skip(i).take(chunkSize);
         await Future.wait(
           chunk.map((p) async {
-            if (!updatedDirs.containsKey(p)) {
-              final isDir = await FileSystemEntity.isDirectory(p);
-              updatedDirs[p] = isDir;
-            }
+            newDirs[p] = await FileSystemEntity.isDirectory(p);
           }),
         );
         // Yield to event loop
         await Future.delayed(Duration.zero);
       }
 
+      if (_sessionRevision != currentRevision) return; // Final check before emitting
+
+      // 2. Synchronously read the LATEST state and update it
+      // This prevents race conditions if addSelectedPaths is called concurrently
+      final newPathsSet = {...state.selectedPaths, ...paths};
+      final newList = newPathsSet.toList();
+      final updatedDirs = Map<String, bool>.from(state.selectedPathsIsDir)
+        ..addAll(newDirs);
+
       emit(
         state.copyWith(selectedPaths: newList, selectedPathsIsDir: updatedDirs),
       );
     } catch (_) {
     } finally {
-      emit(state.copyWith(isAddingFiles: false));
+      if (showLoading && _sessionRevision == currentRevision) {
+        emit(state.copyWith(isAddingFiles: false));
+      }
     }
   }
 
@@ -589,7 +606,13 @@ class TransferCubit extends Cubit<TransferState> {
     emit(state.copyWith(selectedPaths: newList));
   }
 
+  int _sessionRevision = 0;
+
   void clearSelection() {
+    _sessionRevision++;
+    if (Platform.isAndroid) {
+      NativeShareService.cancel();
+    }
     emit(state.copyWith(clearSelection: true));
   }
 

@@ -1,52 +1,39 @@
 import 'dart:io';
-import 'package:share_handler/share_handler.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
-import '../cubits/transfer_cubit.dart';
+import 'package:flutter/services.dart';
 import '../main.dart';
+import 'native_share_service.dart';
 
 class SharingService {
+  static const MethodChannel _channel = MethodChannel(
+    'com.omarafifi.daphq/share_manager',
+  );
+
   static void init(BuildContext context) async {
-    if (!Platform.isAndroid && !Platform.isIOS) return;
+    if (!Platform.isAndroid) return; // iOS not supported yet in custom native
 
-    final cubit = context.read<TransferCubit>();
-    final handler = ShareHandlerPlatform.instance;
+    // Initialize the streaming listener
+    NativeShareService.init(context);
 
-    // Get initial media if app was closed
-    final initialMedia = await handler.getInitialSharedMedia();
-    if (initialMedia != null &&
-        initialMedia.attachments != null &&
-        initialMedia.attachments!.isNotEmpty) {
-      _processAttachments(initialMedia.attachments!, cubit);
-    } else {
-      // Safe to clean cache! App was not launched via Share Intent
-      clearAppCache();
-    }
-
-    // Listen for sharing while app is running
-    handler.sharedMediaStream.listen((SharedMedia media) {
-      if (media.attachments != null) {
-        _processAttachments(media.attachments!, cubit);
+    // Ask native if we were launched from a share intent
+    try {
+      final bool wasLaunchedFromShare =
+          await _channel.invokeMethod('wasLaunchedFromShare') ?? false;
+      if (!wasLaunchedFromShare) {
+        // Safe to clean cache! App was not launched via Share Intent
+        clearAppCache();
+        await _channel.invokeMethod('cleanShareCache');
       }
-    });
-  }
-
-  static void _processAttachments(
-    List<SharedAttachment?> attachments,
-    TransferCubit cubit,
-  ) {
-    final paths = attachments
-        .where((a) => a != null)
-        .map((a) => a!.path)
-        .whereType<String>()
-        .toList();
-
-    if (paths.isNotEmpty) {
-      cubit.addSelectedPaths(paths);
+    } catch (e) {
+      debugPrint('Failed to check share launch status: $e');
+      clearAppCache();
+      try {
+        await _channel.invokeMethod('cleanShareCache');
+      } catch (_) {}
     }
   }
 
   static void dispose() {
-    // share_handler handles its own cleanup
+    // Native streams handle their own cleanup
   }
 }
