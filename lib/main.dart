@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'dart:async';
-import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -44,22 +43,6 @@ class MyTaskHandler extends TaskHandler {
   void onRepeatEvent(DateTime timestamp) {}
 }
 
-void ensureContextMenuIsRegistered() {
-  if (Platform.isWindows) {
-    try {
-      String exePath = Platform.resolvedExecutable;
-      String appDir = p.dirname(exePath);
-      String dllPath = p.join(appDir, 'DaphqShellExt.dll');
-
-      if (File(dllPath).existsSync()) {
-        Process.run('regsvr32', ['/s', dllPath]);
-      }
-    } catch (e) {
-      debugPrint('Failed to register context menu: $e');
-    }
-  }
-}
-
 Future<void> clearAppCache() async {
   if (Platform.isAndroid || Platform.isIOS) {
     try {
@@ -87,8 +70,6 @@ void main(List<String> args) async {
   }
 
   WidgetsFlutterBinding.ensureInitialized();
-
-  ensureContextMenuIsRegistered();
 
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
