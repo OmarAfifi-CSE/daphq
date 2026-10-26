@@ -273,11 +273,15 @@ class ReceiverController {
                       if (finalFileName != originalName) {
                         if (metadata["isFolder"] == true) {
                           for (var fMeta in files) {
-                            List<String> segments = p.split(fMeta["path"]);
-                            // Sanitize each segment to be safe
-                            for (int i = 0; i < segments.length; i++) {
-                              segments[i] = _sanitizeFileName(segments[i]);
+                            // Plan T-001: validate and sanitize every
+                            // relative path against traversal before it is
+                            // re-rooted under the (possibly renamed) folder.
+                            final safeRel =
+                                safeRelativePath(fMeta["path"] as String);
+                            if (safeRel == null) {
+                              throw "Security: rejected an unsafe path in the transfer metadata.";
                             }
+                            final segments = p.split(safeRel);
                             segments[0] = finalFileName;
                             fMeta["path"] = p
                                 .joinAll(segments)
@@ -325,7 +329,18 @@ class ReceiverController {
                   // Open file for writing if not already open
                   if (currentSink == null && currentBuffer == null) {
                     bytesReadForCurrentFile = 0;
-                    String savePath = p.join(saveDirectory, fileMeta["path"]);
+                    // Plan T-001: every per-file path is validated against
+                    // traversal and containment-checked after joining — a
+                    // malicious sender cannot write outside the receive dir.
+                    final safeRel = safeRelativePath(fileMeta["path"] as String);
+                    if (safeRel == null) {
+                      throw "Security: rejected an unsafe path in the transfer metadata.";
+                    }
+                    String savePath = p.join(saveDirectory, safeRel);
+                    final resolvedSavePath = p.normalize(savePath);
+                    if (!p.isWithin(p.normalize(saveDirectory), resolvedSavePath)) {
+                      throw "Security: rejected a path escaping the receive folder.";
+                    }
                     final parentPath = p.dirname(savePath);
                     if (!createdDirs.contains(parentPath)) {
                       try {
@@ -715,8 +730,34 @@ class ReceiverController {
     }
   }
 
+  /// Normalizes a relative path from transfer metadata and rejects any
+  /// attempt to escape the receive directory (plan T-001).
+  ///
+  /// - Collapses and normalizes both separator styles, then rejects absolute
+  ///   paths and any remaining `..` / `.` segments (traversal).
+  /// - Every surviving segment is run through [_sanitizeFileName] so
+  ///   Windows-reserved names and illegal characters are cleaned instead of
+  ///   failing the OS write later.
+  /// Returns the safe relative path, or null when the path must be rejected.
+  static String? safeRelativePath(String raw) {
+    if (raw.isEmpty) return null;
+    final normalized = p.normalize(raw.replaceAll(r'\', '/'));
+    if (p.isAbsolute(normalized)) return null;
+    final safeSegments = <String>[];
+    for (final segment in p.split(normalized)) {
+      if (segment == '..' || segment == '.') return null;
+      final cleaned = _sanitizeFileName(segment);
+      if (cleaned.isEmpty) return null;
+      safeSegments.add(cleaned);
+    }
+    if (safeSegments.isEmpty) return null;
+    // Forward-slash joined to stay consistent with the wire metadata format
+    // regardless of the receiving platform (p.join handles both later).
+    return safeSegments.join('/');
+  }
+
   /// Sanitizes a filename by removing illegal characters for the current platform.
-  String _sanitizeFileName(String name) {
+  static String _sanitizeFileName(String name) {
     // Basic sanitization for all platforms (remove path separators)
     String sanitized = name.replaceAll(RegExp(r'[/\\]'), '_');
 
@@ -742,7 +783,7 @@ class ReceiverController {
   }
 
   /// Generates a unique path by appending (1), (2), etc. if the file or directory exists.
-  String _generateUniquePath(String dir, String name) {
+  static String _generateUniquePath(String dir, String name) {
     String checkPath = p.join(dir, name);
     if (!File(checkPath).existsSync() && !Directory(checkPath).existsSync()) {
       return name;
