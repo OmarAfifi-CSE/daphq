@@ -121,6 +121,28 @@ class SenderController {
 
       if (_isCancelled) throw "Transfer Cancelled";
 
+      // Plan T-009: two separately-selected files can share a basename
+      // (C:\a\report.pdf and C:\b\report.pdf both map to 'report.pdf'), and
+      // the receiver only auto-renames the ROOT item — the second file would
+      // silently overwrite the first. Rename duplicates within the batch.
+      final seenRelPaths = <String>{};
+      for (final entry in fileList) {
+        final rel = entry['path'] as String;
+        if (seenRelPaths.add(rel)) continue;
+        final parentIndex = rel.lastIndexOf('/');
+        final parent = parentIndex >= 0 ? rel.substring(0, parentIndex + 1) : '';
+        final base = p.basenameWithoutExtension(rel);
+        final ext = p.extension(rel);
+        int counter = 1;
+        String candidate;
+        do {
+          candidate = '$parent$base ($counter)$ext';
+          counter++;
+        } while (seenRelPaths.contains(candidate));
+        entry['path'] = candidate;
+        seenRelPaths.add(candidate);
+      }
+
       if (fileList.isEmpty) throw "No files found in selection.";
 
       if (totalSizeBytes == 0) {
