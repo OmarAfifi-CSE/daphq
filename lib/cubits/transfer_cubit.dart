@@ -355,6 +355,17 @@ class TransferCubit extends Cubit<TransferState> {
     emit(state.copyWith(targetIp: ip));
   }
 
+  /// Surfaces a share-intent copy failure reported by the native layer
+  /// (plan T-015) — previously a failed copy was dropped silently and the
+  /// transfer proceeded without that file.
+  void reportShareCopyError(String fileName) {
+    if (isClosed) return;
+    emit(state.copyWith(
+      errorMessage: 'Could not copy "$fileName" from the share. '
+          'Please try sharing it again.',
+    ));
+  }
+
   void clearFeedback() {
     emit(state.copyWith(clearFeedback: true));
   }

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.util.Log
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
@@ -12,6 +13,8 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
 
+private const val TAG = "NativeShareHandler"
+
 class NativeShareHandler(private val context: Context, messenger: BinaryMessenger) {
     private var eventSink: EventChannel.EventSink? = null
     private val pendingPaths = mutableListOf<String>()
@@ -19,6 +22,7 @@ class NativeShareHandler(private val context: Context, messenger: BinaryMessenge
     
     private var shareJob: Job? = null
     private var isFirstIntent = true
+    private val shareScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
         MethodChannel(messenger, "com.omarafifi.daphq/share_manager").setMethodCallHandler { call, result ->
@@ -112,20 +116,26 @@ class NativeShareHandler(private val context: Context, messenger: BinaryMessenge
             isFirstIntent = false
         }
         
-        shareJob = CoroutineScope(Dispatchers.IO).launch {
+        shareScope.launch {
             val shareCacheDir = File(context.externalCacheDir ?: context.cacheDir, "daphq_shared")
             if (!shareCacheDir.exists()) shareCacheDir.mkdirs()
 
             uris.forEach { uri ->
                 if (!isActive) return@launch // Stop processing if job was cancelled
-                
+
+                val originalName = try {
+                    getFileName(uri) ?: "shared_file"
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to resolve shared file name: $e")
+                    "shared_file"
+                }
+
                 try {
-                    val originalName = getFileName(uri) ?: "shared_file"
                     // Use deterministic hash of the URI to naturally deduplicate files shared multiple times
                     val uriHash = uri.toString().hashCode().toString(16)
                     val fileName = "${uriHash}_$originalName"
                     val destFile = File(shareCacheDir, fileName)
-                    
+
                     context.contentResolver.openInputStream(uri)?.use { input ->
                         FileOutputStream(destFile).use { output ->
                             input.copyTo(output)
@@ -149,7 +159,20 @@ class NativeShareHandler(private val context: Context, messenger: BinaryMessenge
                         }
                     }
                 } catch (e: Exception) {
-                    e.printStackTrace()
+                    // Plan T-015: a failed copy must reach the user — the
+                    // "done" event alone would silently drop this file.
+                    Log.w(TAG, "Failed to copy shared file $originalName: $e")
+                    withContext(Dispatchers.Main) {
+                        val safeName = originalName.replace("\"", "'")
+                        val errorEvent = "{\"status\": \"error\", \"name\": \"$safeName\"}"
+                        if (eventSink != null) {
+                            eventSink?.success(errorEvent)
+                        } else {
+                            synchronized(pendingPaths) {
+                                pendingPaths.add(errorEvent)
+                            }
+                        }
+                    }
                 }
             }
 

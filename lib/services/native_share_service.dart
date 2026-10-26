@@ -28,6 +28,10 @@ class NativeShareService {
               if (json['status'] == 'done') {
                 debugPrint('NativeShareService: All files processed.');
                 _flushBuffer(cubit);
+              } else if (json['status'] == 'error') {
+                // Plan T-015: the native layer could not copy this file.
+                final name = json['name']?.toString() ?? 'file';
+                cubit.reportShareCopyError(name);
               }
             } catch (e) {
               debugPrint('NativeShareService JSON Error: $e');
