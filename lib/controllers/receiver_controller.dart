@@ -16,6 +16,7 @@ class ReceiverController {
   ServerSocket? _server;
   Socket? _activeClient;
   IOSink? _activeSink;
+  String? _activePartialPath;
   bool _isCancelled = false;
   String? _cancelReason;
   bool _isActiveTransferCancelled = false;
@@ -149,6 +150,8 @@ class ReceiverController {
             int bytesReadForCurrentFile = 0;
             IOSink? currentSink;
             BytesBuilder? currentBuffer;
+            String? currentSavePath;
+            String? currentPartialPath;
 
             int bytesSinceUpdate = 0;
             DateTime lastTime = DateTime.now();
@@ -352,7 +355,13 @@ class ReceiverController {
                     if (targetSize <= 512 * 1024) {
                       currentBuffer = BytesBuilder(copy: false);
                     } else {
-                      File f = File(savePath);
+                      // Plan T-010: stream into a .daphq-partial file and
+                      // rename atomically on completion — a killed app can
+                      // never leave a half-written file that looks final.
+                      currentSavePath = savePath;
+                      currentPartialPath = '$savePath.daphq-partial';
+                      _activePartialPath = currentPartialPath;
+                      File f = File(currentPartialPath);
                       currentSink = f.openWrite();
                       _activeSink = currentSink;
                     }
@@ -417,26 +426,39 @@ class ReceiverController {
                     if (currentBuffer != null) {
                       final bufferToSave = currentBuffer;
                       currentBuffer = null;
-                      final fileSavePath = p.join(
-                        saveDirectory,
-                        fileMeta["path"],
-                      );
+                      final targetPath = currentSavePath ??=
+                          p.join(saveDirectory, fileMeta["path"] as String);
+                      final partialPath = '$targetPath.daphq-partial';
 
                       final writeFuture = () async {
                         try {
-                          final f = File(fileSavePath);
+                          final f = File(partialPath);
                           await f.writeAsBytes(
                             bufferToSave.takeBytes(),
                             flush: false,
                           );
+                          // Plan T-010: atomic finalize — the final name only
+                          // ever exists as a complete file.
+                          f.renameSync(targetPath);
                         } catch (_) {}
                       }();
                       closeFutures.add(writeFuture);
                     } else if (currentSink != null) {
                       var sinkToClose = currentSink;
+                      var partialPath = currentPartialPath;
+                      var targetPath = currentSavePath;
                       currentSink = null;
                       _activeSink = null;
-                      closeFutures.add(sinkToClose.close().catchError((_) {}));
+                      closeFutures.add(sinkToClose.close().then((_) {
+                        // Plan T-010: atomic finalize after the sink drains.
+                        if (partialPath != null && targetPath != null) {
+                          final pf = File(partialPath);
+                          if (pf.existsSync()) pf.renameSync(targetPath);
+                        }
+                        if (identical(_activePartialPath, partialPath)) {
+                          _activePartialPath = null;
+                        }
+                      }).catchError((_) {}));
                     }
 
                     bytesReadForCurrentFile = 0;
@@ -471,17 +493,24 @@ class ReceiverController {
                 final List<dynamic> filesList = metadata["files"];
                 if (currentFileIndex < filesList.length) {
                   var fileMeta = filesList[currentFileIndex];
-                  final fileSavePath = p.join(saveDirectory, fileMeta["path"]);
-                  final writeFuture = () async {
-                    try {
-                      final f = File(fileSavePath);
-                      await f.writeAsBytes(
-                        bufferToSave.takeBytes(),
-                        flush: false,
-                      );
-                    } catch (_) {}
-                  }();
-                  closeFutures.add(writeFuture);
+                  // Plan T-001: the trailing buffer must pass the same safety
+                  // gate — never join the raw metadata path here.
+                  final safeRel = safeRelativePath(fileMeta["path"] as String);
+                  if (safeRel != null) {
+                    final targetPath = p.join(saveDirectory, safeRel);
+                    final partialPath = '$targetPath.daphq-partial';
+                    final writeFuture = () async {
+                      try {
+                        final f = File(partialPath);
+                        await f.writeAsBytes(
+                          bufferToSave.takeBytes(),
+                          flush: false,
+                        );
+                        f.renameSync(targetPath);
+                      } catch (_) {}
+                    }();
+                    closeFutures.add(writeFuture);
+                  }
                 }
               }
             }
@@ -619,6 +648,15 @@ class ReceiverController {
               // CRITICAL: Ensure the file sink is closed on connection drop
               if (_activeSink != null) {
                 await _activeSink?.close();
+              }
+              // Plan T-010: an in-flight partial never survives a dropped
+              // connection — only completed renames produce final files.
+              if (_activePartialPath != null) {
+                try {
+                  final pf = File(_activePartialPath!);
+                  if (pf.existsSync()) pf.deleteSync();
+                } catch (_) {}
+                _activePartialPath = null;
               }
               client.destroy();
             } catch (_) {}
