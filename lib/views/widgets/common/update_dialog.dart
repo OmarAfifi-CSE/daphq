@@ -1,5 +1,7 @@
 import 'dart:io';
 import 'dart:ui';
+import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:http/http.dart' as http;
@@ -11,10 +13,21 @@ import '../../../core/app_colors.dart';
 import '../../../core/app_constants.dart';
 import '../../../core/responsive_utils.dart';
 
+/// Computes the SHA-256 hex digest of [path] off the UI isolate (plan T-011).
+String _sha256OfFile(String path) {
+  final stream = File(path).openRead();
+  return sha256.bind(stream).first.toString();
+}
+
 class UpdateDialog extends StatefulWidget {
   final String newVersion;
   final String whatsNew;
   final String downloadUrl;
+
+  /// URL of the sibling '.sha256' release asset for [downloadUrl]. Empty
+  /// when the release does not publish one — in that case only the
+  /// content-length check runs (plan T-011).
+  final String expectedSha256Url;
   final bool isDesktop;
 
   const UpdateDialog({
@@ -22,6 +35,7 @@ class UpdateDialog extends StatefulWidget {
     required this.newVersion,
     required this.whatsNew,
     required this.downloadUrl,
+    this.expectedSha256Url = '',
     required this.isDesktop,
   });
 
@@ -85,33 +99,69 @@ class _UpdateDialogState extends State<UpdateDialog> {
       final IOSink sink = file.openWrite();
 
       int downloaded = 0;
+      DateTime lastUiUpdate = DateTime.now();
       await for (final chunk in response.stream) {
         sink.add(chunk);
         downloaded += chunk.length;
-        if (contentLength != null && contentLength > 0) {
-          if (mounted) {
-            setState(() {
+        // Plan T-011: throttle UI updates to ~10/s — one setState per chunk
+        // on a fast connection floods the frame pipeline.
+        final now = DateTime.now();
+        if (now.difference(lastUiUpdate).inMilliseconds < 100 && mounted) {
+          continue;
+        }
+        lastUiUpdate = now;
+        if (mounted) {
+          setState(() {
+            if (contentLength != null && contentLength > 0) {
               _downloadProgress = downloaded / contentLength;
               final String downloadedMb = (downloaded / (1024 * 1024))
                   .toStringAsFixed(1);
               final String totalMb = (contentLength / (1024 * 1024))
                   .toStringAsFixed(1);
               _downloadStatus = '$downloadedMb MB / $totalMb MB';
-            });
-          }
-        } else {
-          if (mounted) {
-            setState(() {
+            } else {
               final String downloadedMb = (downloaded / (1024 * 1024))
                   .toStringAsFixed(1);
               _downloadStatus = '$downloadedMb MB downloaded';
-            });
-          }
+            }
+          });
         }
       }
 
       await sink.flush();
       await sink.close();
+
+      // Plan T-011: verify size completeness and, when the release publishes
+      // a digest, the SHA-256 of the downloaded file — BEFORE installing it.
+      if (contentLength != null &&
+          contentLength > 0 &&
+          downloaded != contentLength) {
+        throw Exception(
+            'Download incomplete ($downloaded of $contentLength bytes).');
+      }
+      if (widget.expectedSha256Url.isNotEmpty) {
+        if (mounted) {
+          setState(() {
+            _downloadStatus = 'Verifying download...';
+          });
+        }
+        final digestResponse = await http
+            .get(Uri.parse(widget.expectedSha256Url))
+            .timeout(const Duration(seconds: 15));
+        if (digestResponse.statusCode != 200) {
+          throw Exception('Could not fetch the release checksum.');
+        }
+        final expectedDigest =
+            digestResponse.body.trim().split(RegExp(r'\s+')).first.toLowerCase();
+        final actualDigest = await compute(_sha256OfFile, file.path);
+        if (actualDigest != expectedDigest) {
+          try {
+            file.deleteSync();
+          } catch (_) {}
+          throw Exception(
+              'Integrity check failed. The download was removed — please try again.');
+        }
+      }
 
       if (mounted) {
         setState(() {

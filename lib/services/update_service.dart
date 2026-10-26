@@ -53,6 +53,20 @@ class UpdateService {
           return;
         }
 
+        // Plan T-011: releases publish '<asset>.sha256' siblings; when one
+        // exists for the chosen download, the dialog verifies the download
+        // against it before installing.
+        String expectedSha256Url = '';
+        final downloadAssetName = downloadUrl.split('/').last.toLowerCase();
+        for (var asset in assets) {
+          final String name = asset['name']?.toString().toLowerCase() ?? '';
+          if (name == '$downloadAssetName.sha256') {
+            expectedSha256Url =
+                asset['browser_download_url']?.toString() ?? '';
+            break;
+          }
+        }
+
         // Strip non-numeric prefix like 'v'
         final String remoteVersion = _cleanVersion(remoteVersionTag);
 
@@ -70,6 +84,7 @@ class UpdateService {
               newVersion: remoteVersionTag,
               whatsNew: releaseNotes,
               downloadUrl: downloadUrl,
+              expectedSha256Url: expectedSha256Url,
               isDesktop: isDesktopOS,
             ),
           );
