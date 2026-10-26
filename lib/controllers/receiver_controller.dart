@@ -6,6 +6,8 @@ import 'dart:async';
 import 'package:path/path.dart' as p;
 import 'package:storage_space/storage_space.dart';
 import '../models/transfer_model.dart';
+
+export '../models/transfer_model.dart' show TransferPhase;
 import '../core/app_constants.dart';
 
 /// Handles the receiver side of the file transfer protocol.
@@ -23,6 +25,10 @@ class ReceiverController {
   String? _activeTransferCancelReason;
   String? _currentSenderDeviceName;
   Map<String, dynamic>? lastReceivedMetadata;
+
+  /// Machine-readable lifecycle phase (plan T-002) — set at control-flow
+  /// boundaries so the cubit never parses status strings again.
+  TransferPhase currentPhase = TransferPhase.idle;
 
   /// Starts a TCP server and waits for incoming file transfers.
   ///
@@ -43,6 +49,7 @@ class ReceiverController {
   }) async {
     _isCancelled = false;
     _cancelReason = null;
+    currentPhase = TransferPhase.idle;
     final Set<String> createdDirs = {};
     try {
       if (_server != null) {
@@ -110,6 +117,7 @@ class ReceiverController {
       }
 
       if (_isCancelled) return;
+      currentPhase = TransferPhase.idle;
       onUpdate(TransferModel(status: "Ready & Waiting as $deviceName"));
 
       await for (Socket client in _server!) {
@@ -178,6 +186,7 @@ class ReceiverController {
                       client.destroy();
                     } catch (_) {}
                     isRejected = true;
+                    currentPhase = TransferPhase.idle;
                     onUpdate(TransferModel(status: "Ready & Waiting..."));
                     break;
                   }
@@ -221,6 +230,7 @@ class ReceiverController {
                     } catch (_) {}
                     client.destroy();
                     isRejected = true;
+                    currentPhase = TransferPhase.idle;
                     onUpdate(
                       TransferModel(
                         status: "Transfer Rejected. Ready & Waiting...",
@@ -229,6 +239,7 @@ class ReceiverController {
                     break;
                   } else {
                     // Update UI immediately to let the user know we accepted and are starting!
+                    currentPhase = TransferPhase.receiving;
                     onUpdate(
                       TransferModel(
                         status: "Connecting & Starting...",
@@ -248,6 +259,7 @@ class ReceiverController {
                         await client.flush();
                         client.destroy();
                         isRejected = true;
+                        currentPhase = TransferPhase.idle;
                         onUpdate(
                           TransferModel(
                             status:
@@ -315,6 +327,7 @@ class ReceiverController {
                       client.destroy();
                     } catch (_) {}
                     isRejected = true;
+                    currentPhase = TransferPhase.idle;
                     onUpdate(TransferModel(status: "Ready & Waiting..."));
                     break;
                   }
@@ -517,6 +530,7 @@ class ReceiverController {
 
             if (currentSink != null) {
               if (received >= totalExpectedBytes) {
+                currentPhase = TransferPhase.finalizing;
                 onUpdate(
                   TransferModel(
                     status: "Finalizing... Saving to disk",
@@ -539,6 +553,7 @@ class ReceiverController {
 
             // Guard: if metadata is null, the sender connected but dropped
             if (metadata == null) {
+              currentPhase = TransferPhase.idle;
               onUpdate(TransferModel(status: "Ready & Waiting as $deviceName"));
               return;
             }
@@ -558,6 +573,7 @@ class ReceiverController {
 
             stopwatch.stop();
             double finalMB = received / 1024 / 1024;
+            currentPhase = TransferPhase.done;
 
             onUpdate(
               TransferModel(
@@ -575,8 +591,24 @@ class ReceiverController {
 
             // All done signal and writes completed
           } on PathAccessException {
+            currentPhase = TransferPhase.failed;
             onUpdate(TransferModel(status: "Error: Permission Denied"));
           } catch (e) {
+            if (_isCancelled || _isActiveTransferCancelled ||
+                e is TimeoutException) {
+              currentPhase = TransferPhase.cancelled;
+            } else if (e is SocketException) {
+              final osError = e.osError?.errorCode;
+              final msg = e.message.toLowerCase();
+              currentPhase = (osError == 104 ||
+                      osError == 10054 ||
+                      osError == 32 ||
+                      msg.contains('connection reset by peer'))
+                  ? TransferPhase.cancelled
+                  : TransferPhase.failed;
+            } else {
+              currentPhase = TransferPhase.failed;
+            }
             if (_isCancelled) {
               onUpdate(
                 TransferModel(
@@ -666,8 +698,23 @@ class ReceiverController {
         }();
       }
     } on PathAccessException {
+      currentPhase = TransferPhase.failed;
       onUpdate(TransferModel(status: "Error: Permission Denied"));
     } catch (e) {
+      if (_isCancelled || e is TimeoutException) {
+        currentPhase = TransferPhase.cancelled;
+      } else if (e is SocketException) {
+        final osError = e.osError?.errorCode;
+        final msg = e.message.toLowerCase();
+        currentPhase = (osError == 104 ||
+                osError == 10054 ||
+                osError == 32 ||
+                msg.contains('connection reset by peer'))
+            ? TransferPhase.cancelled
+            : TransferPhase.failed;
+      } else {
+        currentPhase = TransferPhase.failed;
+      }
       if (_isCancelled) {
         onUpdate(TransferModel(status: _cancelReason ?? "Transfer Cancelled"));
       } else if (e is SocketException) {

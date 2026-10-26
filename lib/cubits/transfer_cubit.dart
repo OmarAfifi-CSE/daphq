@@ -412,27 +412,19 @@ class TransferCubit extends Cubit<TransferState> {
       saveDirectory: state.receiveFolder!,
       deviceName: state.deviceName,
       onUpdate: (model) async {
-        bool isBusy = false;
-        String s = model.status.toLowerCase();
-        if (s.contains("ready & waiting") ||
-            s.contains("complete") ||
-            s.contains("cancelled") ||
-            s.contains("error") ||
-            s.contains("rejected")) {
-          isBusy = false;
-        } else if (s.contains("receiving data") || s.contains("connecting")) {
-          isBusy = true;
-        }
+        // Plan T-002: the receiver exposes a machine-readable phase; the
+        // status string is display-only from now on.
+        final TransferPhase phase = _receiver.currentPhase;
+        final bool isBusy = phase == TransferPhase.receiving ||
+            phase == TransferPhase.finalizing;
 
         final bool wasActive = state.isReceivingActive;
 
         // Write log when transitioning from busy to idle (await it first!)
         if (wasActive && !isBusy) {
-          final String status = s.contains("complete")
+          final String status = phase == TransferPhase.done
               ? "success"
-              : (s.contains("cancelled") || s.contains("abort")
-                    ? "cancelled"
-                    : "failed");
+              : (phase == TransferPhase.cancelled ? "cancelled" : "failed");
 
           final List<dynamic> filesList =
               _receiver.lastReceivedMetadata?["files"] ?? [];

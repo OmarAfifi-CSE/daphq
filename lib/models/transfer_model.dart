@@ -24,3 +24,16 @@ class TransferModel {
     this.analyzeCount,
   });
 }
+
+/// Machine-readable lifecycle of a receiver-side transfer (plan T-002).
+///
+/// Populated by [ReceiverController] at each control-flow boundary so the
+/// cubit no longer infers state from human-readable status strings.
+enum TransferPhase {
+  idle,
+  receiving,
+  finalizing,
+  done,
+  cancelled,
+  failed,
+}
