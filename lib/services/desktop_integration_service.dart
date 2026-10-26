@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:convert';
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:path/path.dart' as p;
 import 'dart:ffi';
@@ -58,7 +59,9 @@ class DesktopIntegrationService {
       if (!dir.existsSync()) dir.createSync(recursive: true);
       final fileName = 'args_${DateTime.now().microsecondsSinceEpoch}.json';
       File(p.join(queuePath, fileName)).writeAsStringSync(jsonEncode(args));
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('DesktopIntegrationService: _writeArgsToQueue error: $e');
+    }
   }
 
   static void _startQueueWatcher(String queuePath) {
@@ -86,7 +89,10 @@ class DesktopIntegrationService {
             final content = file.readAsStringSync();
             allPaths.addAll(List<String>.from(jsonDecode(content)));
             file.deleteSync();
-          } catch (_) {}
+          } catch (e) {
+            debugPrint(
+                'DesktopIntegrationService: error reading arg file: $e');
+          }
         }
       }
 
@@ -121,6 +127,7 @@ class DesktopIntegrationService {
   // Creates a named Win32 Mutex so the Shell Extension DLL can detect the running instance.
   // The DLL uses OpenMutexW to check for this mutex before launching a new process.
   static void _createWin32Mutex() {
+    Pointer<Utf16>? name;
     try {
       final kernel32 = DynamicLibrary.open('kernel32.dll');
       final createMutex = kernel32
@@ -130,9 +137,15 @@ class DesktopIntegrationService {
           >('CreateMutexW');
       // Changed 'Global\\' to 'Local\\' because standard users don't have SeCreateGlobalPrivilege.
       // Since explorer.exe and the app run in the same session, Local works perfectly.
-      final name = 'Local\\Daphq_Unique_Mutex_Lock'.toNativeUtf16();
+      name = 'Local\\Daphq_Unique_Mutex_Lock'.toNativeUtf16();
       createMutex(nullptr, 1, name);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('DesktopIntegrationService: _createWin32Mutex error: $e');
+    } finally {
+      // Plan T-014: the native string must be freed on every path (the
+      // shrinkeo twin of this file already does; this closes the drift).
+      if (name != null) malloc.free(name);
+    }
   }
 
   // Instantly terminates the process using Windows API to avoid Flutter/Dart VM shutdown hangs.
@@ -144,7 +157,8 @@ class DesktopIntegrationService {
             'ExitProcess',
           );
       exitProcess(exitCode);
-    } catch (_) {
+    } catch (e) {
+      debugPrint('DesktopIntegrationService: _exitProcess failed: $e');
       exit(exitCode); // Fallback
     }
   }
