@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:window_manager/window_manager.dart';
 import '../../../cubits/transfer_cubit.dart';
 import '../../../cubits/transfer_state.dart';
 import '../../../core/app_colors.dart';
@@ -290,23 +291,32 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                     GestureDetector(
                       onTap: (state.isTransferring || _isPickingFolder)
                           ? null
-                          : () async {
+                          : () {
                               setState(() {
                                 _isPickingFolder = true;
                               });
-                              try {
-                                String? path =
-                                    await FilePicker.getDirectoryPath();
-                                if (path != null && mounted) {
-                                  cubit.setReceiveFolder(path);
+                              WidgetsBinding.instance.addPostFrameCallback((
+                                _,
+                              ) async {
+                                try {
+                                  final String? path =
+                                      await FilePicker.getDirectoryPath();
+                                  if (path != null && mounted) {
+                                    cubit.setReceiveFolder(path);
+                                  }
+                                } finally {
+                                  if (Platform.isWindows ||
+                                      Platform.isMacOS ||
+                                      Platform.isLinux) {
+                                    await windowManager.focus();
+                                  }
+                                  if (mounted) {
+                                    setState(() {
+                                      _isPickingFolder = false;
+                                    });
+                                  }
                                 }
-                              } finally {
-                                if (mounted) {
-                                  setState(() {
-                                    _isPickingFolder = false;
-                                  });
-                                }
-                              }
+                              });
                             },
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.center,

@@ -21,10 +21,14 @@ class _UnifiedAddButtonState extends State<UnifiedAddButton> {
   final GlobalKey<PopupMenuButtonState> _menuKey = GlobalKey();
 
   void _handleSelection(int value, TransferCubit cubit) {
-    if (value == 1) cubit.pickItems(FileType.any);
-    if (value == 2) cubit.pickFolder();
-    if (value == 3) cubit.pickItems(FileType.image);
-    if (value == 4) cubit.pickItems(FileType.video);
+    // Defer native modal picker outside active pointer callbacks (Inv-8).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (value == 1) cubit.pickItems(FileType.any);
+      if (value == 2) cubit.pickFolder();
+      if (value == 3) cubit.pickItems(FileType.image);
+      if (value == 4) cubit.pickItems(FileType.video);
+    });
   }
 
   void _showMobileMenu(BuildContext context, TransferCubit cubit) {

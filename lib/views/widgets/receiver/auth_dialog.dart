@@ -2,6 +2,27 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../../../core/app_colors.dart';
 
+/// Creates a non-dismissible dialog route for authorizing an incoming transfer.
+DialogRoute<bool> createAuthDialogRoute({
+  required BuildContext context,
+  required String senderIp,
+  required String senderName,
+  required int fileCount,
+  required String formattedSize,
+}) {
+  return DialogRoute<bool>(
+    context: context,
+    barrierDismissible: false,
+    barrierColor: Colors.black54,
+    builder: (context) => _AuthDialogContent(
+      senderIp: senderIp,
+      senderName: senderName,
+      fileCount: fileCount,
+      formattedSize: formattedSize,
+    ),
+  );
+}
+
 /// Shows a premium dialog asking the user to accept or reject an incoming transfer.
 ///
 /// Returns `true` if accepted, `false` if rejected or dismissed.
@@ -12,11 +33,9 @@ Future<bool> showAuthDialog({
   required int fileCount,
   required String formattedSize,
 }) async {
-  return await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        barrierColor: Colors.black54,
-        builder: (context) => _AuthDialogContent(
+  return await Navigator.of(context, rootNavigator: true).push<bool>(
+        createAuthDialogRoute(
+          context: context,
           senderIp: senderIp,
           senderName: senderName,
           fileCount: fileCount,

@@ -71,6 +71,11 @@ class DeviceTransferMenu extends StatelessWidget {
     final cubit = context.read<TransferCubit>();
 
     return BlocBuilder<TransferCubit, TransferState>(
+      buildWhen: (previous, current) =>
+          previous.selectedPaths != current.selectedPaths ||
+          previous.selectedPathsIsDir != current.selectedPathsIsDir ||
+          previous.isTransferring != current.isTransferring ||
+          previous.isAddingFiles != current.isAddingFiles,
       builder: (context, state) {
         return Container(
           padding: EdgeInsets.all(20.rr(isDesktop)),
@@ -364,6 +369,7 @@ class DeviceTransferMenu extends StatelessWidget {
                 ],
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
                       Icons.send_rounded,
@@ -371,14 +377,20 @@ class DeviceTransferMenu extends StatelessWidget {
                       size: 18.rx(isDesktop),
                     ),
                     SizedBox(width: 10.rw(isDesktop)),
-                    Text(
-                      state.selectedPaths.isEmpty
-                          ? "Select Items to Send"
-                          : "Send ${state.selectedPaths.length} Items",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 15.rx(isDesktop),
-                        fontWeight: FontWeight.w700,
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          state.selectedPaths.isEmpty
+                              ? "Select Items to Send"
+                              : "Send ${state.selectedPaths.length} Items",
+                          maxLines: 1,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 15.rx(isDesktop),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
                       ),
                     ),
                   ],

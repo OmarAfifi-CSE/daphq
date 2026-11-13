@@ -9,6 +9,7 @@ import '../../../cubits/transfer_state.dart';
 import '../../../core/app_colors.dart';
 import '../../../services/history_service.dart';
 import '../../../core/file_utils.dart';
+import 'custom_snackbar.dart';
 import 'package:open_filex/open_filex.dart';
 
 class HistoryDialog extends StatefulWidget {
@@ -112,20 +113,18 @@ class _HistoryDialogState extends State<HistoryDialog> {
       if (result.type != ResultType.done &&
           result.type != ResultType.noAppToOpen &&
           mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Could not open file: ${result.message}'),
-            backgroundColor: AppColors.danger,
-          ),
+        CustomSnackBar.show(
+          context,
+          message: 'Could not open file: ${result.message}',
+          backgroundColor: AppColors.danger,
         );
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Could not open file.'),
-            backgroundColor: AppColors.danger,
-          ),
+        CustomSnackBar.show(
+          context,
+          message: 'Could not open file.',
+          backgroundColor: AppColors.danger,
         );
       }
     }
@@ -159,11 +158,10 @@ class _HistoryDialogState extends State<HistoryDialog> {
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Could not open location.'),
-            backgroundColor: AppColors.danger,
-          ),
+        CustomSnackBar.show(
+          context,
+          message: 'Could not open location.',
+          backgroundColor: AppColors.danger,
         );
       }
     }

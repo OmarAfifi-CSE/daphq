@@ -28,6 +28,9 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  DialogRoute<bool>? _authDialogRoute;
+  AuthRequest? _activeAuthRequest;
+
   @override
   void initState() {
     super.initState();
@@ -37,184 +40,39 @@ class _HomePageState extends State<HomePage> {
   }
 
   @override
+  void dispose() {
+    _authDialogRoute = null;
+    _activeAuthRequest = null;
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () => FocusScope.of(context).unfocus(),
-      child: BlocListener<TransferCubit, TransferState>(
-        listenWhen: (previous, current) =>
-            (previous.authRequest != current.authRequest &&
-                current.authRequest != null) ||
-            (previous.errorMessage != current.errorMessage &&
-                current.errorMessage != null) ||
-            (previous.showStorageSettingsDialog !=
-                    current.showStorageSettingsDialog &&
-                current.showStorageSettingsDialog) ||
-            (previous.showNotificationWarningDialog !=
-                    current.showNotificationWarningDialog &&
-                current.showNotificationWarningDialog) ||
-            (previous.showBatteryOptimizationSnackBar !=
-                    current.showBatteryOptimizationSnackBar &&
-                current.showBatteryOptimizationSnackBar),
-        listener: (context, state) {
-          final cubit = context.read<TransferCubit>();
-
-          if (state.errorMessage != null) {
-            CustomSnackBar.show(
-              context,
-              message: state.errorMessage!,
-              duration: const Duration(seconds: 4),
-            );
-            cubit.clearFeedback();
-          }
-
-          if (state.showBatteryOptimizationSnackBar) {
-            CustomSnackBar.show(
-              context,
-              message: "Disable battery limits for speed & stable transfers.",
-              duration: const Duration(seconds: 3),
-              action: SnackBarAction(
-                label: "DISABLE",
-                textColor: AppColors.primaryLight,
-                onPressed: () =>
-                    Permission.ignoreBatteryOptimizations.request(),
-              ),
-            );
-            cubit.clearFeedback();
-          }
-
-          if (state.showStorageSettingsDialog) {
-            showDialog(
-              context: context,
-              barrierDismissible: false,
-              builder: (dialogContext) => AlertDialog(
-                backgroundColor: AppColors.dialogBackground,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                content: const Text(
-                  AppConstants.storagePermissionRequired,
-                  style: TextStyle(color: AppColors.textPrimary),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(dialogContext),
-                    child: const Text(
-                      AppConstants.cancel,
-                      style: TextStyle(color: AppColors.textMuted),
+    final Widget scaffold = Scaffold(
+      extendBodyBehindAppBar: true,
+      backgroundColor: Colors.transparent,
+      appBar: (Platform.isWindows || Platform.isLinux || Platform.isMacOS)
+          ? PreferredSize(
+              preferredSize: const Size.fromHeight(kWindowCaptionHeight),
+              child: WindowCaption(
+                brightness: Brightness.dark,
+                backgroundColor: AppColors.appBarBackground,
+                title: Row(
+                  children: [
+                    Image.asset(
+                      'assets/logo.png',
+                      width: 16,
+                      height: 16,
+                      filterQuality: FilterQuality.high,
                     ),
-                  ),
-                  TextButton(
-                    onPressed: () {
-                      openAppSettings();
-                      Navigator.pop(dialogContext);
-                    },
-                    child: const Text(
-                      AppConstants.openSettings,
-                      style: TextStyle(color: AppColors.primary),
-                    ),
-                  ),
-                ],
-              ),
-            );
-            cubit.clearFeedback();
-          }
-
-          if (state.showNotificationWarningDialog) {
-            showDialog(
-              context: context,
-              barrierDismissible: false,
-              builder: (dialogContext) => AlertDialog(
-                backgroundColor: AppColors.dialogBackground,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                content: const Text(
-                  AppConstants.notificationPermissionWarning,
-                  style: TextStyle(color: AppColors.textPrimary),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () {
-                      Navigator.pop(dialogContext);
-                      cubit.resolveNotificationWarning(true);
-                    },
-                    child: const Text(
-                      AppConstants.proceedAnyway,
-                      style: TextStyle(color: AppColors.textMuted),
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () {
-                      openAppSettings();
-                      Navigator.pop(dialogContext);
-                      cubit.resolveNotificationWarning(false);
-                    },
-                    child: const Text(
-                      AppConstants.openSettings,
-                      style: TextStyle(color: AppColors.primary),
-                    ),
-                  ),
-                ],
-              ),
-            );
-            cubit.clearFeedback();
-          }
-
-          if (state.authRequest != null) {
-            showAuthDialog(
-              context: context,
-              senderIp: state.authRequest!.senderIp,
-              senderName: state.authRequest!.senderName,
-              fileCount: state.authRequest!.fileCount,
-              formattedSize: state.authRequest!.formattedSize,
-            ).then((accepted) {
-              cubit.resolveAuth(accepted);
-            });
-          }
-        },
-        child: BlocBuilder<TransferCubit, TransferState>(
-          builder: (context, state) {
-            return PopScope(
-              canPop:
-                  !state.showProgressView ||
-                  state.isTransferring ||
-                  state.isReceivingActive,
-              onPopInvokedWithResult: (didPop, result) {
-                if (didPop) return;
-                if (state.showProgressView &&
-                    !state.isTransferring &&
-                    !state.isReceivingActive) {
-                  context.read<TransferCubit>().dismissProgress();
-                }
-              },
-              child: Scaffold(
-                extendBodyBehindAppBar: true,
-                backgroundColor: Colors.transparent,
-                appBar:
-                    (Platform.isWindows || Platform.isLinux || Platform.isMacOS)
-                    ? PreferredSize(
-                        preferredSize: const Size.fromHeight(
-                          kWindowCaptionHeight,
-                        ),
-                        child: WindowCaption(
-                          brightness: Brightness.dark,
-                          backgroundColor: AppColors.appBarBackground,
-                          title: Row(
-                            children: [
-                              Image.asset(
-                                'assets/logo.png',
-                                width: 16,
-                                height: 16,
-                                filterQuality: FilterQuality.high,
-                              ),
-                              const SizedBox(width: 8),
-                              const Text(
-                                AppConstants.appName,
-                                style: TextStyle(
-                                  color: AppColors.textPrimary,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  letterSpacing: 0.5,
+                    const SizedBox(width: 8),
+                    const Text(
+                      AppConstants.appName,
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.5,
                                 ),
                               ),
                             ],
@@ -352,7 +210,7 @@ class _HomePageState extends State<HomePage> {
                     // Background layer
                     Container(color: AppColors.background),
                     // Animated particle field
-                    const AnimatedBackground(),
+                    const RepaintBoundary(child: AnimatedBackground()),
                     // Main content
                     SafeArea(
                       child: Column(
@@ -363,8 +221,16 @@ class _HomePageState extends State<HomePage> {
                                 .discovery,
                           ),
                           Expanded(
-                            child: BlocBuilder<TransferCubit, TransferState>(
-                              builder: (context, state) {
+                            child: BlocSelector<
+                              TransferCubit,
+                              TransferState,
+                              ({bool showProgressView, String? receiveFolder})
+                            >(
+                              selector: (state) => (
+                                showProgressView: state.showProgressView,
+                                receiveFolder: state.receiveFolder,
+                              ),
+                              builder: (context, viewState) {
                                 return LayoutBuilder(
                                   builder: (context, constraints) {
                                     final bool isDesktopOS =
@@ -384,6 +250,11 @@ class _HomePageState extends State<HomePage> {
                                           maxWidth: maxDashWidth,
                                         ),
                                         child: SingleChildScrollView(
+                                          key: isDesktopOS
+                                              ? ValueKey(
+                                                  'desktop_scroll_${viewState.showProgressView}_${viewState.receiveFolder ?? ""}',
+                                                )
+                                              : null,
                                           physics: isDesktopOS
                                               ? const ClampingScrollPhysics()
                                               : const BouncingScrollPhysics(),
@@ -407,7 +278,7 @@ class _HomePageState extends State<HomePage> {
                                                     Curves.easeInOutCubic,
                                                 switchOutCurve:
                                                     Curves.easeInOutCubic,
-                                                child: state.showProgressView
+                                                child: viewState.showProgressView
                                                     ? _animatedStagger(
                                                         key: const ValueKey(
                                                           'progress_view',
@@ -444,37 +315,42 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                     // Elegant Glassmorphic Loading Overlay
-                    if (state.isAddingFiles)
-                      Positioned.fill(
-                        child: ClipRect(
-                          child: BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-                            child: Container(
-                              color: AppColors.background.withAlpha(180),
-                              alignment: Alignment.center,
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const CircularProgressIndicator(
-                                    color: AppColors.primary,
-                                    strokeWidth: 3,
-                                  ),
-                                  SizedBox(height: 24.h),
-                                  Text(
-                                    "Processing files...",
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 16.sp,
-                                      fontWeight: FontWeight.w600,
-                                      letterSpacing: 1.5,
+                    BlocSelector<TransferCubit, TransferState, bool>(
+                      selector: (state) => state.isAddingFiles,
+                      builder: (context, isAddingFiles) {
+                        if (!isAddingFiles) return const SizedBox.shrink();
+                        return Positioned.fill(
+                          child: ClipRect(
+                            child: BackdropFilter(
+                              filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                              child: Container(
+                                color: AppColors.background.withAlpha(180),
+                                alignment: Alignment.center,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const CircularProgressIndicator(
+                                      color: AppColors.primary,
+                                      strokeWidth: 3,
                                     ),
-                                  ),
-                                ],
+                                    SizedBox(height: 24.h),
+                                    Text(
+                                      "Processing files...",
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 16.sp,
+                                        fontWeight: FontWeight.w600,
+                                        letterSpacing: 1.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ),
+                        );
+                      },
+                    ),
                   ],
                 ),
                 floatingActionButton:
@@ -515,7 +391,192 @@ class _HomePageState extends State<HomePage> {
                         ],
                       )
                     : null,
+    );
+
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      child: BlocListener<TransferCubit, TransferState>(
+        listenWhen: (previous, current) =>
+            previous.authRequest != current.authRequest ||
+            (previous.errorMessage != current.errorMessage &&
+                current.errorMessage != null) ||
+            (previous.showStorageSettingsDialog !=
+                    current.showStorageSettingsDialog &&
+                current.showStorageSettingsDialog) ||
+            (previous.showNotificationWarningDialog !=
+                    current.showNotificationWarningDialog &&
+                current.showNotificationWarningDialog) ||
+            (previous.showBatteryOptimizationSnackBar !=
+                    current.showBatteryOptimizationSnackBar &&
+                current.showBatteryOptimizationSnackBar),
+        listener: (context, state) {
+          final cubit = context.read<TransferCubit>();
+
+          if (state.errorMessage != null) {
+            CustomSnackBar.show(
+              context,
+              message: state.errorMessage!,
+              duration: const Duration(seconds: 4),
+            );
+            cubit.clearFeedback();
+          }
+
+          if (state.showBatteryOptimizationSnackBar) {
+            CustomSnackBar.show(
+              context,
+              message: "Disable battery limits for speed & stable transfers.",
+              duration: const Duration(seconds: 3),
+              action: SnackBarAction(
+                label: "DISABLE",
+                textColor: AppColors.primaryLight,
+                onPressed: () =>
+                    Permission.ignoreBatteryOptimizations.request(),
               ),
+            );
+            cubit.clearFeedback();
+          }
+
+          if (state.showStorageSettingsDialog) {
+            showDialog(
+              context: context,
+              barrierDismissible: false,
+              builder: (dialogContext) => AlertDialog(
+                backgroundColor: AppColors.dialogBackground,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                content: const Text(
+                  AppConstants.storagePermissionRequired,
+                  style: TextStyle(color: AppColors.textPrimary),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: const Text(
+                      AppConstants.cancel,
+                      style: TextStyle(color: AppColors.textMuted),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      openAppSettings();
+                      Navigator.pop(dialogContext);
+                    },
+                    child: const Text(
+                      AppConstants.openSettings,
+                      style: TextStyle(color: AppColors.primary),
+                    ),
+                  ),
+                ],
+              ),
+            );
+            cubit.clearFeedback();
+          }
+
+          if (state.showNotificationWarningDialog) {
+            showDialog(
+              context: context,
+              barrierDismissible: false,
+              builder: (dialogContext) => AlertDialog(
+                backgroundColor: AppColors.dialogBackground,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                content: const Text(
+                  AppConstants.notificationPermissionWarning,
+                  style: TextStyle(color: AppColors.textPrimary),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      Navigator.pop(dialogContext);
+                      cubit.resolveNotificationWarning(true);
+                    },
+                    child: const Text(
+                      AppConstants.proceedAnyway,
+                      style: TextStyle(color: AppColors.textMuted),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      openAppSettings();
+                      Navigator.pop(dialogContext);
+                      cubit.resolveNotificationWarning(false);
+                    },
+                    child: const Text(
+                      AppConstants.openSettings,
+                      style: TextStyle(color: AppColors.primary),
+                    ),
+                  ),
+                ],
+              ),
+            );
+            cubit.clearFeedback();
+          }
+
+          final req = state.authRequest;
+          if (req == null && _activeAuthRequest != null) {
+            final route = _authDialogRoute;
+            _authDialogRoute = null;
+            _activeAuthRequest = null;
+            if (route != null && route.isActive && mounted) {
+              Navigator.of(context, rootNavigator: true).removeRoute(route);
+            }
+          } else if (req != null && !identical(_activeAuthRequest, req)) {
+            final previousRoute = _authDialogRoute;
+            if (previousRoute != null && previousRoute.isActive && mounted) {
+              Navigator.of(
+                context,
+                rootNavigator: true,
+              ).removeRoute(previousRoute);
+            }
+            final route = createAuthDialogRoute(
+              context: context,
+              senderIp: req.senderIp,
+              senderName: req.senderName,
+              fileCount: req.fileCount,
+              formattedSize: req.formattedSize,
+            );
+            _activeAuthRequest = req;
+            _authDialogRoute = route;
+            Navigator.of(context, rootNavigator: true).push<bool>(route).then((
+              accepted,
+            ) {
+              if (identical(_activeAuthRequest, req)) {
+                _activeAuthRequest = null;
+                _authDialogRoute = null;
+                if (mounted) {
+                  cubit.resolveAuth(accepted ?? false);
+                }
+              }
+            });
+          }
+        },
+        child: BlocSelector<
+          TransferCubit,
+          TransferState,
+          ({bool showProgressView, bool isTransferring, bool isReceivingActive})
+        >(
+          selector: (state) => (
+            showProgressView: state.showProgressView,
+            isTransferring: state.isTransferring,
+            isReceivingActive: state.isReceivingActive,
+          ),
+          builder: (context, popState) {
+            return PopScope(
+              canPop:
+                  !popState.showProgressView ||
+                  popState.isTransferring ||
+                  popState.isReceivingActive,
+              onPopInvokedWithResult: (didPop, result) {
+                if (didPop) return;
+                if (popState.showProgressView &&
+                    !popState.isTransferring &&
+                    !popState.isReceivingActive) {
+                  context.read<TransferCubit>().dismissProgress();
+                }
+              },
+              child: scaffold,
             );
           },
         ),

@@ -4,6 +4,7 @@ import '../../../cubits/transfer_cubit.dart';
 import '../../../cubits/transfer_state.dart';
 import '../../../core/app_colors.dart';
 import '../../../core/responsive_utils.dart';
+import '../../../models/transfer_model.dart';
 import 'animated_press_button.dart';
 import 'custom_snackbar.dart';
 import 'direct_transfer_tip_dialog.dart';
@@ -22,19 +23,26 @@ class _TransferProgressViewState extends State<TransferProgressView> {
   int _fastCount = 0;
   bool _showSlowSpeedBanner = false;
 
-  @override
-  Widget build(BuildContext context) {
-    final scale = widget.isDesktop ? context.desktopScale : 1.0;
-    final isDesktop = widget.isDesktop;
-
-    return BlocListener<TransferCubit, TransferState>(
-      listenWhen: (previous, current) {
-        return previous.model.speed != current.model.speed ||
-            previous.isTransferring != current.isTransferring ||
-            previous.isReceivingActive != current.isReceivingActive;
-      },
-      listener: (context, state) {
-        final model = state.model;
+  ({bool isDone, bool isFailed}) _classifyTransferStatus(
+    TransferModel model,
+    TransferState state,
+  ) {
+    switch (model.phase) {
+      case TransferPhase.done:
+        return (isDone: true, isFailed: false);
+      case TransferPhase.failed:
+      case TransferPhase.cancelled:
+        return (isDone: false, isFailed: true);
+      case TransferPhase.analyzing:
+      case TransferPhase.waitingAuth:
+      case TransferPhase.receiving:
+      case TransferPhase.sending:
+      case TransferPhase.finalizing:
+        return (
+          isDone: false,
+          isFailed: !(state.isTransferring || state.isReceivingActive),
+        );
+      case TransferPhase.idle:
         final status = model.status.toLowerCase();
         final bool isDone =
             status.contains("complete") || status.contains("success");
@@ -43,7 +51,55 @@ class _TransferProgressViewState extends State<TransferProgressView> {
             status.contains("error") ||
             status.contains("failed") ||
             status.contains("cancelled") ||
-            status.contains("rejected");
+            status.contains("rejected") ||
+            status.contains("stopped") ||
+            status.contains("timeout") ||
+            status.contains("refused") ||
+            status.contains("not found") ||
+            status.contains("unreachable");
+        return (isDone: isDone, isFailed: isFailed);
+    }
+  }
+
+  Widget _buildButtonLabel({
+    required IconData icon,
+    required Color iconColor,
+    required String label,
+    required TextStyle labelStyle,
+    required double iconSize,
+    required double spacing,
+  }) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, color: iconColor, size: iconSize),
+        SizedBox(width: spacing),
+        Flexible(
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(label, maxLines: 1, style: labelStyle),
+          ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scale = widget.isDesktop ? context.desktopScale : 1.0;
+    final isDesktop = widget.isDesktop;
+
+    return BlocListener<TransferCubit, TransferState>(
+      listenWhen: (previous, current) {
+        return previous.model.speed != current.model.speed ||
+            previous.model.phase != current.model.phase ||
+            previous.isTransferring != current.isTransferring ||
+            previous.isReceivingActive != current.isReceivingActive;
+      },
+      listener: (context, state) {
+        final model = state.model;
+        final (:isDone, :isFailed) = _classifyTransferStatus(model, state);
 
         final bool isActive =
             (state.isTransferring || state.isReceivingActive) &&
@@ -107,20 +163,7 @@ class _TransferProgressViewState extends State<TransferProgressView> {
               model.totalSize > 0 ||
               model.progress > 0 ||
               model.analyzeCount != null;
-          final status = model.status.toLowerCase();
-          final bool isDone =
-              status.contains("complete") || status.contains("success");
-          final bool isFailed =
-              (!(state.isTransferring || state.isReceivingActive) && !isDone) ||
-              status.contains("error") ||
-              status.contains("failed") ||
-              status.contains("cancelled") ||
-              status.contains("rejected") ||
-              status.contains("stopped") ||
-              status.contains("timeout") ||
-              status.contains("refused") ||
-              status.contains("not found") ||
-              status.contains("unreachable");
+          final (:isDone, :isFailed) = _classifyTransferStatus(model, state);
 
           return AnimatedSize(
             duration: const Duration(milliseconds: 350),
@@ -144,19 +187,29 @@ class _TransferProgressViewState extends State<TransferProgressView> {
               child: Column(
                 children: [
                   // 1. Status Header
-                  Container(
-                    width: double.infinity,
-                    alignment: Alignment.center,
-                    child: Text(
-                      model.status.isEmpty ? "Ready & Waiting" : model.status,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: _getStatusColor(model.status),
-                        fontSize: 18.0.rx(isDesktop, desktopScale: scale),
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.3,
-                      ),
-                    ),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final double headerWidth = constraints.maxWidth.isFinite
+                          ? constraints.maxWidth
+                          : MediaQuery.sizeOf(context).width;
+                      return Container(
+                        width: headerWidth,
+                        alignment: Alignment.center,
+                        child: Text(
+                          model.status.isEmpty ? "Ready & Waiting" : model.status,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: _getStatusColor(
+                              isDone: isDone,
+                              isFailed: isFailed,
+                            ),
+                            fontSize: 18.0.rx(isDesktop, desktopScale: scale),
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                      );
+                    },
                   ),
                   SizedBox(height: 10.0.rh(isDesktop, desktopScale: scale)),
 
@@ -216,6 +269,7 @@ class _TransferProgressViewState extends State<TransferProgressView> {
                       ),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(
                             Icons.timer_outlined,
@@ -225,12 +279,21 @@ class _TransferProgressViewState extends State<TransferProgressView> {
                           SizedBox(
                             width: 6.0.rw(isDesktop, desktopScale: scale),
                           ),
-                          Text(
-                            "Est. time: ${_formatEstimatedTime((model.totalSize - model.transferred) / model.speed)}",
-                            style: TextStyle(
-                              color: AppColors.primaryLight,
-                              fontSize: 15.0.rx(isDesktop, desktopScale: scale),
-                              fontWeight: FontWeight.w500,
+                          Flexible(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                "Est. time: ${_formatEstimatedTime((model.totalSize - model.transferred) / model.speed)}",
+                                maxLines: 1,
+                                style: TextStyle(
+                                  color: AppColors.primaryLight,
+                                  fontSize: 15.0.rx(
+                                    isDesktop,
+                                    desktopScale: scale,
+                                  ),
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
                             ),
                           ),
                         ],
@@ -281,34 +344,56 @@ class _TransferProgressViewState extends State<TransferProgressView> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(
-                          isDone
-                              ? "Transfer Complete"
-                              : (isFailed
-                                    ? "Transfer Cancelled"
-                                    : "${(model.progress * 100).toInt()}% complete"),
-                          style: TextStyle(
-                            color: isDone
-                                ? AppColors.success
-                                : (isFailed
-                                      ? AppColors.danger
-                                      : AppColors.primaryLight),
-                            fontSize: 12.0.rx(isDesktop, desktopScale: scale),
-                            fontWeight: FontWeight.w600,
+                        Flexible(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              isDone
+                                  ? "Transfer Complete"
+                                  : (isFailed
+                                        ? "Transfer Cancelled"
+                                        : "${(model.progress * 100).toInt()}% complete"),
+                              maxLines: 1,
+                              style: TextStyle(
+                                color: isDone
+                                    ? AppColors.success
+                                    : (isFailed
+                                          ? AppColors.danger
+                                          : AppColors.primaryLight),
+                                fontSize: 12.0.rx(
+                                  isDesktop,
+                                  desktopScale: scale,
+                                ),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                           ),
                         ),
-                        Text(
-                          "${_formatSize(model.transferred)}${model.totalSize > 0 ? " / ${_formatSize(model.totalSize)}" : ""}",
-                          style: TextStyle(
-                            color: AppColors.textMuted,
-                            fontSize: 12.0.rx(isDesktop, desktopScale: scale),
+                        SizedBox(width: 8.0.rw(isDesktop, desktopScale: scale)),
+                        Flexible(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerRight,
+                            child: Text(
+                              "${_formatSize(model.transferred)}${model.totalSize > 0 ? " / ${_formatSize(model.totalSize)}" : ""}",
+                              maxLines: 1,
+                              style: TextStyle(
+                                color: AppColors.textMuted,
+                                fontSize: 12.0.rx(
+                                  isDesktop,
+                                  desktopScale: scale,
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       ],
                     ),
+                  ],
 
-                    // Smart Connection Quality / Speed Alert Banner
-                    if (_showSlowSpeedBanner) ...[
+                  // Smart Connection Quality / Speed Alert Banner
+                  if (_showSlowSpeedBanner) ...[
                       SizedBox(height: 12.0.rh(isDesktop, desktopScale: scale)),
                       Material(
                         color: Colors.transparent,
@@ -413,36 +498,26 @@ class _TransferProgressViewState extends State<TransferProgressView> {
                                             AppColors.primary,
                                             AppColors.primaryLight,
                                           ],
-                                          child: Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
-                                            children: [
-                                              Icon(
-                                                Icons.folder_open_rounded,
-                                                color: Colors.white,
-                                                size: 18.0.rx(
-                                                  isDesktop,
-                                                  desktopScale: scale,
-                                                ),
+                                          child: _buildButtonLabel(
+                                            icon: Icons.folder_open_rounded,
+                                            iconColor: Colors.white,
+                                            label: "Open Folder",
+                                            labelStyle: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 13.0.rx(
+                                                isDesktop,
+                                                desktopScale: scale,
                                               ),
-                                              SizedBox(
-                                                width: 6.rw(
-                                                  isDesktop,
-                                                  desktopScale: scale,
-                                                ),
-                                              ),
-                                              Text(
-                                                "Open Folder",
-                                                style: TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 13.0.rx(
-                                                    isDesktop,
-                                                    desktopScale: scale,
-                                                  ),
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              ),
-                                            ],
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                            iconSize: 18.0.rx(
+                                              isDesktop,
+                                              desktopScale: scale,
+                                            ),
+                                            spacing: 6.rw(
+                                              isDesktop,
+                                              desktopScale: scale,
+                                            ),
                                           ),
                                         ),
                                       ),
@@ -468,41 +543,31 @@ class _TransferProgressViewState extends State<TransferProgressView> {
                                                 Colors.white.withAlpha(15),
                                                 Colors.white.withAlpha(8),
                                               ],
-                                        child: Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.center,
-                                          children: [
-                                            Icon(
-                                              Icons
-                                                  .check_circle_outline_rounded,
-                                              color: isDone
-                                                  ? Colors.black87
-                                                  : AppColors.textSecondary,
-                                              size: 18.0.rx(
-                                                isDesktop,
-                                                desktopScale: scale,
-                                              ),
+                                        child: _buildButtonLabel(
+                                          icon:
+                                              Icons.check_circle_outline_rounded,
+                                          iconColor: isDone
+                                              ? Colors.black87
+                                              : AppColors.textSecondary,
+                                          label: isDone ? "Done" : "Dismiss",
+                                          labelStyle: TextStyle(
+                                            color: isDone
+                                                ? Colors.black87
+                                                : AppColors.textPrimary,
+                                            fontSize: 13.0.rx(
+                                              isDesktop,
+                                              desktopScale: scale,
                                             ),
-                                            SizedBox(
-                                              width: 6.rw(
-                                                isDesktop,
-                                                desktopScale: scale,
-                                              ),
-                                            ),
-                                            Text(
-                                              isDone ? "Done" : "Dismiss",
-                                              style: TextStyle(
-                                                color: isDone
-                                                    ? Colors.black87
-                                                    : AppColors.textPrimary,
-                                                fontSize: 13.0.rx(
-                                                  isDesktop,
-                                                  desktopScale: scale,
-                                                ),
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                          ],
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                          iconSize: 18.0.rx(
+                                            isDesktop,
+                                            desktopScale: scale,
+                                          ),
+                                          spacing: 6.rw(
+                                            isDesktop,
+                                            desktopScale: scale,
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -521,36 +586,26 @@ class _TransferProgressViewState extends State<TransferProgressView> {
                                           AppColors.primary,
                                           AppColors.primaryLight,
                                         ],
-                                        child: Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.center,
-                                          children: [
-                                            Icon(
-                                              Icons.folder_open_rounded,
-                                              color: Colors.white,
-                                              size: 18.0.rx(
-                                                isDesktop,
-                                                desktopScale: scale,
-                                              ),
+                                        child: _buildButtonLabel(
+                                          icon: Icons.folder_open_rounded,
+                                          iconColor: Colors.white,
+                                          label: "Open Folder",
+                                          labelStyle: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 13.0.rx(
+                                              isDesktop,
+                                              desktopScale: scale,
                                             ),
-                                            SizedBox(
-                                              width: 6.rw(
-                                                isDesktop,
-                                                desktopScale: scale,
-                                              ),
-                                            ),
-                                            Text(
-                                              "Open Folder",
-                                              style: TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 13.0.rx(
-                                                  isDesktop,
-                                                  desktopScale: scale,
-                                                ),
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                          ],
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                          iconSize: 18.0.rx(
+                                            isDesktop,
+                                            desktopScale: scale,
+                                          ),
+                                          spacing: 6.rw(
+                                            isDesktop,
+                                            desktopScale: scale,
+                                          ),
                                         ),
                                       ),
                                       SizedBox(
@@ -574,40 +629,31 @@ class _TransferProgressViewState extends State<TransferProgressView> {
                                               Colors.white.withAlpha(15),
                                               Colors.white.withAlpha(8),
                                             ],
-                                      child: Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        children: [
-                                          Icon(
+                                      child: _buildButtonLabel(
+                                        icon:
                                             Icons.check_circle_outline_rounded,
-                                            color: isDone
-                                                ? Colors.black87
-                                                : AppColors.textSecondary,
-                                            size: 18.0.rx(
-                                              isDesktop,
-                                              desktopScale: scale,
-                                            ),
+                                        iconColor: isDone
+                                            ? Colors.black87
+                                            : AppColors.textSecondary,
+                                        label: isDone ? "Done" : "Dismiss",
+                                        labelStyle: TextStyle(
+                                          color: isDone
+                                              ? Colors.black87
+                                              : AppColors.textPrimary,
+                                          fontSize: 13.0.rx(
+                                            isDesktop,
+                                            desktopScale: scale,
                                           ),
-                                          SizedBox(
-                                            width: 6.rw(
-                                              isDesktop,
-                                              desktopScale: scale,
-                                            ),
-                                          ),
-                                          Text(
-                                            isDone ? "Done" : "Dismiss",
-                                            style: TextStyle(
-                                              color: isDone
-                                                  ? Colors.black87
-                                                  : AppColors.textPrimary,
-                                              fontSize: 13.0.rx(
-                                                isDesktop,
-                                                desktopScale: scale,
-                                              ),
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ],
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                        iconSize: 18.0.rx(
+                                          isDesktop,
+                                          desktopScale: scale,
+                                        ),
+                                        spacing: 6.rw(
+                                          isDesktop,
+                                          desktopScale: scale,
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -631,44 +677,31 @@ class _TransferProgressViewState extends State<TransferProgressView> {
                                     AppColors.danger,
                                     AppColors.dangerLight,
                                   ],
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        Icons.cancel_rounded,
-                                        color: Colors.white,
-                                        size: 18.0.rx(
-                                          isDesktop,
-                                          desktopScale: scale,
-                                        ),
+                                  child: _buildButtonLabel(
+                                    icon: Icons.cancel_rounded,
+                                    iconColor: Colors.white,
+                                    label: state.isTransferring
+                                        ? "Cancel Transfer"
+                                        : "Cancel Receiving",
+                                    labelStyle: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 14.0.rx(
+                                        isDesktop,
+                                        desktopScale: scale,
                                       ),
-                                      SizedBox(
-                                        width: 8.rw(
-                                          isDesktop,
-                                          desktopScale: scale,
-                                        ),
-                                      ),
-                                      Text(
-                                        state.isTransferring
-                                            ? "Cancel Transfer"
-                                            : "Cancel Receiving",
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 14.0.rx(
-                                            isDesktop,
-                                            desktopScale: scale,
-                                          ),
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ],
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    iconSize: 18.0.rx(
+                                      isDesktop,
+                                      desktopScale: scale,
+                                    ),
+                                    spacing: 8.rw(
+                                      isDesktop,
+                                      desktopScale: scale,
+                                    ),
                                   ),
                                 )
                               : const SizedBox.shrink()),
-                  ] else ...[
-                    // Minimal Placeholder
-                    const SizedBox.shrink(),
-                  ],
                 ],
               ),
             ),
@@ -684,16 +717,9 @@ class _TransferProgressViewState extends State<TransferProgressView> {
     return count.toString();
   }
 
-  Color _getStatusColor(String status) {
-    final lower = status.toLowerCase();
-    if (lower.contains("complete") || lower.contains("success")) {
-      return AppColors.success;
-    }
-    if (lower.contains("error") ||
-        lower.contains("fail") ||
-        lower.contains("cancel")) {
-      return AppColors.danger;
-    }
+  Color _getStatusColor({required bool isDone, required bool isFailed}) {
+    if (isDone) return AppColors.success;
+    if (isFailed) return AppColors.danger;
     return AppColors.primary;
   }
 
@@ -800,14 +826,16 @@ class _GlowingProgressBar extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final double progressWidth =
-            constraints.maxWidth * progress.clamp(0.0, 1.0);
+        final double trackWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : MediaQuery.sizeOf(context).width;
+        final double progressWidth = trackWidth * progress.clamp(0.0, 1.0);
         return Stack(
           clipBehavior: Clip.none,
           children: [
             Container(
               height: barHeight,
-              width: double.infinity,
+              width: trackWidth,
               decoration: BoxDecoration(
                 color: Colors.white.withAlpha(8),
                 borderRadius: BorderRadius.circular(barRadius),
@@ -880,20 +908,24 @@ class _AnalyzePulseBarState extends State<_AnalyzePulseBar>
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final totalWidth = constraints.maxWidth;
-        return AnimatedBuilder(
-          animation: _anim,
-          builder: (context, _) {
-            final offset = _anim.value * (totalWidth + pulseWidth) - pulseWidth;
-            return ClipRRect(
-              borderRadius: BorderRadius.circular(barRadius),
-              child: Stack(
-                children: [
-                  Container(
-                    height: barHeight,
-                    width: double.infinity,
-                    color: Colors.white.withAlpha(8),
-                  ),
+        final double totalWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : MediaQuery.sizeOf(context).width;
+        return RepaintBoundary(
+          child: AnimatedBuilder(
+            animation: _anim,
+            builder: (context, _) {
+              final offset =
+                  _anim.value * (totalWidth + pulseWidth) - pulseWidth;
+              return ClipRRect(
+                borderRadius: BorderRadius.circular(barRadius),
+                child: Stack(
+                  children: [
+                    Container(
+                      height: barHeight,
+                      width: totalWidth,
+                      color: Colors.white.withAlpha(8),
+                    ),
                   Positioned(
                     left: offset,
                     child: Container(
@@ -922,8 +954,9 @@ class _AnalyzePulseBarState extends State<_AnalyzePulseBar>
               ),
             );
           },
-        );
-      },
-    );
+        ),
+      );
+    },
+  );
   }
 }

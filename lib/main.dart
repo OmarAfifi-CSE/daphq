@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:async';
+import 'package:flutter/gestures.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -178,6 +179,15 @@ class DaphqApp extends StatelessWidget {
               child: MaterialApp(
                 title: 'Daphq',
                 debugShowCheckedModeBanner: false,
+                scrollBehavior: const MaterialScrollBehavior().copyWith(
+                  dragDevices: const {
+                    PointerDeviceKind.touch,
+                    PointerDeviceKind.mouse,
+                    PointerDeviceKind.stylus,
+                    PointerDeviceKind.trackpad,
+                    PointerDeviceKind.unknown,
+                  },
+                ),
                 theme: ThemeData(
                   brightness: Brightness.dark,
                   scaffoldBackgroundColor: AppColors.background,
