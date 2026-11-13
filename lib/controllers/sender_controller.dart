@@ -5,6 +5,18 @@ import 'package:path/path.dart' as p;
 import '../models/transfer_model.dart';
 import '../core/app_constants.dart';
 
+/// Typed exception thrown by [SenderController.sendData] carrying the
+/// user-facing message and machine-readable terminal [TransferPhase].
+class TransferSendException implements Exception {
+  final String message;
+  final TransferPhase phase;
+
+  const TransferSendException(this.message, this.phase);
+
+  @override
+  String toString() => message;
+}
+
 /// Handles the sender side of the file transfer protocol.
 ///
 /// Connects to a receiver, sends a JSON metadata header describing the files,
@@ -25,18 +37,26 @@ class SenderController {
     required String targetDeviceName,
     required String senderDeviceName,
     required Function(TransferModel) onUpdate,
+    int port = AppConstants.transferPort,
   }) async {
     _isCancelled = false;
     _cancelReason = null;
     _wasRejectedByReceiver = false;
     _currentTargetDeviceName = targetDeviceName;
     Socket? socket;
-    Stopwatch stopwatch = Stopwatch()..start();
+    StreamSubscription<dynamic>? socketSub;
+    final Stopwatch stopwatch = Stopwatch();
     int sentBytes = 0;
     double totalSizeBytes = 0;
     String? originalName;
     try {
-      onUpdate(TransferModel(status: "Analyzing Files...", analyzeCount: 0));
+      onUpdate(
+        TransferModel(
+          status: "Analyzing Files...",
+          analyzeCount: 0,
+          phase: TransferPhase.analyzing,
+        ),
+      );
 
       // 1. Prepare file list from multiple paths
       List<Map<String, dynamic>> fileList = [];
@@ -96,6 +116,7 @@ class SenderController {
                   TransferModel(
                     status: "Analyzing...",
                     analyzeCount: discoveredCount,
+                    phase: TransferPhase.analyzing,
                   ),
                 );
               }
@@ -121,27 +142,8 @@ class SenderController {
 
       if (_isCancelled) throw "Transfer Cancelled";
 
-      // Plan T-009: two separately-selected files can share a basename
-      // (C:\a\report.pdf and C:\b\report.pdf both map to 'report.pdf'), and
-      // the receiver only auto-renames the ROOT item — the second file would
-      // silently overwrite the first. Rename duplicates within the batch.
-      final seenRelPaths = <String>{};
-      for (final entry in fileList) {
-        final rel = entry['path'] as String;
-        if (seenRelPaths.add(rel)) continue;
-        final parentIndex = rel.lastIndexOf('/');
-        final parent = parentIndex >= 0 ? rel.substring(0, parentIndex + 1) : '';
-        final base = p.basenameWithoutExtension(rel);
-        final ext = p.extension(rel);
-        int counter = 1;
-        String candidate;
-        do {
-          candidate = '$parent$base ($counter)$ext';
-          counter++;
-        } while (seenRelPaths.contains(candidate));
-        entry['path'] = candidate;
-        seenRelPaths.add(candidate);
-      }
+      // Plan T-009: deduplicate collisions case-insensitively across the batch.
+      deduplicateRelativePaths(fileList);
 
       if (fileList.isEmpty) throw "No files found in selection.";
 
@@ -185,10 +187,16 @@ class SenderController {
       }
 
       // Connect to receiver only after all validations pass
-      onUpdate(TransferModel(status: "Connecting..."));
+      onUpdate(
+        TransferModel(
+          status: "Connecting...",
+          fileName: originalName,
+          phase: TransferPhase.waitingAuth,
+        ),
+      );
       socket = await Socket.connect(
         targetIp,
-        AppConstants.transferPort,
+        port,
         timeout: const Duration(seconds: AppConstants.connectionTimeoutSeconds),
       );
       _activeSocket = socket;
@@ -203,41 +211,44 @@ class SenderController {
       }
 
       // Set up listeners for Receiver responses (READY and DONE)
-      Completer<Map<String, dynamic>> readyCompleter = Completer();
-      Completer<void> doneCompleter = Completer();
-      String headerBuffer = "";
+      final Completer<Map<String, dynamic>> readyCompleter = Completer();
+      final Completer<void> doneCompleter = Completer();
+      // Prevent unhandled zone errors if socket closes before await reaches these futures.
+      readyCompleter.future.catchError((_) => <String, dynamic>{});
+      doneCompleter.future.catchError((_) {});
+      final List<int> responseBytes = [];
 
-      socket.listen(
+      socketSub = socket.listen(
         (data) {
-          headerBuffer += utf8.decode(data);
-          while (headerBuffer.contains('\n')) {
-            int newlineIndex = headerBuffer.indexOf('\n');
-            String line = headerBuffer.substring(0, newlineIndex).trim();
-            headerBuffer = headerBuffer.substring(newlineIndex + 1);
+          responseBytes.addAll(data);
+          while (true) {
+            final int newlineIndex = responseBytes.indexOf(10); // \n
+            if (newlineIndex == -1) break;
+            final String line = utf8
+                .decode(responseBytes.sublist(0, newlineIndex), allowMalformed: true)
+                .trim();
+            responseBytes.removeRange(0, newlineIndex + 1);
 
             if (line.isNotEmpty) {
               try {
-                Map<String, dynamic> response = jsonDecode(line);
+                final Map<String, dynamic> response = jsonDecode(line);
                 if (response["status"] == "REJECTED") {
+                  final reason = response["reason"];
+                  final String errorMsg = reason == "OUT_OF_SPACE"
+                      ? "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}: Insufficient storage space."
+                      : reason == "HEADER_TOO_LARGE"
+                      ? "Too many files — the transfer metadata is too large. Please select a subfolder instead."
+                      : "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}.";
                   if (!readyCompleter.isCompleted) {
-                    final reason = response["reason"];
-                    String errorMsg = reason == "OUT_OF_SPACE"
-                        ? "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}: Insufficient storage space."
-                        : reason == "HEADER_TOO_LARGE"
-                        ? "Too many files — the transfer metadata is too large. Please select a subfolder instead."
-                        : "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}.";
+                    _wasRejectedByReceiver = true;
                     readyCompleter.completeError(errorMsg);
                   } else {
-                    // If already transferring, trigger a cancellation
-                    final reason = response["reason"];
-                    String errorMsg = reason == "OUT_OF_SPACE"
-                        ? "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}: Insufficient storage space."
-                        : reason == "HEADER_TOO_LARGE"
-                        ? "Too many files — the transfer metadata is too large. Please select a subfolder instead."
-                        : "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}.";
                     _isCancelled = true;
                     _wasRejectedByReceiver = true;
                     _cancelReason = errorMsg;
+                    if (!doneCompleter.isCompleted) {
+                      doneCompleter.completeError(errorMsg);
+                    }
                     socket?.destroy();
                   }
                 } else if (response["s"] == "r") {
@@ -273,7 +284,14 @@ class SenderController {
       );
 
       // Wait for authorization and readiness
-      onUpdate(TransferModel(status: "Waiting for Receiver to Accept..."));
+      onUpdate(
+        TransferModel(
+          status: "Waiting for Receiver to Accept...",
+          fileName: originalName,
+          totalSize: totalSizeBytes / 1024 / 1024,
+          phase: TransferPhase.waitingAuth,
+        ),
+      );
       try {
         await readyCompleter.future.timeout(
           const Duration(minutes: AppConstants.authTimeoutMinutes),
@@ -286,6 +304,18 @@ class SenderController {
         rethrow;
       }
 
+      // Measure speed from actual wire start (after user authorization)
+      stopwatch.start();
+      onUpdate(
+        TransferModel(
+          status: "Pumping Data...",
+          fileName: originalName,
+          totalSize: totalSizeBytes / 1024 / 1024,
+          progress: 0.0,
+          phase: TransferPhase.sending,
+        ),
+      );
+
       // Stream file data
       DateTime lastUpdate = DateTime.now();
       int bytesSinceUpdate = 0;
@@ -293,24 +323,25 @@ class SenderController {
 
       for (var f in fileList) {
         if (_isCancelled) throw "Transfer Cancelled";
-        File fileToRead = File(f["absPath"]);
-        int fileSize = f["size"] as int;
+        final File fileToRead = File(f["absPath"] as String);
+        final int fileSize = f["size"] as int;
+        int bytesSentForFile = 0;
 
         if (fileSize <= 64 * 1024) {
           // Fast path for small files (<= 64KB): read completely into memory
           try {
             final bytes = await fileToRead.readAsBytes();
             if (_isCancelled) throw "Transfer Cancelled";
+            if (bytes.length != fileSize) {
+              throw "File '${p.basename(f["absPath"] as String)}' changed on disk during transfer.";
+            }
             socket.add(bytes);
+            bytesSentForFile = bytes.length;
             sentBytes += bytes.length;
             bytesSinceUpdate += bytes.length;
             bytesBuffered += bytes.length;
 
             if (bytesBuffered >= AppConstants.socketFlushThresholdBytes) {
-              // Awaited flush: provides backpressure so the disk read loop
-              // runs at network speed, not disk speed. Without this, a fast
-              // UFS device would read the entire file in <500ms before any
-              // onUpdate fires, causing the snapshot/stutter UI bug.
               await socket.flush();
               bytesBuffered = 0;
             }
@@ -328,14 +359,14 @@ class SenderController {
           try {
             await for (var chunk in reader) {
               if (_isCancelled) throw "Transfer Cancelled";
+              bytesSentForFile += chunk.length;
+              if (bytesSentForFile > fileSize) {
+                throw "File '${p.basename(f["absPath"] as String)}' grew on disk during transfer.";
+              }
               try {
                 socket.add(chunk);
                 bytesBuffered += chunk.length;
                 if (bytesBuffered >= AppConstants.socketFlushThresholdBytes) {
-                  // Awaited flush: provides backpressure so the disk read loop
-                  // runs at network speed, not disk speed. Without this, a fast
-                  // UFS device would read the entire file in <500ms before any
-                  // onUpdate fires, causing the snapshot/stutter UI bug.
                   await socket.flush();
                   bytesBuffered = 0;
                 }
@@ -356,23 +387,27 @@ class SenderController {
               final now = DateTime.now();
               final elapsedMs = now.difference(lastUpdate).inMilliseconds;
               if (elapsedMs > AppConstants.speedUpdateIntervalMs) {
-                double speed =
+                final double speed =
                     (bytesSinceUpdate / 1024 / 1024) / (elapsedMs / 1000.0);
                 onUpdate(
                   TransferModel(
                     speed: speed,
                     transferred: sentBytes / 1024 / 1024,
-                    fileName: p.basename(f["path"]),
+                    fileName: p.basename(f["path"] as String),
                     status: "Pumping Data...",
                     totalSize: totalSizeBytes / 1024 / 1024,
                     progress: totalSizeBytes > 0
                         ? sentBytes / totalSizeBytes
                         : 0.0,
+                    phase: TransferPhase.sending,
                   ),
                 );
                 bytesSinceUpdate = 0;
                 lastUpdate = now;
               }
+            }
+            if (bytesSentForFile != fileSize) {
+              throw "File '${p.basename(f["absPath"] as String)}' changed on disk during transfer.";
             }
           } finally {}
         }
@@ -381,16 +416,17 @@ class SenderController {
         final now = DateTime.now();
         final elapsedMs = now.difference(lastUpdate).inMilliseconds;
         if (elapsedMs > AppConstants.speedUpdateIntervalMs) {
-          double speed =
+          final double speed =
               (bytesSinceUpdate / 1024 / 1024) / (elapsedMs / 1000.0);
           onUpdate(
             TransferModel(
               speed: speed,
               transferred: sentBytes / 1024 / 1024,
-              fileName: p.basename(f["path"]),
+              fileName: p.basename(f["path"] as String),
               status: "Pumping Data...",
               totalSize: totalSizeBytes / 1024 / 1024,
               progress: totalSizeBytes > 0 ? sentBytes / totalSizeBytes : 0.0,
+              phase: TransferPhase.sending,
             ),
           );
           bytesSinceUpdate = 0;
@@ -400,12 +436,13 @@ class SenderController {
 
       await socket.flush();
 
-      // Stop the stopwatch immediately after bytes are sent for accurate speed
+      // Stop the stopwatch immediately after payload bytes are flushed
       stopwatch.stop();
-      double finalMB = totalSizeBytes / 1024 / 1024;
-      double avg = finalMB / (stopwatch.elapsedMilliseconds / 1000);
+      final double finalMB = totalSizeBytes / 1024 / 1024;
+      final double elapsedSec = stopwatch.elapsedMilliseconds / 1000.0;
+      final double avg = elapsedSec > 0.001 ? (finalMB / elapsedSec) : 0.0;
 
-      // Wait for DONE status with timeout
+      // Wait for receiver confirmation that disk finalize succeeded
       onUpdate(
         TransferModel(
           status: "Finalizing... Saving to disk",
@@ -415,28 +452,19 @@ class SenderController {
           totalSize: finalMB,
           avgSpeed: avg.toStringAsFixed(2),
           progress: 1.0,
+          phase: TransferPhase.finalizing,
         ),
       );
 
-      try {
-        await doneCompleter.future.timeout(
-          const Duration(seconds: 30),
-          onTimeout: () {
-            if (sentBytes >= totalSizeBytes) {
-              return; // Ignore timeout if all bytes were sent
-            }
-            throw "Timeout waiting for Receiver to finalize disk write.";
-          },
-        );
-      } catch (e) {
-        // If the receiver cancelled/rejected during the finalization phase, we should still report it
-        if (_isCancelled) throw "Transfer Cancelled";
+      await doneCompleter.future.timeout(
+        const Duration(seconds: 60),
+        onTimeout: () {
+          throw "Timeout waiting for Receiver to finalize disk write.";
+        },
+      );
 
-        if (sentBytes < totalSizeBytes) {
-          rethrow;
-        }
-      }
-
+      await socketSub.cancel();
+      socketSub = null;
       await socket.close();
 
       onUpdate(
@@ -445,80 +473,106 @@ class SenderController {
           transferred: finalMB,
           totalSize: finalMB,
           avgSpeed: avg.toStringAsFixed(2),
-          totalTime: (stopwatch.elapsedMilliseconds / 1000).toStringAsFixed(1),
-          fileName: paths.length == 1 ? p.basename(paths[0]) : "Multiple Items",
+          totalTime: elapsedSec.toStringAsFixed(1),
+          fileName: originalName,
           progress: 1.0,
+          phase: TransferPhase.done,
         ),
       );
     } on PathAccessException catch (e) {
-      // This should rarely happen now since we skip bad files inline.
-      // Fall through to the generic handler for any unexpected top-level denial.
-      onUpdate(TransferModel(status: "Error: $e"));
+      final msg = "Error: $e";
+      onUpdate(
+        TransferModel(
+          status: msg,
+          fileName: originalName ?? "",
+          phase: TransferPhase.failed,
+        ),
+      );
+      throw TransferSendException(msg, TransferPhase.failed);
     } catch (e) {
+      late final String terminalStatus;
+      late final TransferPhase terminalPhase;
+
       if (_isCancelled || e.toString().contains("Transfer Cancelled")) {
-        String status = _wasRejectedByReceiver
-            ? "Transfer cancelled by ${_currentTargetDeviceName ?? 'Receiver'}"
-            : _cancelReason ?? "Transfer Cancelled";
-        onUpdate(
-          TransferModel(
-            status: status,
-            transferred: sentBytes / 1024 / 1024,
-            totalSize: totalSizeBytes / 1024 / 1024,
-            progress: totalSizeBytes > 0 ? sentBytes / totalSizeBytes : 0.0,
-            fileName: originalName ?? "",
-          ),
-        );
+        terminalStatus = _wasRejectedByReceiver
+            ? (_cancelReason ??
+                "Transfer cancelled by ${_currentTargetDeviceName ?? 'Receiver'}")
+            : (_cancelReason ?? "Transfer Cancelled");
+        terminalPhase = TransferPhase.cancelled;
+      } else if (_wasRejectedByReceiver) {
+        terminalStatus = e.toString();
+        terminalPhase = TransferPhase.cancelled;
       } else if (e.toString().contains("Receiver disconnected") ||
           e.toString().contains("Transfer Timeout")) {
-        onUpdate(
-          TransferModel(
-            status:
-                "Transfer cancelled by ${_currentTargetDeviceName ?? 'the other device'}",
-            transferred: sentBytes / 1024 / 1024,
-            totalSize: totalSizeBytes / 1024 / 1024,
-            progress: totalSizeBytes > 0 ? sentBytes / totalSizeBytes : 0.0,
-            fileName: originalName ?? "",
-          ),
-        );
+        terminalStatus =
+            "Transfer cancelled by ${_currentTargetDeviceName ?? 'the other device'}";
+        terminalPhase = TransferPhase.cancelled;
       } else if (e is SocketException) {
-        onUpdate(
-          TransferModel(
-            status: _mapSocketError(e),
-            transferred: sentBytes / 1024 / 1024,
-            totalSize: totalSizeBytes / 1024 / 1024,
-            progress: totalSizeBytes > 0 ? sentBytes / totalSizeBytes : 0.0,
-            fileName: originalName ?? "",
-          ),
-        );
+        terminalStatus = _mapSocketError(e);
+        terminalPhase = _isCancelled || _isSocketPeerReset(e)
+            ? TransferPhase.cancelled
+            : TransferPhase.failed;
       } else if (e is TimeoutException) {
-        onUpdate(
-          TransferModel(
-            status:
-                "Device not found. Please double-check the IP address and ensure both devices are on the exact same Wi-Fi/Hotspot.",
-            transferred: sentBytes / 1024 / 1024,
-            totalSize: totalSizeBytes / 1024 / 1024,
-            progress: totalSizeBytes > 0 ? sentBytes / totalSizeBytes : 0.0,
-            fileName: originalName ?? "",
-          ),
-        );
+        terminalStatus =
+            "Device not found. Please double-check the IP address and ensure both devices are on the exact same Wi-Fi/Hotspot.";
+        terminalPhase = TransferPhase.failed;
       } else {
-        onUpdate(
-          TransferModel(
-            status: "Error: $e",
-            transferred: sentBytes / 1024 / 1024,
-            totalSize: totalSizeBytes / 1024 / 1024,
-            progress: totalSizeBytes > 0 ? sentBytes / totalSizeBytes : 0.0,
-            fileName: originalName ?? "",
-          ),
-        );
+        terminalStatus = "Error: $e";
+        terminalPhase = TransferPhase.failed;
       }
+
+      onUpdate(
+        TransferModel(
+          status: terminalStatus,
+          transferred: sentBytes / 1024 / 1024,
+          totalSize: totalSizeBytes / 1024 / 1024,
+          progress: totalSizeBytes > 0 ? sentBytes / totalSizeBytes : 0.0,
+          fileName: originalName ?? "",
+          phase: terminalPhase,
+        ),
+      );
+      throw TransferSendException(terminalStatus, terminalPhase);
     } finally {
+      try {
+        await socketSub?.cancel();
+      } catch (_) {}
       try {
         socket?.destroy();
       } catch (_) {}
       _activeSocket = null;
       _isCancelled = false;
     }
+  }
+
+  /// Deduplicates relative metadata paths case-insensitively within a single batch
+  /// (plan T-009) so case-insensitive filesystems (Windows/Android) never
+  /// overwrite files like `Report.pdf` and `report.pdf`.
+  static void deduplicateRelativePaths(List<Map<String, dynamic>> fileList) {
+    final seenRelPathsLower = <String>{};
+    for (final entry in fileList) {
+      final rel = entry['path'] as String;
+      if (seenRelPathsLower.add(rel.toLowerCase())) continue;
+      final parentIndex = rel.lastIndexOf('/');
+      final parent = parentIndex >= 0 ? rel.substring(0, parentIndex + 1) : '';
+      final base = p.posix.basenameWithoutExtension(rel);
+      final ext = p.posix.extension(rel);
+      int counter = 1;
+      String candidate;
+      do {
+        candidate = '$parent$base ($counter)$ext';
+        counter++;
+      } while (seenRelPathsLower.contains(candidate.toLowerCase()));
+      entry['path'] = candidate;
+      seenRelPathsLower.add(candidate.toLowerCase());
+    }
+  }
+
+  static bool _isSocketPeerReset(SocketException e) {
+    final osError = e.osError?.errorCode;
+    return osError == 104 ||
+        osError == 10054 ||
+        osError == 32 ||
+        e.message.toLowerCase().contains('connection reset by peer');
   }
 
   /// Cancels an active send operation.

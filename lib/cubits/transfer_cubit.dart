@@ -30,6 +30,8 @@ class TransferCubit extends Cubit<TransferState> {
   Completer<bool>? _notifCompleter;
   StreamSubscription? _discoverySubscription;
   StreamSubscription? _connectivitySubscription;
+  bool _isStartingReceiver = false;
+  Future<void> _receiverUpdateChain = Future<void>.value();
 
   TransferCubit() : super(TransferState(model: TransferModel())) {
     FlutterForegroundTask.addTaskDataCallback(_onReceiveTaskData);
@@ -56,8 +58,10 @@ class TransferCubit extends Cubit<TransferState> {
         }
       }
 
-      // If receiver was active, restart it to bind to new IP
-      if (state.isReceiving) {
+      // If receiver was active (but not mid-transfer), restart it to bind to new IP
+      if (state.isReceiving &&
+          !state.isReceivingActive &&
+          !_isStartingReceiver) {
         startReceiver();
       }
     });
@@ -393,163 +397,179 @@ class TransferCubit extends Cubit<TransferState> {
   }
 
   Future<void> startReceiver() async {
-    if (state.receiveFolder == null) return;
+    if (state.receiveFolder == null || _isStartingReceiver) return;
+    _isStartingReceiver = true;
 
-    if (!await _prepareRequirements()) return;
+    try {
+      if (!await _prepareRequirements()) return;
 
-    emit(state.copyWith(isReceiving: true, isTransferring: false));
-    discoveryService.triggerBroadcast(); // Signal other devices immediately
-    await _startForegroundService(
-      AppConstants.appName,
-      "Waiting for incoming files...",
-      button: const NotificationButton(
-        id: 'stopReceivingButton',
-        text: 'Stop Receiving',
-      ),
-    );
+      emit(state.copyWith(isReceiving: true, isTransferring: false));
+      discoveryService.triggerBroadcast(); // Signal other devices immediately
+      await _startForegroundService(
+        AppConstants.appName,
+        "Waiting for incoming files...",
+        button: const NotificationButton(
+          id: 'stopReceivingButton',
+          text: 'Stop Receiving',
+        ),
+      );
 
-    _receiver.startReceiver(
-      saveDirectory: state.receiveFolder!,
-      deviceName: state.deviceName,
-      onUpdate: (model) async {
-        // Plan T-002: the receiver exposes a machine-readable phase; the
-        // status string is display-only from now on.
-        final TransferPhase phase = _receiver.currentPhase;
-        final bool isBusy = phase == TransferPhase.receiving ||
-            phase == TransferPhase.finalizing;
+      _receiver.startReceiver(
+        saveDirectory: state.receiveFolder!,
+        deviceName: state.deviceName,
+        onAuthDismissed: () {
+          if (!isClosed && state.authRequest != null) {
+            emit(state.copyWith(clearAuthRequest: true));
+          }
+          if (_authCompleter != null && !_authCompleter!.isCompleted) {
+            _authCompleter!.complete(false);
+          }
+        },
+        onUpdate: (model) {
+          // Capture phase synchronously before async queue executes
+          final TransferPhase phase = model.phase != TransferPhase.idle
+              ? model.phase
+              : _receiver.currentPhase;
+          _receiverUpdateChain = _receiverUpdateChain.then((_) async {
+            if (isClosed) return;
+            final bool isBusy = phase == TransferPhase.receiving ||
+                phase == TransferPhase.finalizing;
 
-        final bool wasActive = state.isReceivingActive;
+            final bool wasActive = state.isReceivingActive;
 
-        // Write log when transitioning from busy to idle (await it first!)
-        if (wasActive && !isBusy) {
-          final String status = phase == TransferPhase.done
-              ? "success"
-              : (phase == TransferPhase.cancelled ? "cancelled" : "failed");
+            // Write log when transitioning from busy to idle (serialized cleanly)
+            if (wasActive && !isBusy) {
+              final String status = phase == TransferPhase.done
+                  ? "success"
+                  : (phase == TransferPhase.cancelled ? "cancelled" : "failed");
 
-          final List<dynamic> filesList =
-              _receiver.lastReceivedMetadata?["files"] ?? [];
-          if (filesList.isNotEmpty) {
-            final Map<String, double> items = {};
-            for (final f in filesList) {
-              final String pathStr = f["path"] as String;
-              final int size = f["size"] as int;
-              // Split path and take first element (the top-level file or directory name)
-              final String topLevelName = p.split(pathStr).first;
-              items[topLevelName] =
-                  (items[topLevelName] ?? 0.0) + (size / 1024 / 1024);
+              final List<dynamic> filesList =
+                  _receiver.lastReceivedMetadata?["files"] ?? [];
+              if (filesList.isNotEmpty) {
+                final Map<String, double> items = {};
+                for (final f in filesList) {
+                  final String pathStr = f["path"] as String;
+                  final int size = f["size"] as int;
+                  final String topLevelName = p.posix.split(pathStr).first;
+                  items[topLevelName] =
+                      (items[topLevelName] ?? 0.0) + (size / 1024 / 1024);
+                }
+
+                final List<HistoryEntryInput> entries = [];
+                for (final entry in items.entries) {
+                  entries.add(
+                    HistoryEntryInput(
+                      fileName: entry.key,
+                      fileSizeMB: entry.value,
+                      direction: 'receive',
+                      status: status,
+                      localPath: status == 'success'
+                          ? p.join(state.receiveFolder!, entry.key)
+                          : null,
+                    ),
+                  );
+                }
+                await HistoryService.addEntries(entries);
+              } else {
+                if (model.fileName.isNotEmpty && model.totalSize > 0) {
+                  await HistoryService.addEntry(
+                    fileName: model.fileName,
+                    fileSizeMB: model.totalSize,
+                    direction: 'receive',
+                    status: status,
+                    localPath: status == 'success' ? state.receiveFolder : null,
+                  );
+                }
+              }
             }
 
-            final List<HistoryEntryInput> entries = [];
-            for (final entry in items.entries) {
-              entries.add(
-                HistoryEntryInput(
-                  fileName: entry.key,
-                  fileSizeMB: entry.value,
-                  direction: 'receive',
-                  status: status,
-                  localPath: status == 'success'
-                      ? p.join(state.receiveFolder!, entry.key)
-                      : null,
+            if (!isClosed) {
+              emit(
+                state.copyWith(
+                  model: model,
+                  isReceivingActive: isBusy,
+                  isLastTransferIncoming: isBusy
+                      ? true
+                      : state.isLastTransferIncoming,
+                  showProgressView: isBusy ? true : state.showProgressView,
                 ),
               );
             }
-            await HistoryService.addEntries(entries);
-          } else {
-            if (model.fileName.isNotEmpty && model.totalSize > 0) {
-              await HistoryService.addEntry(
-                fileName: model.fileName,
-                fileSizeMB: model.totalSize,
-                direction: 'receive',
-                status: status,
-                localPath: status == 'success' ? state.receiveFolder : null,
+
+            if (Platform.isAndroid && state.isReceiving) {
+              String title = isBusy
+                  ? 'Receiving: ${model.fileName}'
+                  : AppConstants.appName;
+              String text = isBusy
+                  ? '${model.transferred.toStringAsFixed(2)} MB (${(model.progress * 100).toInt()}%) - ${model.speed.toStringAsFixed(1)} MB/s'
+                  : model.status;
+
+              FlutterForegroundTask.updateService(
+                notificationTitle: title,
+                notificationText: text,
+                notificationButtons: [
+                  const NotificationButton(
+                    id: 'stopReceivingButton',
+                    text: 'Stop Receiving',
+                  ),
+                ],
               );
             }
+          }).catchError((_) {});
+        },
+        onRequestAuth: (senderIp, senderName, count, size) {
+          if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+            windowManager.isMinimized().then((isMinimized) async {
+              if (isMinimized) await windowManager.restore();
+              await windowManager.setAlwaysOnTop(true);
+              await windowManager.show();
+              await windowManager.focus();
+              await Future.delayed(const Duration(milliseconds: 100));
+              await windowManager.setAlwaysOnTop(false);
+            });
+          } else if (Platform.isAndroid) {
+            FlutterForegroundTask.wakeUpScreen();
+            FlutterForegroundTask.launchApp();
           }
-        }
 
-        if (!isClosed) {
+          _authCompleter = Completer<bool>();
           emit(
             state.copyWith(
-              model: model,
-              isReceivingActive: isBusy,
-              isLastTransferIncoming: isBusy
-                  ? true
-                  : state.isLastTransferIncoming,
-              showProgressView: isBusy ? true : state.showProgressView,
-            ),
-          );
-        }
-
-        if (Platform.isAndroid && state.isReceiving) {
-          String title = isBusy
-              ? 'Receiving: ${model.fileName}'
-              : AppConstants.appName;
-          String text = isBusy
-              ? '${model.transferred.toStringAsFixed(2)} MB (${(model.progress * 100).toInt()}%) - ${model.speed.toStringAsFixed(1)} MB/s'
-              : model.status;
-
-          FlutterForegroundTask.updateService(
-            notificationTitle: title,
-            notificationText: text,
-            notificationButtons: [
-              const NotificationButton(
-                id: 'stopReceivingButton',
-                text: 'Stop Receiving',
+              authRequest: AuthRequest(
+                senderIp: senderIp,
+                senderName: senderName,
+                fileCount: count,
+                totalSizeMB: size,
               ),
-            ],
-          );
-        }
-      },
-      onRequestAuth: (senderIp, senderName, count, size) {
-        if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
-          windowManager.isMinimized().then((isMinimized) async {
-            if (isMinimized) await windowManager.restore();
-            await windowManager.setAlwaysOnTop(true);
-            await windowManager.show();
-            await windowManager.focus();
-            await Future.delayed(const Duration(milliseconds: 100));
-            await windowManager.setAlwaysOnTop(false);
-          });
-        } else if (Platform.isAndroid) {
-          FlutterForegroundTask.wakeUpScreen();
-          FlutterForegroundTask.launchApp();
-        }
-
-        _authCompleter = Completer<bool>();
-        emit(
-          state.copyWith(
-            authRequest: AuthRequest(
-              senderIp: senderIp,
-              senderName: senderName,
-              fileCount: count,
-              totalSizeMB: size,
             ),
-          ),
-        );
-        return _authCompleter!.future;
-      },
-      onDone: () {
-        if (state.isReceiving) {
-          if (Platform.isAndroid) {
-            FlutterForegroundTask.updateService(
-              notificationTitle: AppConstants.appName,
-              notificationText: 'Receiver idle...',
-              notificationButtons: [
-                const NotificationButton(
-                  id: 'stopReceivingButton',
-                  text: 'Stop Receiving',
-                ),
-              ],
-            );
+          );
+          return _authCompleter!.future;
+        },
+        onDone: () {
+          if (state.isReceiving) {
+            if (Platform.isAndroid) {
+              FlutterForegroundTask.updateService(
+                notificationTitle: AppConstants.appName,
+                notificationText: 'Receiver idle...',
+                notificationButtons: [
+                  const NotificationButton(
+                    id: 'stopReceivingButton',
+                    text: 'Stop Receiving',
+                  ),
+                ],
+              );
+            }
           }
-        }
 
-        // Ensure UI reflects that receiver is no longer active
-        if (!isClosed) {
-          emit(state.copyWith(isReceivingActive: false));
-        }
-      },
-    );
+          // Ensure UI reflects that receiver is no longer active
+          if (!isClosed) {
+            emit(state.copyWith(isReceivingActive: false));
+          }
+        },
+      );
+    } finally {
+      _isStartingReceiver = false;
+    }
   }
 
   void resolveAuth(bool accept) {
@@ -677,6 +697,11 @@ class TransferCubit extends Cubit<TransferState> {
     } catch (e) {
       emit(state.copyWith(errorMessage: "Error picking files: $e"));
     } finally {
+      if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+        try {
+          await windowManager.focus();
+        } catch (_) {}
+      }
       emit(state.copyWith(isAddingFiles: false));
     }
   }
@@ -691,6 +716,11 @@ class TransferCubit extends Cubit<TransferState> {
     } catch (e) {
       emit(state.copyWith(errorMessage: "Error picking folder: $e"));
     } finally {
+      if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+        try {
+          await windowManager.focus();
+        } catch (_) {}
+      }
       emit(state.copyWith(isAddingFiles: false));
     }
   }
@@ -794,14 +824,16 @@ class TransferCubit extends Cubit<TransferState> {
         _stopForegroundService();
       }
     } catch (e) {
+      final TransferPhase terminalPhase = e is TransferSendException
+          ? e.phase
+          : (state.model.phase == TransferPhase.cancelled
+                ? TransferPhase.cancelled
+                : TransferPhase.failed);
+      final String status =
+          terminalPhase == TransferPhase.cancelled ? "cancelled" : "failed";
+
       // Log failure/cancellation individually for each item atomically
       if (itemsToSend.isNotEmpty) {
-        final String errorStr = e.toString().toLowerCase();
-        final String status =
-            errorStr.contains("cancelled") || errorStr.contains("abort")
-            ? "cancelled"
-            : "failed";
-
         final List<HistoryEntryInput> entries = [];
         for (final path in itemsToSend) {
           final double sizeMB = await _getPathSizeMB(path);
@@ -823,17 +855,24 @@ class TransferCubit extends Cubit<TransferState> {
       }
 
       if (!isClosed) {
+        final TransferModel nextModel = state.model.phase == terminalPhase
+            ? state.model
+            : TransferModel(
+                status: "$errorMsg. Ready & Waiting...",
+                transferred: state.model.transferred,
+                totalSize: state.model.totalSize,
+                progress: state.model.progress,
+                fileName: state.model.fileName,
+                phase: terminalPhase,
+              );
         emit(
           state.copyWith(
             isTransferring: false,
-            errorMessage: errorMsg,
-            model: TransferModel(
-              status: "$errorMsg. Ready & Waiting...",
-              transferred: state.model.transferred,
-              totalSize: state.model.totalSize,
-              progress: state.model.progress,
-              fileName: state.model.fileName,
-            ),
+            errorMessage: terminalPhase == TransferPhase.failed &&
+                    !state.showProgressView
+                ? errorMsg
+                : null,
+            model: nextModel,
           ),
         );
       }
@@ -880,6 +919,7 @@ class TransferCubit extends Cubit<TransferState> {
           totalSize: state.model.totalSize,
           progress: state.model.progress,
           fileName: state.model.fileName,
+          phase: TransferPhase.cancelled,
         ),
       ),
     );
@@ -903,16 +943,20 @@ class TransferCubit extends Cubit<TransferState> {
 
   void cancelReceiving({String? reason}) {
     _receiver.cancelActiveTransfer(reason: reason);
+    if (state.authRequest != null) {
+      resolveAuth(false);
+    }
     emit(
       state.copyWith(
-        isReceivingActive: false,
         clearFeedback: true,
+        clearAuthRequest: true,
         model: TransferModel(
           status: reason ?? "Transfer Cancelled",
           transferred: state.model.transferred,
           totalSize: state.model.totalSize,
           progress: state.model.progress,
           fileName: state.model.fileName,
+          phase: TransferPhase.cancelled,
         ),
       ),
     );

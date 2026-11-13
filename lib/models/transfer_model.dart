@@ -8,6 +8,9 @@ class TransferModel {
   String? totalTime;
   double progress;
 
+  /// Machine-readable phase of this transfer update (plan T-002).
+  TransferPhase phase;
+
   /// Non-null only during the analyze phase (before the transfer starts).
   /// When set, the UI replaces the speed display with a file-count indicator.
   int? analyzeCount;
@@ -21,16 +24,21 @@ class TransferModel {
     this.avgSpeed,
     this.totalTime,
     this.progress = 0.0,
+    this.phase = TransferPhase.idle,
     this.analyzeCount,
   });
 }
 
-/// Machine-readable lifecycle of a receiver-side transfer (plan T-002).
+/// Machine-readable lifecycle of a transfer (plan T-002).
 ///
-/// Populated by [ReceiverController] at each control-flow boundary so the
-/// cubit no longer infers state from human-readable status strings.
+/// Populated by [SenderController] and [ReceiverController] at each
+/// control-flow boundary so the cubit and UI never infer state from
+/// human-readable status strings.
 enum TransferPhase {
   idle,
+  analyzing,
+  waitingAuth,
+  sending,
   receiving,
   finalizing,
   done,
