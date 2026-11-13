@@ -9,9 +9,10 @@ import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import kotlinx.coroutines.*
+import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
-import java.util.UUID
+import java.io.IOException
 
 private const val TAG = "NativeShareHandler"
 
@@ -116,40 +117,49 @@ class NativeShareHandler(private val context: Context, messenger: BinaryMessenge
             isFirstIntent = false
         }
         
-        shareScope.launch {
+        shareJob = shareScope.launch {
             val shareCacheDir = File(context.externalCacheDir ?: context.cacheDir, "daphq_shared")
             if (!shareCacheDir.exists()) shareCacheDir.mkdirs()
+            val canonicalCachePrefix = shareCacheDir.canonicalPath + File.separator
 
             uris.forEach { uri ->
                 if (!isActive) return@launch // Stop processing if job was cancelled
 
-                val originalName = try {
+                val rawName = try {
                     getFileName(uri) ?: "shared_file"
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to resolve shared file name: $e")
                     "shared_file"
                 }
+                val originalName = sanitizeFileName(rawName)
 
+                var destFile: File? = null
                 try {
                     // Use deterministic hash of the URI to naturally deduplicate files shared multiple times
                     val uriHash = uri.toString().hashCode().toString(16)
                     val fileName = "${uriHash}_$originalName"
-                    val destFile = File(shareCacheDir, fileName)
+                    val candidate = File(shareCacheDir, fileName)
+                    if (!candidate.canonicalPath.startsWith(canonicalCachePrefix)) {
+                        throw SecurityException("Unsafe shared filename rejected: $originalName")
+                    }
+                    destFile = candidate
 
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        FileOutputStream(destFile).use { output ->
-                            input.copyTo(output)
+                    val input = context.contentResolver.openInputStream(uri)
+                        ?: throw IOException("Unable to open input stream for shared URI")
+                    input.use { stream ->
+                        FileOutputStream(candidate).use { output ->
+                            stream.copyTo(output)
                         }
                     }
 
                     if (!isActive) {
-                        destFile.delete() // Clean up if cancelled during copy
+                        candidate.delete() // Clean up if cancelled during copy
                         return@launch
                     }
 
                     // Send path to Flutter immediately
                     withContext(Dispatchers.Main) {
-                        val path = destFile.absolutePath
+                        val path = candidate.absolutePath
                         if (eventSink != null) {
                             eventSink?.success(path)
                         } else {
@@ -159,12 +169,17 @@ class NativeShareHandler(private val context: Context, messenger: BinaryMessenge
                         }
                     }
                 } catch (e: Exception) {
+                    try {
+                        destFile?.delete()
+                    } catch (_: Exception) {}
                     // Plan T-015: a failed copy must reach the user — the
                     // "done" event alone would silently drop this file.
                     Log.w(TAG, "Failed to copy shared file $originalName: $e")
+                    val errorEvent = JSONObject().apply {
+                        put("status", "error")
+                        put("name", originalName)
+                    }.toString()
                     withContext(Dispatchers.Main) {
-                        val safeName = originalName.replace("\"", "'")
-                        val errorEvent = "{\"status\": \"error\", \"name\": \"$safeName\"}"
                         if (eventSink != null) {
                             eventSink?.success(errorEvent)
                         } else {
@@ -178,16 +193,28 @@ class NativeShareHandler(private val context: Context, messenger: BinaryMessenge
 
             // Notify Flutter that streaming is done
             if (isActive) {
+                val doneEvent = JSONObject().apply {
+                    put("status", "done")
+                }.toString()
                 withContext(Dispatchers.Main) {
                     if (eventSink != null) {
-                        eventSink?.success("{\"status\": \"done\"}")
+                        eventSink?.success(doneEvent)
                     } else {
                         synchronized(pendingPaths) {
-                            pendingPaths.add("{\"status\": \"done\"}")
+                            pendingPaths.add(doneEvent)
                         }
                     }
                 }
             }
+        }
+    }
+
+    private fun sanitizeFileName(name: String): String {
+        val stripped = name.replace(Regex("[/\\\\\\x00]"), "_").trim()
+        return if (stripped.isEmpty() || stripped == "." || stripped == "..") {
+            "shared_file"
+        } else {
+            stripped
         }
     }
 

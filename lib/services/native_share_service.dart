@@ -15,11 +15,12 @@ class NativeShareService {
 
   static final List<String> _buffer = [];
   static bool _isFlushing = false;
+  static StreamSubscription<dynamic>? _subscription;
 
   static void init(BuildContext context) {
     final cubit = context.read<TransferCubit>();
-
-    _stream.receiveBroadcastStream().listen(
+    _subscription?.cancel();
+    _subscription = _stream.receiveBroadcastStream().listen(
       (dynamic event) {
         if (event is String) {
           if (event.startsWith('{') && event.contains('"status"')) {
@@ -75,5 +76,11 @@ class NativeShareService {
     } catch (e) {
       debugPrint('NativeShareService Cancel Error: $e');
     }
+  }
+
+  static Future<void> dispose() async {
+    _buffer.clear();
+    await _subscription?.cancel();
+    _subscription = null;
   }
 }

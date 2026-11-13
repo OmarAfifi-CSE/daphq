@@ -34,6 +34,6 @@ class SharingService {
   }
 
   static void dispose() {
-    // Native streams handle their own cleanup
+    NativeShareService.dispose();
   }
 }
