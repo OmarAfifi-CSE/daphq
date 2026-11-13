@@ -125,8 +125,13 @@ class DiscoveryService {
     _broadcastTimer?.cancel();
     _cleanupTimer?.cancel();
     _watchdogTimer?.cancel();
+    _connectivityPollTimer?.cancel();
     await _connectivitySubscription?.cancel();
-    _reopenTimer = _broadcastTimer = _cleanupTimer = _watchdogTimer = null;
+    _reopenTimer =
+        _broadcastTimer =
+        _cleanupTimer =
+        _watchdogTimer =
+        _connectivityPollTimer = null;
     _connectivitySubscription = null;
     _safeCloseSocket();
   }
@@ -162,6 +167,44 @@ class DiscoveryService {
     await _openSocket(deviceName);
   }
 
+  static bool _isVirtualInterfaceName(String rawName) {
+    final name = rawName.toLowerCase();
+    const virtualKeywords = [
+      'vbox',
+      'vmware',
+      'wsl',
+      'veth',
+      'virtual',
+      'default switch',
+      'pseudo',
+      'teredo',
+      'bluetooth',
+      'tunnel',
+      'loopback',
+      'host-only',
+      'npcap',
+      'hyper-v',
+      'microsoft',
+      'wan miniport',
+      'agile',
+      'isatap',
+      'ras',
+      'vmnet',
+      'docker',
+      'tap',
+      'tun',
+    ];
+    return virtualKeywords.any(name.contains);
+  }
+
+  static bool _isUsableAddress(InternetAddress addr) {
+    final ip = addr.address;
+    return !addr.isLoopback &&
+        !ip.startsWith('169.254') &&
+        !ip.startsWith('127.') &&
+        !ip.startsWith('0.');
+  }
+
   Future<bool> _hasLocalNetwork() async {
     try {
       final interfaces = await NetworkInterface.list(
@@ -171,77 +214,17 @@ class DiscoveryService {
 
       if (!Platform.isWindows) {
         return interfaces.any((iface) {
-          final name = iface.name.toLowerCase();
-          final isVirtual =
-              name.contains('vbox') ||
-              name.contains('vmware') ||
-              name.contains('wsl') ||
-              name.contains('veth') ||
-              name.contains('virtual') ||
-              name.contains('default switch') ||
-              name.contains('pseudo') ||
-              name.contains('teredo') ||
-              name.contains('bluetooth') ||
-              name.contains('tunnel') ||
-              name.contains('loopback') ||
-              name.contains('host-only') ||
-              name.contains('npcap') ||
-              name.contains('hyper-v') ||
-              name.contains('microsoft') ||
-              name.contains('wan miniport') ||
-              name.contains('agile') ||
-              name.contains('isatap') ||
-              name.contains('ras') ||
-              name.contains('vmnet') ||
-              name.contains('docker') ||
-              name.contains('tap') ||
-              name.contains('tun');
-          if (isVirtual) return false;
-          return iface.addresses.any((addr) {
-            final ip = addr.address;
-            return !addr.isLoopback &&
-                !ip.startsWith('169.254') &&
-                !ip.startsWith('127.') &&
-                !ip.startsWith('0.');
-          });
+          if (_isVirtualInterfaceName(iface.name)) return false;
+          return iface.addresses.any(_isUsableAddress);
         });
       }
 
       for (final iface in interfaces) {
-        final name = iface.name.toLowerCase();
-        final isVirtual =
-            name.contains('vbox') ||
-            name.contains('vmware') ||
-            name.contains('wsl') ||
-            name.contains('veth') ||
-            name.contains('virtual') ||
-            name.contains('default switch') ||
-            name.contains('pseudo') ||
-            name.contains('teredo') ||
-            name.contains('bluetooth') ||
-            name.contains('tunnel') ||
-            name.contains('loopback') ||
-            name.contains('host-only') ||
-            name.contains('npcap') ||
-            name.contains('hyper-v') ||
-            name.contains('microsoft') ||
-            name.contains('wan miniport') ||
-            name.contains('agile') ||
-            name.contains('isatap') ||
-            name.contains('ras') ||
-            name.contains('vmnet') ||
-            name.contains('docker') ||
-            name.contains('tap') ||
-            name.contains('tun');
-
-        if (isVirtual) continue;
+        if (_isVirtualInterfaceName(iface.name)) continue;
 
         for (final addr in iface.addresses) {
+          if (!_isUsableAddress(addr)) continue;
           final ip = addr.address;
-          if (addr.isLoopback) continue;
-          if (ip.startsWith('169.254')) continue;
-          if (ip.startsWith('127.')) continue;
-          if (ip.startsWith('0.')) continue;
 
           final parts = ip.split('.');
           if (parts.length != 4) continue;
@@ -408,9 +391,12 @@ class DiscoveryService {
         return;
       }
 
+      final existing = _discoveredDevices[ip];
       final device = DiscoveryModel.fromJson(json, ip);
       _discoveredDevices[ip] = device;
-      _devicesController.add(_discoveredDevices.values.toList());
+      if (existing == null || existing.name != device.name) {
+        _devicesController.add(_discoveredDevices.values.toList());
+      }
     } catch (_) {}
   }
 
@@ -435,15 +421,7 @@ class DiscoveryService {
       );
 
       for (final interface in interfaces) {
-        final name = interface.name.toLowerCase();
-        if (name.contains('vbox') ||
-            name.contains('vmware') ||
-            name.contains('wsl') ||
-            name.contains('veth') ||
-            name.contains('virtual') ||
-            name.contains('default switch') ||
-            name.contains('pseudo') ||
-            name.contains('teredo')) {
+        if (_isVirtualInterfaceName(interface.name)) {
           continue;
         }
 

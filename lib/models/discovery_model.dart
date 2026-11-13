@@ -27,8 +27,9 @@ class DiscoveryModel {
       identical(this, other) ||
       other is DiscoveryModel &&
           runtimeType == other.runtimeType &&
-          ip == other.ip;
+          ip == other.ip &&
+          name == other.name;
 
   @override
-  int get hashCode => ip.hashCode;
+  int get hashCode => Object.hash(ip, name);
 }

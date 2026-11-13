@@ -14,6 +14,7 @@ class DesktopIntegrationService {
       StreamController<List<String>>.broadcast();
   static Stream<List<String>> get fileStream => _controller.stream;
   static Timer? _queueTimer;
+  static bool _isProcessingQueue = false;
   static final List<String> _pendingPaths = []; // Buffer for early files
   static RandomAccessFile? _lockFile;
 
@@ -57,8 +58,10 @@ class DesktopIntegrationService {
     try {
       final dir = Directory(queuePath);
       if (!dir.existsSync()) dir.createSync(recursive: true);
-      final fileName = 'args_${DateTime.now().microsecondsSinceEpoch}.json';
-      File(p.join(queuePath, fileName)).writeAsStringSync(jsonEncode(args));
+      final base = 'args_${DateTime.now().microsecondsSinceEpoch}';
+      final tmpFile = File(p.join(queuePath, '$base.tmp'));
+      tmpFile.writeAsStringSync(jsonEncode(args), flush: true);
+      tmpFile.renameSync(p.join(queuePath, '$base.json'));
     } catch (e) {
       debugPrint('DesktopIntegrationService: _writeArgsToQueue error: $e');
     }
@@ -71,49 +74,58 @@ class DesktopIntegrationService {
     _queueTimer = Timer.periodic(const Duration(milliseconds: 300), (
       timer,
     ) async {
-      // Dump buffered paths once UI is listening
-      if (_pendingPaths.isNotEmpty && _controller.hasListener) {
-        _controller.add(List.from(_pendingPaths));
-        _pendingPaths.clear();
-      }
+      if (_isProcessingQueue) return;
+      _isProcessingQueue = true;
+      try {
+        // Dump buffered paths once UI is listening
+        if (_pendingPaths.isNotEmpty && _controller.hasListener) {
+          _controller.add(List.from(_pendingPaths));
+          _pendingPaths.clear();
+        }
 
-      if (!dir.existsSync()) return;
+        if (!dir.existsSync()) return;
 
-      final List<FileSystemEntity> files = dir.listSync();
-      if (files.isEmpty) return;
+        final List<FileSystemEntity> files = dir.listSync();
+        if (files.isEmpty) return;
 
-      final List<String> allPaths = [];
-      for (var file in files) {
-        if (file is File && file.path.endsWith('.json')) {
-          try {
-            final content = file.readAsStringSync();
-            allPaths.addAll(List<String>.from(jsonDecode(content)));
-            file.deleteSync();
-          } catch (e) {
-            debugPrint(
-                'DesktopIntegrationService: error reading arg file: $e');
+        final List<String> allPaths = [];
+        for (var file in files) {
+          if (file is File && file.path.endsWith('.json')) {
+            try {
+              final content = file.readAsStringSync();
+              allPaths.addAll(List<String>.from(jsonDecode(content)));
+              file.deleteSync();
+            } catch (e) {
+              debugPrint(
+                  'DesktopIntegrationService: error reading arg file: $e');
+              try {
+                file.deleteSync();
+              } catch (_) {}
+            }
           }
         }
-      }
 
-      if (allPaths.isNotEmpty) {
-        if (_controller.hasListener) {
-          _controller.add(allPaths);
-        } else {
-          _pendingPaths.addAll(allPaths); // Buffer if UI isn't ready
-        }
+        if (allPaths.isNotEmpty) {
+          if (_controller.hasListener) {
+            _controller.add(allPaths);
+          } else {
+            _pendingPaths.addAll(allPaths); // Buffer if UI isn't ready
+          }
 
-        bool isMinimized = await windowManager.isMinimized();
-        if (isMinimized) {
-          await windowManager.restore();
+          bool isMinimized = await windowManager.isMinimized();
+          if (isMinimized) {
+            await windowManager.restore();
+          }
+
+          // Bypass Windows Focus Stealing Prevention
+          await windowManager.setAlwaysOnTop(true);
+          await windowManager.show();
+          await windowManager.focus();
+          await Future.delayed(const Duration(milliseconds: 100)); // Ensure it registers
+          await windowManager.setAlwaysOnTop(false);
         }
-        
-        // Bypass Windows Focus Stealing Prevention
-        await windowManager.setAlwaysOnTop(true);
-        await windowManager.show();
-        await windowManager.focus();
-        await Future.delayed(const Duration(milliseconds: 100)); // Ensure it registers
-        await windowManager.setAlwaysOnTop(false);
+      } finally {
+        _isProcessingQueue = false;
       }
     });
   }

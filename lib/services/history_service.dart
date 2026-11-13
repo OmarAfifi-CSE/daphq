@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 class HistoryEntry {
@@ -86,9 +88,25 @@ class HistoryEntryInput {
 
 class HistoryService {
   static const int _maxHistoryItems = 2000;
+  static Future<void> _writeQueue = Future<void>.value();
+
+  @visibleForTesting
+  static Future<Directory> Function()? directoryProvider;
+
+  static Future<T> _enqueue<T>(Future<T> Function() op) {
+    final completer = Completer<T>();
+    _writeQueue = _writeQueue.then((_) async {
+      try {
+        completer.complete(await op());
+      } catch (e, st) {
+        completer.completeError(e, st);
+      }
+    });
+    return completer.future;
+  }
 
   static Future<File> _getFile() async {
-    final dir = await getApplicationSupportDirectory();
+    final dir = await (directoryProvider ?? getApplicationSupportDirectory)();
     final file = File('${dir.path}/daphq_history.json');
     if (!await file.exists()) {
       await file.create(recursive: true);
@@ -97,53 +115,76 @@ class HistoryService {
     return file;
   }
 
+  static Future<List<HistoryEntry>> _readEntriesUnlocked() async {
+    final file = await _getFile();
+    final content = await file.readAsString();
+    final List<dynamic> decoded = jsonDecode(content);
+    return decoded
+        .map((item) => HistoryEntry.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  static Future<void> _writeEntriesUnlocked(List<HistoryEntry> entries) async {
+    final file = await _getFile();
+    final tmpFile = File('${file.path}.tmp');
+    final encoded = jsonEncode(entries.map((e) => e.toJson()).toList());
+    await tmpFile.writeAsString(encoded, flush: false);
+    if (await file.exists()) {
+      await tmpFile.rename(file.path);
+    } else {
+      await tmpFile.rename(file.path);
+    }
+  }
+
   /// Load all history entries
   static Future<List<HistoryEntry>> loadHistory() async {
     try {
-      final file = await _getFile();
-      final content = await file.readAsString();
-      final List<dynamic> decoded = jsonDecode(content);
-      return decoded.map((item) => HistoryEntry.fromJson(item)).toList();
+      return await _readEntriesUnlocked();
     } catch (_) {
       return [];
     }
   }
 
-  /// Add multiple entries atomically to prevent concurrency and race conditions
+  /// Add multiple entries atomically through the serialized write queue
   static Future<void> addEntries(List<HistoryEntryInput> inputs) async {
     if (inputs.isEmpty) return;
-    try {
-      final history = await loadHistory();
-      final now = DateTime.now().millisecondsSinceEpoch;
+    await _enqueue(() async {
+      try {
+        List<HistoryEntry> history;
+        try {
+          history = await _readEntriesUnlocked();
+        } catch (_) {
+          history = [];
+        }
+        final now = DateTime.now().millisecondsSinceEpoch;
 
-      final List<HistoryEntry> newEntries = [];
-      for (int i = 0; i < inputs.length; i++) {
-        final input = inputs[i];
-        newEntries.add(
-          HistoryEntry(
-            id: "${now}_${i}_${input.fileName.hashCode}",
-            fileName: input.fileName,
-            fileSizeMB: input.fileSizeMB,
-            direction: input.direction,
-            status: input.status,
-            timestamp: now - i, // Offset slightly to guarantee sorted order
-            localPath: input.localPath,
-          ),
-        );
-      }
+        final List<HistoryEntry> newEntries = [];
+        for (int i = 0; i < inputs.length; i++) {
+          final input = inputs[i];
+          newEntries.add(
+            HistoryEntry(
+              id: "${now}_${i}_${input.fileName.hashCode}",
+              fileName: input.fileName,
+              fileSizeMB: input.fileSizeMB,
+              direction: input.direction,
+              status: input.status,
+              timestamp: now - i, // Offset slightly to guarantee sorted order
+              localPath: input.localPath,
+            ),
+          );
+        }
 
-      // Add all to the beginning of the list
-      history.insertAll(0, newEntries);
+        // Add all to the beginning of the list
+        history.insertAll(0, newEntries);
 
-      // Enforce max item limit
-      if (history.length > _maxHistoryItems) {
-        history.removeRange(_maxHistoryItems, history.length);
-      }
+        // Enforce max item limit
+        if (history.length > _maxHistoryItems) {
+          history.removeRange(_maxHistoryItems, history.length);
+        }
 
-      // Write back to file
-      final file = await _getFile();
-      await file.writeAsString(jsonEncode(history.map((e) => e.toJson()).toList()));
-    } catch (_) {}
+        await _writeEntriesUnlocked(history);
+      } catch (_) {}
+    });
   }
 
   /// Add a single entry to the history log
@@ -167,9 +208,10 @@ class HistoryService {
 
   /// Clear the entire transfer history log
   static Future<void> clearHistory() async {
-    try {
-      final file = await _getFile();
-      await file.writeAsString(jsonEncode([]));
-    } catch (_) {}
+    await _enqueue(() async {
+      try {
+        await _writeEntriesUnlocked([]);
+      } catch (_) {}
+    });
   }
 }
