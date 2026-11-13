@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
@@ -7,6 +8,40 @@ import '../views/widgets/common/update_dialog.dart';
 import '../core/app_constants.dart';
 
 class UpdateService {
+  /// Computes the lowercase hex SHA-256 digest of [path] (plan T-011).
+  static Future<String> computeFileSha256(String path) async {
+    final stream = File(path).openRead();
+    final digest = await sha256.bind(stream).first;
+    return digest.toString().toLowerCase();
+  }
+
+  /// Extracts a valid 64-character hex SHA-256 digest from a `.sha256` file
+  /// body (`"<hex>  filename"` or raw hex), or returns null if invalid.
+  static String? parseSha256Digest(String rawBody) {
+    final candidate = rawBody.trim().split(RegExp(r'\s+')).first.toLowerCase();
+    if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(candidate)) {
+      return null;
+    }
+    return candidate;
+  }
+
+  /// Finds the sibling `<asset>.sha256` download URL for [downloadUrl], or
+  /// returns an empty string when none is published.
+  static String findSha256AssetUrl(List<dynamic> assets, String downloadUrl) {
+    final downloadAssetName =
+        Uri.tryParse(downloadUrl)?.pathSegments.lastOrNull?.toLowerCase() ??
+            downloadUrl.split('/').last.toLowerCase();
+    if (downloadAssetName.isEmpty) return '';
+    for (final asset in assets) {
+      if (asset is! Map) continue;
+      final String name = asset['name']?.toString().toLowerCase() ?? '';
+      if (name == '$downloadAssetName.sha256') {
+        return asset['browser_download_url']?.toString() ?? '';
+      }
+    }
+    return '';
+  }
+
   /// Checks for updates and shows a dialog if a newer version is available.
   static Future<void> checkForUpdates(BuildContext context) async {
     try {
@@ -56,16 +91,8 @@ class UpdateService {
         // Plan T-011: releases publish '<asset>.sha256' siblings; when one
         // exists for the chosen download, the dialog verifies the download
         // against it before installing.
-        String expectedSha256Url = '';
-        final downloadAssetName = downloadUrl.split('/').last.toLowerCase();
-        for (var asset in assets) {
-          final String name = asset['name']?.toString().toLowerCase() ?? '';
-          if (name == '$downloadAssetName.sha256') {
-            expectedSha256Url =
-                asset['browser_download_url']?.toString() ?? '';
-            break;
-          }
-        }
+        final String expectedSha256Url =
+            findSha256AssetUrl(assets, downloadUrl);
 
         // Strip non-numeric prefix like 'v'
         final String remoteVersion = _cleanVersion(remoteVersionTag);

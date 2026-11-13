@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'dart:ui';
-import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -12,12 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../core/app_colors.dart';
 import '../../../core/app_constants.dart';
 import '../../../core/responsive_utils.dart';
-
-/// Computes the SHA-256 hex digest of [path] off the UI isolate (plan T-011).
-String _sha256OfFile(String path) {
-  final stream = File(path).openRead();
-  return sha256.bind(stream).first.toString();
-}
+import '../../../services/update_service.dart';
 
 class UpdateDialog extends StatefulWidget {
   final String newVersion;
@@ -64,9 +58,11 @@ class _UpdateDialogState extends State<UpdateDialog> {
       _downloadStatus = 'Starting download...';
     });
 
+    final client = http.Client();
+    File? partialFile;
     try {
       final request = http.Request('GET', Uri.parse(widget.downloadUrl));
-      final http.StreamedResponse response = await http.Client().send(request);
+      final http.StreamedResponse response = await client.send(request);
 
       if (response.statusCode != 200) {
         throw Exception('Download failed with status: ${response.statusCode}');
@@ -83,53 +79,65 @@ class _UpdateDialogState extends State<UpdateDialog> {
         tempDir = await getTemporaryDirectory();
       }
 
-      // Clean up old update files
+      final Directory updatesDir = Directory(
+        p.join(tempDir.path, 'daphq_updates'),
+      );
+      if (!updatesDir.existsSync()) {
+        updatesDir.createSync(recursive: true);
+      }
+
+      // Clean up previous update downloads in our dedicated directory
       try {
-        final List<FileSystemEntity> entities = tempDir.listSync();
-        for (final entity in entities) {
-          if (entity is File &&
-              (entity.path.endsWith('.apk') || entity.path.endsWith('.exe'))) {
+        for (final entity in updatesDir.listSync()) {
+          if (entity is File) {
             entity.deleteSync();
           }
         }
       } catch (_) {}
 
-      final String fileName = widget.downloadUrl.split('/').last;
-      final File file = File(p.join(tempDir.path, fileName));
-      final IOSink sink = file.openWrite();
+      final rawSegment =
+          Uri.tryParse(widget.downloadUrl)?.pathSegments.lastOrNull ??
+              widget.downloadUrl.split('/').last;
+      final safeName = rawSegment.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+      final String fileName = safeName.isEmpty ? 'daphq_update.bin' : safeName;
+      final File targetFile = File(p.join(updatesDir.path, fileName));
+      partialFile = File('${targetFile.path}.partial');
+      final IOSink sink = partialFile.openWrite();
 
       int downloaded = 0;
       DateTime lastUiUpdate = DateTime.now();
-      await for (final chunk in response.stream) {
-        sink.add(chunk);
-        downloaded += chunk.length;
-        // Plan T-011: throttle UI updates to ~10/s — one setState per chunk
-        // on a fast connection floods the frame pipeline.
-        final now = DateTime.now();
-        if (now.difference(lastUiUpdate).inMilliseconds < 100 && mounted) {
-          continue;
+      try {
+        await for (final chunk in response.stream) {
+          sink.add(chunk);
+          downloaded += chunk.length;
+          // Plan T-011: throttle UI updates to ~10/s — one setState per chunk
+          // on a fast connection floods the frame pipeline.
+          final now = DateTime.now();
+          if (now.difference(lastUiUpdate).inMilliseconds < 100 && mounted) {
+            continue;
+          }
+          lastUiUpdate = now;
+          if (mounted) {
+            setState(() {
+              if (contentLength != null && contentLength > 0) {
+                _downloadProgress = downloaded / contentLength;
+                final String downloadedMb = (downloaded / (1024 * 1024))
+                    .toStringAsFixed(1);
+                final String totalMb = (contentLength / (1024 * 1024))
+                    .toStringAsFixed(1);
+                _downloadStatus = '$downloadedMb MB / $totalMb MB';
+              } else {
+                final String downloadedMb = (downloaded / (1024 * 1024))
+                    .toStringAsFixed(1);
+                _downloadStatus = '$downloadedMb MB downloaded';
+              }
+            });
+          }
         }
-        lastUiUpdate = now;
-        if (mounted) {
-          setState(() {
-            if (contentLength != null && contentLength > 0) {
-              _downloadProgress = downloaded / contentLength;
-              final String downloadedMb = (downloaded / (1024 * 1024))
-                  .toStringAsFixed(1);
-              final String totalMb = (contentLength / (1024 * 1024))
-                  .toStringAsFixed(1);
-              _downloadStatus = '$downloadedMb MB / $totalMb MB';
-            } else {
-              final String downloadedMb = (downloaded / (1024 * 1024))
-                  .toStringAsFixed(1);
-              _downloadStatus = '$downloadedMb MB downloaded';
-            }
-          });
-        }
+        await sink.flush();
+      } finally {
+        await sink.close();
       }
-
-      await sink.flush();
-      await sink.close();
 
       // Plan T-011: verify size completeness and, when the release publishes
       // a digest, the SHA-256 of the downloaded file — BEFORE installing it.
@@ -137,7 +145,8 @@ class _UpdateDialogState extends State<UpdateDialog> {
           contentLength > 0 &&
           downloaded != contentLength) {
         throw Exception(
-            'Download incomplete ($downloaded of $contentLength bytes).');
+          'Download incomplete ($downloaded of $contentLength bytes).',
+        );
       }
       if (widget.expectedSha256Url.isNotEmpty) {
         if (mounted) {
@@ -145,23 +154,31 @@ class _UpdateDialogState extends State<UpdateDialog> {
             _downloadStatus = 'Verifying download...';
           });
         }
-        final digestResponse = await http
+        final digestResponse = await client
             .get(Uri.parse(widget.expectedSha256Url))
             .timeout(const Duration(seconds: 15));
         if (digestResponse.statusCode != 200) {
           throw Exception('Could not fetch the release checksum.');
         }
-        final expectedDigest =
-            digestResponse.body.trim().split(RegExp(r'\s+')).first.toLowerCase();
-        final actualDigest = await compute(_sha256OfFile, file.path);
+        final expectedDigest = UpdateService.parseSha256Digest(
+          digestResponse.body,
+        );
+        if (expectedDigest == null) {
+          throw Exception('Invalid release checksum format.');
+        }
+        final actualDigest = await compute(
+          UpdateService.computeFileSha256,
+          partialFile.path,
+        );
         if (actualDigest != expectedDigest) {
-          try {
-            file.deleteSync();
-          } catch (_) {}
           throw Exception(
-              'Integrity check failed. The download was removed — please try again.');
+            'Integrity check failed. The download was removed — please try again.',
+          );
         }
       }
+
+      partialFile.renameSync(targetFile.path);
+      partialFile = null;
 
       if (mounted) {
         setState(() {
@@ -171,27 +188,38 @@ class _UpdateDialogState extends State<UpdateDialog> {
       }
 
       if (Platform.isWindows) {
-        await Process.start(file.path, []);
+        await Process.start(targetFile.path, []);
         exit(0);
       } else if (Platform.isAndroid) {
-        final result = await OpenFilex.open(file.path);
+        final result = await OpenFilex.open(targetFile.path);
         if (result.type != ResultType.done) {
           throw Exception(result.message);
         }
         if (mounted) Navigator.pop(context);
       }
     } catch (e) {
+      if (partialFile != null) {
+        try {
+          if (partialFile.existsSync()) partialFile.deleteSync();
+        } catch (_) {}
+      }
+      final String message = e.toString().replaceFirst('Exception: ', '').trim();
       if (mounted) {
         setState(() {
           _isDownloading = false;
-          _errorMessage = 'Failed to download update. Please try again.';
+          _errorMessage = message.isEmpty
+              ? 'Failed to download update. Please try again.'
+              : message;
         });
       }
+    } finally {
+      client.close();
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final double viewportWidth = MediaQuery.sizeOf(context).width;
     return Dialog(
       backgroundColor: Colors.transparent,
       insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
@@ -201,8 +229,8 @@ class _UpdateDialogState extends State<UpdateDialog> {
           filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
           child: Container(
             constraints: BoxConstraints(
-              maxWidth: widget.isDesktop ? 500 : double.infinity,
-              maxHeight: MediaQuery.of(context).size.height * 0.85,
+              maxWidth: widget.isDesktop ? 500 : viewportWidth,
+              maxHeight: MediaQuery.sizeOf(context).height * 0.85,
             ),
             padding: EdgeInsets.all(
               widget.isDesktop ? 24.rw(true) : 20.rw(false),
@@ -278,7 +306,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
                   ),
                   SizedBox(height: 10.0.rh(widget.isDesktop)),
                   Container(
-                    width: double.infinity,
+                    width: viewportWidth,
                     constraints: BoxConstraints(
                       // Safe to make large because the entire dialog is now scrollable
                       maxHeight: widget.isDesktop
