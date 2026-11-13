@@ -41,7 +41,15 @@ class _AnimatedPressButtonState extends State<AnimatedPressButton>
     _shimmerController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1800),
-    )..repeat();
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant AnimatedPressButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if ((!_isEnabled || !_isHovered) && _shimmerController.isAnimating) {
+      _shimmerController.stop();
+    }
   }
 
   @override
@@ -82,8 +90,22 @@ class _AnimatedPressButtonState extends State<AnimatedPressButton>
     final double borderRadius = 14.0.rr(widget.isDesktop, desktopScale: scale);
 
     return MouseRegion(
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
+      onEnter: (_) {
+        if (!_isHovered) {
+          setState(() => _isHovered = true);
+          if (_isEnabled && !_shimmerController.isAnimating) {
+            _shimmerController.repeat();
+          }
+        }
+      },
+      onExit: (_) {
+        if (_isHovered) {
+          setState(() => _isHovered = false);
+          if (_shimmerController.isAnimating) {
+            _shimmerController.stop();
+          }
+        }
+      },
       cursor: _isEnabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
       child: GestureDetector(
         onTapDown: _onTapDown,
@@ -133,31 +155,35 @@ class _AnimatedPressButtonState extends State<AnimatedPressButton>
                   // Shimmer sweep overlay
                   if (_isEnabled && _isHovered)
                     Positioned.fill(
-                      child: AnimatedBuilder(
-                        animation: _shimmerController,
-                        builder: (context, _) {
-                          return ShaderMask(
-                            shaderCallback: (bounds) {
-                              return LinearGradient(
-                                begin: Alignment(
-                                  -1.0 + 3.0 * _shimmerController.value,
-                                  0,
-                                ),
-                                end: Alignment(
-                                  -0.5 + 3.0 * _shimmerController.value,
-                                  0,
-                                ),
-                                colors: [
-                                  Colors.transparent,
-                                  Colors.white.withAlpha(25),
-                                  Colors.transparent,
-                                ],
-                              ).createShader(bounds);
-                            },
-                            blendMode: BlendMode.srcATop,
-                            child: Container(color: Colors.white.withAlpha(15)),
-                          );
-                        },
+                      child: RepaintBoundary(
+                        child: AnimatedBuilder(
+                          animation: _shimmerController,
+                          builder: (context, _) {
+                            return ShaderMask(
+                              shaderCallback: (bounds) {
+                                return LinearGradient(
+                                  begin: Alignment(
+                                    -1.0 + 3.0 * _shimmerController.value,
+                                    0,
+                                  ),
+                                  end: Alignment(
+                                    -0.5 + 3.0 * _shimmerController.value,
+                                    0,
+                                  ),
+                                  colors: [
+                                    Colors.transparent,
+                                    Colors.white.withAlpha(25),
+                                    Colors.transparent,
+                                  ],
+                                ).createShader(bounds);
+                              },
+                              blendMode: BlendMode.srcATop,
+                              child: Container(
+                                color: Colors.white.withAlpha(15),
+                              ),
+                            );
+                          },
+                        ),
                       ),
                     ),
                   // Child content perfectly centered with padding

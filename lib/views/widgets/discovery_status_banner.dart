@@ -211,6 +211,16 @@ class _BannerContainerState extends State<_BannerContainer>
   }
 
   @override
+  void didUpdateWidget(covariant _BannerContainer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.hasShimmer && !_shimmerController.isAnimating) {
+      _shimmerController.repeat();
+    } else if (!widget.hasShimmer && _shimmerController.isAnimating) {
+      _shimmerController.stop();
+    }
+  }
+
+  @override
   void dispose() {
     _shimmerController.dispose();
     super.dispose();
@@ -218,11 +228,13 @@ class _BannerContainerState extends State<_BannerContainer>
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _shimmerController,
-      builder: (context, child) {
-        return Container(
-          width: double.infinity,
+    final double bannerWidth = MediaQuery.sizeOf(context).width;
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: _shimmerController,
+        builder: (context, child) {
+          return Container(
+            width: bannerWidth,
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: [
@@ -306,7 +318,8 @@ class _BannerContainerState extends State<_BannerContainer>
           },
         ),
       ),
-    );
+    ),
+  );
   }
 }
 

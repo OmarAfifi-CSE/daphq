@@ -100,30 +100,43 @@ class _ParticlePainter extends CustomPainter {
   final List<_Particle> particles;
   final double time;
 
+  // Reused Paints across frames to avoid per-frame allocations inside 120 FPS paint.
+  final Paint _particlePaint = Paint()..style = PaintingStyle.fill;
+  final Paint _linePaint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 0.8;
+  final Paint _gradientPaint = Paint();
+  Size? _cachedGradientSize;
+  Rect _cachedGradientRect = Rect.zero;
+  List<Offset>? _positionsBuffer;
+
   _ParticlePainter({required this.particles, required this.time});
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..style = PaintingStyle.fill;
+    if (size.width <= 0 || size.height <= 0) return;
 
-    // Subtle radial gradient overlay from center
-    final centerGradient = Paint()
-      ..shader = RadialGradient(
+    // Subtle radial gradient overlay from center (cached for static bounds)
+    if (_cachedGradientSize != size) {
+      _cachedGradientSize = size;
+      _cachedGradientRect = Rect.fromLTWH(0, 0, size.width, size.height);
+      _gradientPaint.shader = RadialGradient(
         center: Alignment.center,
         radius: 0.8,
         colors: [AppColors.primary.withAlpha(6), Colors.transparent],
-      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height));
-    canvas.drawRect(
-      Rect.fromLTWH(0, 0, size.width, size.height),
-      centerGradient,
-    );
+      ).createShader(_cachedGradientRect);
+    }
+    canvas.drawRect(_cachedGradientRect, _gradientPaint);
 
-    // 1. Calculate positions of all particles first
-    final List<Offset> positions = [];
-    final List<double> opacities = [];
-    final List<double> sizes = [];
+    // 1. Calculate positions into a reused list buffer
+    final int count = particles.length;
+    final List<Offset> positions =
+        (_positionsBuffer != null && _positionsBuffer!.length == count)
+        ? _positionsBuffer!
+        : (_positionsBuffer = List<Offset>.filled(count, Offset.zero));
 
-    for (final p in particles) {
+    for (int i = 0; i < count; i++) {
+      final p = particles[i];
       final double t = time * p.speed;
       final double dx = math.sin(t * math.pi * 2 + p.phase) * 20;
       final double dy = math.cos(t * math.pi * 2 + p.phase * 1.3) * 15;
@@ -132,24 +145,18 @@ class _ParticlePainter extends CustomPainter {
       final double py =
           (p.y * size.height + dy + t * size.height * 0.05) % size.height;
 
-      positions.add(Offset(px, py));
-      opacities.add(p.opacity);
-      sizes.add(p.size);
+      positions[i] = Offset(px, py);
     }
 
     // 2. Draw neural network connection lines
-    final linePaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.8; // Thin, delicate lines for an elegant, premium look
-
     const double maxDistance = 80.0; // Compact connection range
 
-    for (int i = 0; i < positions.length; i++) {
+    for (int i = 0; i < count; i++) {
       final posA = positions[i];
-      for (int j = i + 1; j < positions.length; j++) {
+      final opacityA = particles[i].opacity;
+      for (int j = i + 1; j < count; j++) {
         final posB = positions[j];
 
-        // Optimize: skip calculation if bounding box dx or dy exceeds threshold
         final double dx = posA.dx - posB.dx;
         if (dx.abs() > maxDistance) continue;
 
@@ -160,31 +167,31 @@ class _ParticlePainter extends CustomPainter {
         if (distance < maxDistance) {
           final double opacityFactor = 1.0 - (distance / maxDistance);
           final double finalOpacity =
-              opacityFactor * (opacities[i] + opacities[j]) * 0.22;
+              opacityFactor * (opacityA + particles[j].opacity) * 0.22;
 
           if (finalOpacity > 0.01) {
-            linePaint.color = AppColors.primaryLight.withAlpha(
+            _linePaint.color = AppColors.primaryLight.withAlpha(
               (finalOpacity * 255).toInt(),
             );
-            canvas.drawLine(posA, posB, linePaint);
+            canvas.drawLine(posA, posB, _linePaint);
           }
         }
       }
     }
 
     // 3. Draw the particles (nodes) themselves on top of the lines
-    for (int i = 0; i < positions.length; i++) {
-      // Soft, premium opacity and slight size boost for perfect harmony
-      final double particleOpacity = (opacities[i] * 1.1).clamp(0.0, 1.0);
-      paint.color = AppColors.primaryLight.withAlpha(
+    for (int i = 0; i < count; i++) {
+      final p = particles[i];
+      final double particleOpacity = (p.opacity * 1.1).clamp(0.0, 1.0);
+      _particlePaint.color = AppColors.primaryLight.withAlpha(
         (particleOpacity * 255).toInt(),
       );
-      canvas.drawCircle(positions[i], sizes[i] * 1.3, paint); // Elegant size
+      canvas.drawCircle(positions[i], p.size * 1.3, _particlePaint);
     }
   }
 
   @override
   bool shouldRepaint(covariant _ParticlePainter oldDelegate) {
-    return oldDelegate.time != time;
+    return oldDelegate.time != time || oldDelegate.particles != particles;
   }
 }

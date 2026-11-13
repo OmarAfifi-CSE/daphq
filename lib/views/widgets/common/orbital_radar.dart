@@ -7,6 +7,7 @@ import '../../../cubits/transfer_state.dart';
 import '../../../core/app_colors.dart';
 import '../../../core/app_constants.dart';
 import '../../../core/responsive_utils.dart';
+import '../../../models/discovery_model.dart';
 import '../common/custom_snackbar.dart';
 import '../sender/device_transfer_menu.dart';
 
@@ -47,6 +48,15 @@ class _OrbitalRadarState extends State<OrbitalRadar>
     super.dispose();
   }
 
+  bool _sameDevices(List<DiscoveryModel> a, List<DiscoveryModel> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i].ip != b[i].ip || a[i].name != b[i].name) return false;
+    }
+    return true;
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDesktop = widget.isDesktop;
@@ -55,6 +65,9 @@ class _OrbitalRadarState extends State<OrbitalRadar>
     final double radarSize = widget.size;
 
     return BlocBuilder<TransferCubit, TransferState>(
+      buildWhen: (previous, current) =>
+          previous.isReceiving != current.isReceiving ||
+          !_sameDevices(previous.discoveredDevices, current.discoveredDevices),
       builder: (context, state) {
         final devices = state.discoveredDevices;
 
@@ -70,22 +83,24 @@ class _OrbitalRadarState extends State<OrbitalRadar>
               alignment: Alignment.center,
               children: [
                 // 1. Radar paint: orbits, sweep, crosshairs, grid dots
-                AnimatedBuilder(
-                  animation: _rotationController,
-                  builder: (context, child) {
-                    return CustomPaint(
-                      size: Size(
-                        radarSize.rx(isDesktop),
-                        radarSize.rx(isDesktop),
-                      ),
-                      painter: RadarSweepPainter(
-                        angle: _rotationController.value * 2.0 * math.pi,
-                        isScanning: true,
-                        color: AppColors.primary,
-                        scale: scale,
-                      ),
-                    );
-                  },
+                RepaintBoundary(
+                  child: AnimatedBuilder(
+                    animation: _rotationController,
+                    builder: (context, child) {
+                      return CustomPaint(
+                        size: Size(
+                          radarSize.rx(isDesktop),
+                          radarSize.rx(isDesktop),
+                        ),
+                        painter: RadarSweepPainter(
+                          angle: _rotationController.value * 2.0 * math.pi,
+                          isScanning: true,
+                          color: AppColors.primary,
+                          scale: scale,
+                        ),
+                      );
+                    },
+                  ),
                 ),
 
                 // 2. Cardinal direction labels
@@ -93,60 +108,65 @@ class _OrbitalRadarState extends State<OrbitalRadar>
 
                 // 3. Central Pulse Halo — active only when receiving
                 if (state.isReceiving)
-                  AnimatedBuilder(
-                    animation: _pulseController,
-                    builder: (context, child) {
-                      final double scaleVal =
-                          1.0 + (_pulseController.value * 0.3);
-                      final double opacity =
-                          0.6 + (0.4 * (1.0 - _pulseController.value));
-                      return Transform.scale(
-                        scale: scaleVal,
-                        child: Opacity(
-                          opacity: opacity,
+                  RepaintBoundary(
+                    child: AnimatedBuilder(
+                      animation: _pulseController,
+                      builder: (context, child) {
+                        final double scaleVal =
+                            1.0 + (_pulseController.value * 0.3);
+                        final double opacity =
+                            0.6 + (0.4 * (1.0 - _pulseController.value));
+                        final int borderAlpha = (60 * opacity)
+                            .round()
+                            .clamp(0, 255);
+                        return Transform.scale(
+                          scale: scaleVal,
                           child: Container(
                             width: (radarSize * 0.33).rx(isDesktop),
                             height: (radarSize * 0.33).rx(isDesktop),
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               border: Border.all(
-                                color: AppColors.primary.withAlpha(60),
+                                color: AppColors.primary.withAlpha(borderAlpha),
                                 width: 1.0,
                               ),
                             ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
 
                 // Second outer pulse ring
                 if (state.isReceiving)
-                  AnimatedBuilder(
-                    animation: _pulseController,
-                    builder: (context, child) {
-                      final double scaleVal =
-                          1.0 + (_pulseController.value * 0.5);
-                      final double opacity =
-                          0.3 * (1.0 - _pulseController.value);
-                      return Transform.scale(
-                        scale: scaleVal,
-                        child: Opacity(
-                          opacity: opacity.clamp(0.0, 1.0),
+                  RepaintBoundary(
+                    child: AnimatedBuilder(
+                      animation: _pulseController,
+                      builder: (context, child) {
+                        final double scaleVal =
+                            1.0 + (_pulseController.value * 0.5);
+                        final double opacity =
+                            (0.3 * (1.0 - _pulseController.value))
+                                .clamp(0.0, 1.0);
+                        final int borderAlpha = (30 * opacity)
+                            .round()
+                            .clamp(0, 255);
+                        return Transform.scale(
+                          scale: scaleVal,
                           child: Container(
                             width: (radarSize * 0.33).rx(isDesktop),
                             height: (radarSize * 0.33).rx(isDesktop),
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               border: Border.all(
-                                color: AppColors.primary.withAlpha(30),
+                                color: AppColors.primary.withAlpha(borderAlpha),
                                 width: 0.8,
                               ),
                             ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
 
                 // 4. Orbiting Devices
@@ -177,19 +197,17 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                         lowerName.contains("linux") ||
                         lowerName.contains("mac-");
 
+                    final double sliceAngle = count > 0
+                        ? (2.0 * math.pi / count)
+                        : 0;
+                    final double baseAngle = sliceAngle * index;
+
                     return AnimatedBuilder(
                       key: ValueKey(device.ip),
                       animation: _rotationController,
                       builder: (context, child) {
                         final double elapsedSeconds =
                             _stopwatch.elapsedMilliseconds / 1000.0;
-                        // Evenly distribute devices: each gets 360°/count
-                        // Use IP hash only to determine the stable starting
-                        // slot — not the raw angle — so no two devices overlap.
-                        final double sliceAngle = count > 0
-                            ? (2.0 * math.pi / count)
-                            : 0;
-                        final double baseAngle = sliceAngle * index;
                         // Slowly drift all devices together over 80 seconds
                         final double driftAngle =
                             (elapsedSeconds / 80.0) * 2.0 * math.pi;
@@ -215,120 +233,109 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                               (radarSize / 2).rx(isDesktop) +
                               y -
                               (nodeHeight / 2),
-                          child: GestureDetector(
-                            onTap: () => DeviceTransferMenu.show(
-                              context,
-                              device.ip,
-                              device.name,
-                              isDesktop,
-                            ),
-                            child: MouseRegion(
-                              cursor: SystemMouseCursors.click,
-                              child: Container(
-                                width: nodeWidth,
-                                height: nodeHeight,
-                                color: Colors.transparent,
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    // Device node with glass-bubble effect
-                                    Container(
-                                      width: 44.rx(
-                                        isDesktop,
-                                        desktopScale: scale,
-                                      ),
-                                      height: 44.rx(
-                                        isDesktop,
-                                        desktopScale: scale,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        gradient: LinearGradient(
-                                          colors: [
-                                            AppColors.primary.withAlpha(30),
-                                            AppColors.primary.withAlpha(8),
-                                          ],
-                                          begin: Alignment.topLeft,
-                                          end: Alignment.bottomRight,
-                                        ),
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: AppColors.primary.withAlpha(
-                                              25,
-                                            ),
-                                            blurRadius: 12.rr(
-                                              isDesktop,
-                                              desktopScale: scale,
-                                            ),
-                                            spreadRadius: 2.rr(
-                                              isDesktop,
-                                              desktopScale: scale,
-                                            ),
-                                          ),
-                                        ],
-                                        border: Border.all(
-                                          color: AppColors.primary.withAlpha(
-                                            70,
-                                          ),
-                                          width: 1.0,
-                                        ),
-                                      ),
-                                      child: Center(
-                                        child: SleekDeviceIcon(
-                                          isLaptop: isLaptopDevice,
-                                          color: AppColors.primaryLight
-                                              .withAlpha(200),
-                                          size: 18.rx(
-                                            isDesktop,
-                                            desktopScale: scale,
-                                          ),
-                                        ),
-                                      ),
+                          child: child!,
+                        );
+                      },
+                      child: GestureDetector(
+                        onTap: () => DeviceTransferMenu.show(
+                          context,
+                          device.ip,
+                          device.name,
+                          isDesktop,
+                        ),
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: Container(
+                            width: nodeWidth,
+                            height: nodeHeight,
+                            color: Colors.transparent,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                // Device node with glass-bubble effect
+                                Container(
+                                  width: 44.rx(isDesktop, desktopScale: scale),
+                                  height: 44.rx(isDesktop, desktopScale: scale),
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    gradient: LinearGradient(
+                                      colors: [
+                                        AppColors.primary.withAlpha(30),
+                                        AppColors.primary.withAlpha(8),
+                                      ],
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
                                     ),
-                                    SizedBox(
-                                      height: 5.rh(
-                                        isDesktop,
-                                        desktopScale: scale,
-                                      ),
-                                    ),
-                                    // Label Text
-                                    Expanded(
-                                      child: OverflowBox(
-                                        maxWidth: 180.0.rx(
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: AppColors.primary.withAlpha(25),
+                                        blurRadius: 12.rr(
                                           isDesktop,
                                           desktopScale: scale,
                                         ),
-                                        minWidth: 0,
-                                        child: Text(
-                                          device.name,
-                                          textAlign: TextAlign.center,
-                                          maxLines: 1,
-                                          softWrap: false,
-                                          overflow: TextOverflow.visible,
-                                          style: TextStyle(
-                                            color: AppColors.textSecondary,
-                                            fontSize: 10.rx(
-                                              isDesktop,
-                                              desktopScale: scale,
-                                            ),
-                                            fontWeight: FontWeight.w600,
-                                            shadows: const [
-                                              Shadow(
-                                                color: Colors.black,
-                                                blurRadius: 4,
-                                              ),
-                                            ],
-                                          ),
+                                        spreadRadius: 2.rr(
+                                          isDesktop,
+                                          desktopScale: scale,
                                         ),
                                       ),
+                                    ],
+                                    border: Border.all(
+                                      color: AppColors.primary.withAlpha(70),
+                                      width: 1.0,
                                     ),
-                                  ],
+                                  ),
+                                  child: Center(
+                                    child: SleekDeviceIcon(
+                                      isLaptop: isLaptopDevice,
+                                      color: AppColors.primaryLight.withAlpha(
+                                        200,
+                                      ),
+                                      size: 18.rx(
+                                        isDesktop,
+                                        desktopScale: scale,
+                                      ),
+                                    ),
+                                  ),
                                 ),
-                              ),
+                                SizedBox(
+                                  height: 5.rh(isDesktop, desktopScale: scale),
+                                ),
+                                // Label Text
+                                Expanded(
+                                  child: OverflowBox(
+                                    maxWidth: 180.0.rx(
+                                      isDesktop,
+                                      desktopScale: scale,
+                                    ),
+                                    minWidth: 0,
+                                    child: Text(
+                                      device.name,
+                                      textAlign: TextAlign.center,
+                                      maxLines: 1,
+                                      softWrap: false,
+                                      overflow: TextOverflow.visible,
+                                      style: TextStyle(
+                                        color: AppColors.textSecondary,
+                                        fontSize: 10.rx(
+                                          isDesktop,
+                                          desktopScale: scale,
+                                        ),
+                                        fontWeight: FontWeight.w600,
+                                        shadows: const [
+                                          Shadow(
+                                            color: Colors.black,
+                                            blurRadius: 4,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                        );
-                      },
+                        ),
+                      ),
                     );
                   });
                 }(),
@@ -466,6 +473,13 @@ class RadarSweepPainter extends CustomPainter {
   final Color color;
   final double scale;
 
+  final Paint _ringPaint = Paint()..style = PaintingStyle.stroke..strokeWidth = 0.8;
+  final Paint _crosshairPaint = Paint()..strokeWidth = 0.5..style = PaintingStyle.stroke;
+  final Paint _dotPaint = Paint()..style = PaintingStyle.fill;
+  final Paint _sweepPaint = Paint()..style = PaintingStyle.fill;
+  final Paint _sweepLinePaint = Paint()..strokeWidth = 1.0..style = PaintingStyle.stroke;
+  final Paint _trailPaint = Paint()..style = PaintingStyle.fill;
+
   RadarSweepPainter({
     required this.angle,
     required this.isScanning,
@@ -483,43 +497,34 @@ class RadarSweepPainter extends CustomPainter {
     final double r3 = maxRadius * 0.72;
     final double r4 = maxRadius * 0.96;
 
-    final paintRing = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.8;
-
     // Concentric orbit rings with subtle glow
-    canvas.drawCircle(center, r1, paintRing..color = color.withAlpha(18));
-    canvas.drawCircle(center, r2, paintRing..color = color.withAlpha(12));
-    canvas.drawCircle(center, r3, paintRing..color = color.withAlpha(7));
-    canvas.drawCircle(center, r4, paintRing..color = color.withAlpha(3));
+    canvas.drawCircle(center, r1, _ringPaint..color = color.withAlpha(18));
+    canvas.drawCircle(center, r2, _ringPaint..color = color.withAlpha(12));
+    canvas.drawCircle(center, r3, _ringPaint..color = color.withAlpha(7));
+    canvas.drawCircle(center, r4, _ringPaint..color = color.withAlpha(3));
 
     // Crosshair lines
-    final crosshairPaint = Paint()
-      ..color = color.withAlpha(8)
-      ..strokeWidth = 0.5
-      ..style = PaintingStyle.stroke;
+    _crosshairPaint.color = color.withAlpha(8);
     canvas.drawLine(
       Offset(center.dx, center.dy - r4),
       Offset(center.dx, center.dy + r4),
-      crosshairPaint,
+      _crosshairPaint,
     );
     canvas.drawLine(
       Offset(center.dx - r4, center.dy),
       Offset(center.dx + r4, center.dy),
-      crosshairPaint,
+      _crosshairPaint,
     );
 
     // Grid dots at cardinal points on each ring
-    final dotPaint = Paint()
-      ..style = PaintingStyle.fill
-      ..color = color.withAlpha(25);
+    _dotPaint.color = color.withAlpha(25);
     for (final r in [r1, r2, r3, r4]) {
       for (int i = 0; i < 4; i++) {
         final a = i * math.pi / 2;
         canvas.drawCircle(
           Offset(center.dx + r * math.cos(a), center.dy + r * math.sin(a)),
           1.5 * scale,
-          dotPaint,
+          _dotPaint,
         );
       }
     }
@@ -527,41 +532,34 @@ class RadarSweepPainter extends CustomPainter {
     // Sweeping sector
     if (isScanning) {
       final rect = Rect.fromCircle(center: center, radius: r4);
-      final sweepPaint = Paint()
-        ..shader = SweepGradient(
-          colors: [color.withAlpha(0), color.withAlpha(14)],
-          stops: const [0.75, 1.0],
-          transform: GradientRotation(angle),
-        ).createShader(rect)
-        ..style = PaintingStyle.fill;
+      _sweepPaint.shader = SweepGradient(
+        colors: [color.withAlpha(0), color.withAlpha(14)],
+        stops: const [0.75, 1.0],
+        transform: GradientRotation(angle),
+      ).createShader(rect);
 
-      canvas.drawCircle(center, r4, sweepPaint);
+      canvas.drawCircle(center, r4, _sweepPaint);
 
       // Leading edge line with glow
-      final paintSweepLine = Paint()
-        ..color = color.withAlpha(50)
-        ..strokeWidth = 1.0
-        ..style = PaintingStyle.stroke;
+      _sweepLinePaint.color = color.withAlpha(50);
 
       final double endX = center.dx + r4 * math.cos(angle);
       final double endY = center.dy + r4 * math.sin(angle);
-      canvas.drawLine(center, Offset(endX, endY), paintSweepLine);
+      canvas.drawLine(center, Offset(endX, endY), _sweepLinePaint);
 
       // Particle trail behind sweep line (small dots fading out)
       for (int i = 1; i <= 5; i++) {
         final trailAngle = angle - (i * 0.08);
         final trailR = r4 * (0.3 + i * 0.13);
         final trailAlpha = (30 - i * 5).clamp(0, 255);
-        final trailPaint = Paint()
-          ..style = PaintingStyle.fill
-          ..color = color.withAlpha(trailAlpha);
+        _trailPaint.color = color.withAlpha(trailAlpha);
         canvas.drawCircle(
           Offset(
             center.dx + trailR * math.cos(trailAngle),
             center.dy + trailR * math.sin(trailAngle),
           ),
           1.2 * scale,
-          trailPaint,
+          _trailPaint,
         );
       }
     }
