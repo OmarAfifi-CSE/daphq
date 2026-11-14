@@ -19,10 +19,14 @@ class UnifiedAddButton extends StatefulWidget {
 
 class _UnifiedAddButtonState extends State<UnifiedAddButton> {
   final GlobalKey<PopupMenuButtonState> _menuKey = GlobalKey();
+  bool _isDispatchingPicker = false;
 
   void _handleSelection(int value, TransferCubit cubit) {
+    if (_isDispatchingPicker) return;
+    _isDispatchingPicker = true;
     // Defer native modal picker outside active pointer callbacks (Inv-8).
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _isDispatchingPicker = false;
       if (!mounted) return;
       if (value == 1) cubit.pickItems(FileType.any);
       if (value == 2) cubit.pickFolder();
@@ -260,13 +264,17 @@ class _UnifiedAddButtonState extends State<UnifiedAddButton> {
                 size: 24.rx(isDesktop, desktopScale: scale),
               ),
         SizedBox(width: 12.rw(isDesktop, desktopScale: scale)),
-        Text(
-          isLoading ? "Processing..." : "Add Content",
-          style: TextStyle(
-            color: isLoading ? Colors.white70 : Colors.white,
-            fontSize: 16.rx(isDesktop, desktopScale: scale),
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.5,
+        Flexible(
+          child: Text(
+            isLoading ? "Processing..." : "Add Content",
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: isLoading ? Colors.white70 : Colors.white,
+              fontSize: 16.rx(isDesktop, desktopScale: scale),
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.5,
+            ),
           ),
         ),
         const Spacer(),
@@ -311,27 +319,33 @@ class _UnifiedAddButtonState extends State<UnifiedAddButton> {
             ),
           ),
           SizedBox(width: 18.rw(isDesktop, desktopScale: scale)),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  color: AppColors.textPrimary,
-                  fontSize: 15.rx(isDesktop, desktopScale: scale),
-                  fontWeight: FontWeight.w600,
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 15.rx(isDesktop, desktopScale: scale),
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-              ),
-              SizedBox(height: 2.rh(isDesktop, desktopScale: scale)),
-              Text(
-                sub,
-                style: TextStyle(
-                  color: AppColors.textMuted,
-                  fontSize: 11.rx(isDesktop, desktopScale: scale),
+                SizedBox(height: 2.rh(isDesktop, desktopScale: scale)),
+                Text(
+                  sub,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: AppColors.textMuted,
+                    fontSize: 11.rx(isDesktop, desktopScale: scale),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),

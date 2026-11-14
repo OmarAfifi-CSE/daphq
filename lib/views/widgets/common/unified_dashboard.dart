@@ -9,10 +9,13 @@ import '../../../cubits/transfer_state.dart';
 import '../../../core/app_colors.dart';
 import '../../../core/app_constants.dart';
 import '../../../core/responsive_utils.dart';
+import '../../../fabric/peer_models.dart';
 import 'daphq_card.dart';
 import 'animated_press_button.dart';
 import 'custom_snackbar.dart';
 import 'orbital_radar.dart';
+import 'qr_pairing_dialog.dart';
+import 'trusted_devices_dialog.dart';
 import '../sender/device_transfer_menu.dart';
 
 class UnifiedDashboard extends StatefulWidget {
@@ -62,9 +65,19 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
     final double scale = isDesktop ? context.desktopScale : 1.0;
     final cubit = context.read<TransferCubit>();
 
-    return BlocBuilder<TransferCubit, TransferState>(
-      builder: (context, state) {
-        return AnimatedCrossFade(
+    return BlocListener<TransferCubit, TransferState>(
+      listenWhen: (previous, current) => previous.targetIp != current.targetIp,
+      listener: (context, state) {
+        if (_ipController.text != state.targetIp) {
+          _ipController.value = TextEditingValue(
+            text: state.targetIp,
+            selection: TextSelection.collapsed(offset: state.targetIp.length),
+          );
+        }
+      },
+      child: BlocBuilder<TransferCubit, TransferState>(
+        builder: (context, state) {
+          return AnimatedCrossFade(
           duration: const Duration(milliseconds: 250),
           firstCurve: Curves.linear,
           secondCurve: Curves.linear,
@@ -308,7 +321,9 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                                   if (Platform.isWindows ||
                                       Platform.isMacOS ||
                                       Platform.isLinux) {
-                                    await windowManager.focus();
+                                    try {
+                                      await windowManager.focus();
+                                    } catch (_) {}
                                   }
                                   if (mounted) {
                                     setState(() {
@@ -449,10 +464,27 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                 ),
               ],
 
+              // 1.5 FABRIC MODE & SECURITY CONTROLS
+              SizedBox(height: 12.rh(isDesktop, desktopScale: scale)),
+              _FabricControlStrip(
+                isDesktop: isDesktop,
+                scale: scale,
+                preference: state.transportPreference,
+                trustedCount: state.trustedDevices.length,
+                isDirectLinkConnecting: state.isDirectLinkConnecting,
+                directLinkStatus: state.directLinkStatus,
+                onSelectPreference: (pref) =>
+                    cubit.setTransportPreference(pref),
+                onOpenQrPairing: () =>
+                    QrPairingDialog.show(context, isDesktop: isDesktop),
+                onOpenTrustedDevices: () =>
+                    TrustedDevicesDialog.show(context, isDesktop: isDesktop),
+              ),
+
               // 2. CENTER RADAR
-              SizedBox(height: 35.rh(isDesktop, desktopScale: scale)),
+              SizedBox(height: 20.rh(isDesktop, desktopScale: scale)),
               OrbitalRadar(isDesktop: isDesktop, size: 320.0 * scale),
-              SizedBox(height: 35.rh(isDesktop, desktopScale: scale)),
+              SizedBox(height: 28.rh(isDesktop, desktopScale: scale)),
 
               // 3. BOTTOM PANEL: Status bar with scan shimmer
               Center(
@@ -465,7 +497,8 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
             ],
           ),
         );
-      },
+        },
+      ),
     );
   }
 
@@ -705,15 +738,19 @@ class _ScanStatusBarState extends State<_ScanStatusBar>
                           ),
                         ),
                         SizedBox(width: 8.rw(isDesktop, desktopScale: scale)),
-                        Text(
-                          widget.isReceiving
-                              ? "SCANNING FOR PEERS"
-                              : "RADAR OFFLINE",
-                          style: TextStyle(
-                            color: AppColors.textMuted,
-                            fontSize: 10.rx(isDesktop, desktopScale: scale),
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 1.2,
+                        Flexible(
+                          child: Text(
+                            widget.isReceiving
+                                ? "SCANNING FOR PEERS"
+                                : "RADAR OFFLINE",
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: AppColors.textMuted,
+                              fontSize: 10.rx(isDesktop, desktopScale: scale),
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 1.2,
+                            ),
                           ),
                         ),
                       ],
@@ -783,15 +820,19 @@ class _ScanStatusBarState extends State<_ScanStatusBar>
                       ),
                     ),
                     SizedBox(width: 8.rw(isDesktop, desktopScale: scale)),
-                    Text(
-                      widget.isReceiving
-                          ? "SCANNING FOR PEERS"
-                          : "RADAR OFFLINE",
-                      style: TextStyle(
-                        color: AppColors.textMuted,
-                        fontSize: 10.rx(isDesktop, desktopScale: scale),
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.2,
+                    Flexible(
+                      child: Text(
+                        widget.isReceiving
+                            ? "SCANNING FOR PEERS"
+                            : "RADAR OFFLINE",
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 10.rx(isDesktop, desktopScale: scale),
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.2,
+                        ),
                       ),
                     ),
                     SizedBox(width: 12.rw(isDesktop, desktopScale: scale)),
@@ -801,33 +842,348 @@ class _ScanStatusBarState extends State<_ScanStatusBar>
                       color: Colors.white.withAlpha(10),
                     ),
                     SizedBox(width: 12.rw(isDesktop, desktopScale: scale)),
-                    InkWell(
-                      onTap: widget.onManualIpTap,
-                      borderRadius: BorderRadius.circular(
-                        4.rr(isDesktop, desktopScale: scale),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.settings_ethernet_rounded,
-                            size: 13.rx(isDesktop, desktopScale: scale),
-                            color: AppColors.primary,
-                          ),
-                          SizedBox(width: 4.rw(isDesktop, desktopScale: scale)),
-                          Text(
-                            "MANUAL IP",
-                            style: TextStyle(
+                    Flexible(
+                      child: InkWell(
+                        onTap: widget.onManualIpTap,
+                        borderRadius: BorderRadius.circular(
+                          4.rr(isDesktop, desktopScale: scale),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.settings_ethernet_rounded,
+                              size: 13.rx(isDesktop, desktopScale: scale),
                               color: AppColors.primary,
-                              fontSize: 10.rx(isDesktop, desktopScale: scale),
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 1.0,
                             ),
-                          ),
-                        ],
+                            SizedBox(width: 4.rw(isDesktop, desktopScale: scale)),
+                            Flexible(
+                              child: Text(
+                                "MANUAL IP",
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: AppColors.primary,
+                                  fontSize: 10.rx(isDesktop, desktopScale: scale),
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 1.0,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ],
                 ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FabricControlStrip extends StatelessWidget {
+  final bool isDesktop;
+  final double scale;
+  final TransportPreference preference;
+  final int trustedCount;
+  final bool isDirectLinkConnecting;
+  final String? directLinkStatus;
+  final ValueChanged<TransportPreference> onSelectPreference;
+  final VoidCallback onOpenQrPairing;
+  final VoidCallback onOpenTrustedDevices;
+
+  const _FabricControlStrip({
+    required this.isDesktop,
+    required this.scale,
+    required this.preference,
+    required this.trustedCount,
+    required this.isDirectLinkConnecting,
+    required this.directLinkStatus,
+    required this.onSelectPreference,
+    required this.onOpenQrPairing,
+    required this.onOpenTrustedDevices,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        if (isDirectLinkConnecting || directLinkStatus != null) ...[
+          Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: 12.rw(isDesktop, desktopScale: scale),
+              vertical: 6.rh(isDesktop, desktopScale: scale),
+            ),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withAlpha(24),
+              borderRadius: BorderRadius.circular(
+                20.rr(isDesktop, desktopScale: scale),
+              ),
+              border: Border.all(color: AppColors.primary.withAlpha(90)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (isDirectLinkConnecting) ...[
+                  SizedBox(
+                    width: 12.rx(isDesktop, desktopScale: scale),
+                    height: 12.rx(isDesktop, desktopScale: scale),
+                    child: const CircularProgressIndicator(
+                      strokeWidth: 1.8,
+                      color: AppColors.primaryLight,
+                    ),
+                  ),
+                  SizedBox(width: 8.rw(isDesktop, desktopScale: scale)),
+                ] else ...[
+                  Icon(
+                    Icons.bolt_rounded,
+                    size: 13.rx(isDesktop, desktopScale: scale),
+                    color: AppColors.primaryLight,
+                  ),
+                  SizedBox(width: 6.rw(isDesktop, desktopScale: scale)),
+                ],
+                Flexible(
+                  child: Text(
+                    directLinkStatus ?? 'Establishing 5GHz Direct Link...',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: AppColors.primaryLight,
+                      fontSize: 11.rx(isDesktop, desktopScale: scale),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(height: 10.rh(isDesktop, desktopScale: scale)),
+        ],
+        Wrap(
+          spacing: 8.rw(isDesktop, desktopScale: scale),
+          runSpacing: 8.rh(isDesktop, desktopScale: scale),
+          alignment: WrapAlignment.center,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            _TransportModeBar(
+              isDesktop: isDesktop,
+              scale: scale,
+              selected: preference,
+              onChanged: onSelectPreference,
+            ),
+            _FabricActionChip(
+              isDesktop: isDesktop,
+              scale: scale,
+              icon: Icons.qr_code_2_rounded,
+              label: 'QR Pair',
+              accentColor: AppColors.primaryLight,
+              onTap: onOpenQrPairing,
+            ),
+            _FabricActionChip(
+              isDesktop: isDesktop,
+              scale: scale,
+              icon: Icons.verified_user_outlined,
+              label: 'Trusted ($trustedCount)',
+              accentColor:
+                  trustedCount > 0 ? AppColors.success : AppColors.textSecondary,
+              highlighted: trustedCount > 0,
+              onTap: onOpenTrustedDevices,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _TransportModeBar extends StatelessWidget {
+  final bool isDesktop;
+  final double scale;
+  final TransportPreference selected;
+  final ValueChanged<TransportPreference> onChanged;
+
+  const _TransportModeBar({
+    required this.isDesktop,
+    required this.scale,
+    required this.selected,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.all(3.rx(isDesktop, desktopScale: scale)),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceElevated.withAlpha(220),
+        borderRadius: BorderRadius.circular(
+          12.rr(isDesktop, desktopScale: scale),
+        ),
+        border: Border.all(color: Colors.white.withAlpha(14)),
+      ),
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 2.rw(isDesktop, desktopScale: scale),
+        runSpacing: 2.rh(isDesktop, desktopScale: scale),
+        children: [
+          _buildOption(
+            preference: TransportPreference.autoSmart,
+            icon: Icons.auto_awesome_rounded,
+            label: 'Smart Auto',
+            tooltip: 'Auto-select fastest route (LAN TLS or Direct 5GHz)',
+            accentColor: AppColors.primaryLight,
+          ),
+          _buildOption(
+            preference: TransportPreference.directTurbo,
+            icon: Icons.flash_on_rounded,
+            label: '5GHz Turbo',
+            tooltip: 'Direct 5GHz Wi-Fi P2P / Hotspot without router limits',
+            accentColor: AppColors.success,
+          ),
+          _buildOption(
+            preference: TransportPreference.lanOnly,
+            icon: Icons.wifi_rounded,
+            label: 'LAN',
+            tooltip: 'Router Wi-Fi LAN only',
+            accentColor: AppColors.primaryLight,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOption({
+    required TransportPreference preference,
+    required IconData icon,
+    required String label,
+    required String tooltip,
+    required Color accentColor,
+  }) {
+    final bool active = selected == preference;
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: () => onChanged(preference),
+        borderRadius: BorderRadius.circular(
+          9.rr(isDesktop, desktopScale: scale),
+        ),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          padding: EdgeInsets.symmetric(
+            horizontal: 8.rw(isDesktop, desktopScale: scale),
+            vertical: 5.rh(isDesktop, desktopScale: scale),
+          ),
+          decoration: BoxDecoration(
+            color: active ? accentColor.withAlpha(36) : Colors.transparent,
+            borderRadius: BorderRadius.circular(
+              9.rr(isDesktop, desktopScale: scale),
+            ),
+            border: Border.all(
+              color: active ? accentColor.withAlpha(110) : Colors.transparent,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 12.rx(isDesktop, desktopScale: scale),
+                color: active ? accentColor : AppColors.textMuted,
+              ),
+              SizedBox(width: 4.rw(isDesktop, desktopScale: scale)),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: active ? AppColors.textPrimary : AppColors.textMuted,
+                    fontSize: 10.5.rx(isDesktop, desktopScale: scale),
+                    fontWeight: active ? FontWeight.w700 : FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FabricActionChip extends StatelessWidget {
+  final bool isDesktop;
+  final double scale;
+  final IconData icon;
+  final String label;
+  final Color accentColor;
+  final bool highlighted;
+  final VoidCallback onTap;
+
+  const _FabricActionChip({
+    required this.isDesktop,
+    required this.scale,
+    required this.icon,
+    required this.label,
+    required this.accentColor,
+    this.highlighted = false,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(
+          10.rr(isDesktop, desktopScale: scale),
+        ),
+        child: Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: 10.rw(isDesktop, desktopScale: scale),
+            vertical: 6.rh(isDesktop, desktopScale: scale),
+          ),
+          decoration: BoxDecoration(
+            color: highlighted
+                ? accentColor.withAlpha(20)
+                : AppColors.surfaceElevated.withAlpha(200),
+            borderRadius: BorderRadius.circular(
+              10.rr(isDesktop, desktopScale: scale),
+            ),
+            border: Border.all(
+              color: highlighted
+                  ? accentColor.withAlpha(90)
+                  : Colors.white.withAlpha(14),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 13.rx(isDesktop, desktopScale: scale),
+                color: accentColor,
+              ),
+              SizedBox(width: 5.rw(isDesktop, desktopScale: scale)),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 10.5.rx(isDesktop, desktopScale: scale),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

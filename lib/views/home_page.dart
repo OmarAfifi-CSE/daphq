@@ -224,11 +224,16 @@ class _HomePageState extends State<HomePage> {
                             child: BlocSelector<
                               TransferCubit,
                               TransferState,
-                              ({bool showProgressView, String? receiveFolder})
+                              ({
+                                bool showProgressView,
+                                String? receiveFolder,
+                                bool isAddingFiles,
+                              })
                             >(
                               selector: (state) => (
                                 showProgressView: state.showProgressView,
                                 receiveFolder: state.receiveFolder,
+                                isAddingFiles: state.isAddingFiles,
                               ),
                               builder: (context, viewState) {
                                 return LayoutBuilder(
@@ -252,7 +257,7 @@ class _HomePageState extends State<HomePage> {
                                         child: SingleChildScrollView(
                                           key: isDesktopOS
                                               ? ValueKey(
-                                                  'desktop_scroll_${viewState.showProgressView}_${viewState.receiveFolder ?? ""}',
+                                                  'desktop_scroll_${viewState.showProgressView}_${viewState.receiveFolder ?? ""}_${viewState.isAddingFiles}',
                                                 )
                                               : null,
                                           physics: isDesktopOS
@@ -474,41 +479,47 @@ class _HomePageState extends State<HomePage> {
           }
 
           if (state.showNotificationWarningDialog) {
-            showDialog(
+            showDialog<void>(
               context: context,
               barrierDismissible: false,
-              builder: (dialogContext) => AlertDialog(
-                backgroundColor: AppColors.dialogBackground,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                content: const Text(
-                  AppConstants.notificationPermissionWarning,
-                  style: TextStyle(color: AppColors.textPrimary),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () {
-                      Navigator.pop(dialogContext);
-                      cubit.resolveNotificationWarning(true);
-                    },
-                    child: const Text(
-                      AppConstants.proceedAnyway,
-                      style: TextStyle(color: AppColors.textMuted),
-                    ),
+              builder: (dialogContext) => PopScope<bool>(
+                canPop: true,
+                onPopInvokedWithResult: (didPop, result) {
+                  if (didPop) {
+                    cubit.resolveNotificationWarning(result ?? false);
+                  }
+                },
+                child: AlertDialog(
+                  backgroundColor: AppColors.dialogBackground,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
                   ),
-                  TextButton(
-                    onPressed: () {
-                      openAppSettings();
-                      Navigator.pop(dialogContext);
-                      cubit.resolveNotificationWarning(false);
-                    },
-                    child: const Text(
-                      AppConstants.openSettings,
-                      style: TextStyle(color: AppColors.primary),
-                    ),
+                  content: const Text(
+                    AppConstants.notificationPermissionWarning,
+                    style: TextStyle(color: AppColors.textPrimary),
                   ),
-                ],
+                  actions: [
+                    TextButton(
+                      onPressed: () {
+                        Navigator.pop(dialogContext, true);
+                      },
+                      child: const Text(
+                        AppConstants.proceedAnyway,
+                        style: TextStyle(color: AppColors.textMuted),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        openAppSettings();
+                        Navigator.pop(dialogContext, false);
+                      },
+                      child: const Text(
+                        AppConstants.openSettings,
+                        style: TextStyle(color: AppColors.primary),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             );
             cubit.clearFeedback();
@@ -530,12 +541,23 @@ class _HomePageState extends State<HomePage> {
                 rootNavigator: true,
               ).removeRoute(previousRoute);
             }
+            bool trustPeer = false;
             final route = createAuthDialogRoute(
               context: context,
               senderIp: req.senderIp,
               senderName: req.senderName,
               fileCount: req.fileCount,
               formattedSize: req.formattedSize,
+              sasCode: req.sasCode,
+              isTls: req.isTls,
+              isFingerprintMismatch: req.isFingerprintMismatch,
+              canTrustPeer:
+                  req.senderPeerId != null &&
+                  req.senderFingerprint != null &&
+                  !req.isFingerprintMismatch,
+              onTrustChanged: (value) {
+                trustPeer = value;
+              },
             );
             _activeAuthRequest = req;
             _authDialogRoute = route;
@@ -546,7 +568,7 @@ class _HomePageState extends State<HomePage> {
                 _activeAuthRequest = null;
                 _authDialogRoute = null;
                 if (mounted) {
-                  cubit.resolveAuth(accepted ?? false);
+                  cubit.resolveAuth(accepted ?? false, trustPeer: trustPeer);
                 }
               }
             });

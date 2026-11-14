@@ -258,7 +258,7 @@ class _BannerContainerState extends State<_BannerContainer>
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
         child: Builder(
           builder: (context) {
-            final bool isMobile = MediaQuery.of(context).size.width < 450;
+            final bool isMobile = MediaQuery.sizeOf(context).width < 450;
             if (isMobile && widget.trailing != null) {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,

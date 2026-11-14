@@ -93,6 +93,8 @@ class _TransferProgressViewState extends State<TransferProgressView> {
     return BlocListener<TransferCubit, TransferState>(
       listenWhen: (previous, current) {
         return previous.model.speed != current.model.speed ||
+            previous.model.transferred != current.model.transferred ||
+            previous.model.progress != current.model.progress ||
             previous.model.phase != current.model.phase ||
             previous.isTransferring != current.isTransferring ||
             previous.isReceivingActive != current.isReceivingActive;
@@ -147,12 +149,16 @@ class _TransferProgressViewState extends State<TransferProgressView> {
           return p.progress != c.progress ||
               p.speed != c.speed ||
               p.status != c.status ||
+              p.phase != c.phase ||
+              p.avgSpeed != c.avgSpeed ||
+              p.totalTime != c.totalTime ||
               p.transferred != c.transferred ||
               p.totalSize != c.totalSize ||
               p.fileName != c.fileName ||
               p.analyzeCount != c.analyzeCount ||
               previous.isTransferring != current.isTransferring ||
               previous.isReceiving != current.isReceiving ||
+              previous.isReceivingActive != current.isReceivingActive ||
               previous.isLastTransferIncoming !=
                   current.isLastTransferIncoming ||
               previous.showProgressView != current.showProgressView;
@@ -352,7 +358,13 @@ class _TransferProgressViewState extends State<TransferProgressView> {
                               isDone
                                   ? "Transfer Complete"
                                   : (isFailed
-                                        ? "Transfer Cancelled"
+                                        ? ((model.phase ==
+                                                      TransferPhase.cancelled ||
+                                                  model.status
+                                                      .toLowerCase()
+                                                      .contains('cancel'))
+                                              ? "Transfer Cancelled"
+                                              : "Transfer Failed")
                                         : "${(model.progress * 100).toInt()}% complete"),
                               maxLines: 1,
                               style: TextStyle(

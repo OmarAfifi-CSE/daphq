@@ -7,6 +7,7 @@ import '../../../cubits/transfer_state.dart';
 import '../../../core/app_colors.dart';
 import '../../../core/app_constants.dart';
 import '../../../core/responsive_utils.dart';
+import '../../../fabric/peer_models.dart';
 import '../../../models/discovery_model.dart';
 import '../common/custom_snackbar.dart';
 import '../sender/device_transfer_menu.dart';
@@ -57,6 +58,50 @@ class _OrbitalRadarState extends State<OrbitalRadar>
     return true;
   }
 
+  bool _samePeers(List<UnifiedPeer> a, List<UnifiedPeer> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  UnifiedPeer? _findUnifiedPeer(List<UnifiedPeer> peers, DiscoveryModel device) {
+    for (final peer in peers) {
+      if (device.peerId != null && peer.peerId == device.peerId) {
+        return peer;
+      }
+      if (peer.lanIp != null && peer.lanIp == device.ip) {
+        return peer;
+      }
+      if ('ble:${peer.bleAddress ?? peer.peerId}' == device.ip) {
+        return peer;
+      }
+    }
+    return null;
+  }
+
+  ({String label, Color color})? _resolveTransportBadge(
+    UnifiedPeer? peer,
+    DiscoveryModel device,
+  ) {
+    if (peer != null) {
+      switch (peer.transportKind) {
+        case PeerTransportKind.dualLanAndBle:
+          return (label: '5G+LAN', color: AppColors.success);
+        case PeerTransportKind.bleDirectOnly:
+          return (label: 'BLE', color: AppColors.primaryLight);
+        case PeerTransportKind.lanOnly:
+          return (label: 'LAN', color: AppColors.primaryLight);
+      }
+    }
+    if (device.ip.startsWith('ble:')) {
+      return (label: 'BLE', color: AppColors.primaryLight);
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDesktop = widget.isDesktop;
@@ -67,7 +112,8 @@ class _OrbitalRadarState extends State<OrbitalRadar>
     return BlocBuilder<TransferCubit, TransferState>(
       buildWhen: (previous, current) =>
           previous.isReceiving != current.isReceiving ||
-          !_sameDevices(previous.discoveredDevices, current.discoveredDevices),
+          !_sameDevices(previous.discoveredDevices, current.discoveredDevices) ||
+          !_samePeers(previous.unifiedPeers, current.unifiedPeers),
       builder: (context, state) {
         final devices = state.discoveredDevices;
 
@@ -81,6 +127,7 @@ class _OrbitalRadarState extends State<OrbitalRadar>
             ),
             child: Stack(
               alignment: Alignment.center,
+              clipBehavior: Clip.none,
               children: [
                 // 1. Radar paint: orbits, sweep, crosshairs, grid dots
                 RepaintBoundary(
@@ -181,12 +228,22 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                   final count = sorted.length;
                   return List.generate(count, (index) {
                     final device = sorted[index];
+                    final unifiedPeer = _findUnifiedPeer(
+                      state.unifiedPeers,
+                      device,
+                    );
+                    final transportBadge = _resolveTransportBadge(
+                      unifiedPeer,
+                      device,
+                    );
+                    final bool isTrustedPeer = unifiedPeer?.isTrusted ?? false;
                     final nodeWidth = 60.0.rx(isDesktop, desktopScale: scale);
                     final nodeHeight = 75.0.rx(isDesktop, desktopScale: scale);
                     final orbitRadius = (radarSize * 0.36).rx(isDesktop);
 
                     final String lowerName = device.name.toLowerCase();
                     final bool isLaptopDevice =
+                        unifiedPeer?.platform == PeerPlatform.windows ||
                         lowerName.contains("pc") ||
                         lowerName.contains("laptop") ||
                         lowerName.contains("desktop") ||
@@ -242,6 +299,7 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                           device.ip,
                           device.name,
                           isDesktop,
+                          peer: unifiedPeer,
                         ),
                         child: MouseRegion(
                           cursor: SystemMouseCursors.click,
@@ -252,53 +310,184 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                // Device node with glass-bubble effect
-                                Container(
+                                // Device node with glass-bubble effect + trust/transport overlays
+                                SizedBox(
                                   width: 44.rx(isDesktop, desktopScale: scale),
                                   height: 44.rx(isDesktop, desktopScale: scale),
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    gradient: LinearGradient(
-                                      colors: [
-                                        AppColors.primary.withAlpha(30),
-                                        AppColors.primary.withAlpha(8),
-                                      ],
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
-                                    ),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: AppColors.primary.withAlpha(25),
-                                        blurRadius: 12.rr(
+                                  child: Stack(
+                                    clipBehavior: Clip.none,
+                                    children: [
+                                      Container(
+                                        width: 44.rx(
                                           isDesktop,
                                           desktopScale: scale,
                                         ),
-                                        spreadRadius: 2.rr(
+                                        height: 44.rx(
                                           isDesktop,
                                           desktopScale: scale,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          gradient: LinearGradient(
+                                            colors: [
+                                              (isTrustedPeer
+                                                      ? AppColors.success
+                                                      : AppColors.primary)
+                                                  .withAlpha(30),
+                                              (isTrustedPeer
+                                                      ? AppColors.success
+                                                      : AppColors.primary)
+                                                  .withAlpha(8),
+                                            ],
+                                            begin: Alignment.topLeft,
+                                            end: Alignment.bottomRight,
+                                          ),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color:
+                                                  (isTrustedPeer
+                                                          ? AppColors.success
+                                                          : AppColors.primary)
+                                                      .withAlpha(25),
+                                              blurRadius: 12.rr(
+                                                isDesktop,
+                                                desktopScale: scale,
+                                              ),
+                                              spreadRadius: 2.rr(
+                                                isDesktop,
+                                                desktopScale: scale,
+                                              ),
+                                            ),
+                                          ],
+                                          border: Border.all(
+                                            color:
+                                                (isTrustedPeer
+                                                        ? AppColors.success
+                                                        : AppColors.primary)
+                                                    .withAlpha(
+                                                      isTrustedPeer ? 140 : 70,
+                                                    ),
+                                            width: isTrustedPeer ? 1.4 : 1.0,
+                                          ),
+                                        ),
+                                        child: Center(
+                                          child: SleekDeviceIcon(
+                                            isLaptop: isLaptopDevice,
+                                            color:
+                                                (isTrustedPeer
+                                                        ? AppColors.successLight
+                                                        : AppColors.primaryLight)
+                                                    .withAlpha(210),
+                                            size: 18.rx(
+                                              isDesktop,
+                                              desktopScale: scale,
+                                            ),
+                                          ),
                                         ),
                                       ),
+                                      if (isTrustedPeer)
+                                        Positioned(
+                                          top: -2.rx(
+                                            isDesktop,
+                                            desktopScale: scale,
+                                          ),
+                                          right: -3.rx(
+                                            isDesktop,
+                                            desktopScale: scale,
+                                          ),
+                                          child: Container(
+                                            padding: EdgeInsets.all(
+                                              2.rx(
+                                                isDesktop,
+                                                desktopScale: scale,
+                                              ),
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: AppColors.success,
+                                              shape: BoxShape.circle,
+                                              border: Border.all(
+                                                color: AppColors.background,
+                                                width: 1.5,
+                                              ),
+                                            ),
+                                            child: Icon(
+                                              Icons.verified_user_rounded,
+                                              size: 9.rx(
+                                                isDesktop,
+                                                desktopScale: scale,
+                                              ),
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ),
+                                      if (transportBadge != null)
+                                        Positioned(
+                                          bottom: -3.rx(
+                                            isDesktop,
+                                            desktopScale: scale,
+                                          ),
+                                          left: -6.rx(
+                                            isDesktop,
+                                            desktopScale: scale,
+                                          ),
+                                          right: -6.rx(
+                                            isDesktop,
+                                            desktopScale: scale,
+                                          ),
+                                          child: Center(
+                                            child: Container(
+                                              padding: EdgeInsets.symmetric(
+                                                horizontal: 5.rw(
+                                                  isDesktop,
+                                                  desktopScale: scale,
+                                                ),
+                                                vertical: 1.5.rh(
+                                                  isDesktop,
+                                                  desktopScale: scale,
+                                                ),
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color: AppColors.background
+                                                    .withAlpha(240),
+                                                borderRadius:
+                                                    BorderRadius.circular(
+                                                      6.rr(
+                                                        isDesktop,
+                                                        desktopScale: scale,
+                                                      ),
+                                                    ),
+                                                border: Border.all(
+                                                  color: transportBadge.color
+                                                      .withAlpha(150),
+                                                  width: 0.8,
+                                                ),
+                                              ),
+                                              child: FittedBox(
+                                                fit: BoxFit.scaleDown,
+                                                child: Text(
+                                                  transportBadge.label,
+                                                  maxLines: 1,
+                                                  softWrap: false,
+                                                  style: TextStyle(
+                                                    color: transportBadge.color,
+                                                    fontSize: 7.5.rx(
+                                                      isDesktop,
+                                                      desktopScale: scale,
+                                                    ),
+                                                    fontWeight: FontWeight.w800,
+                                                    letterSpacing: 0.3,
+                                                    height: 1.0,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
                                     ],
-                                    border: Border.all(
-                                      color: AppColors.primary.withAlpha(70),
-                                      width: 1.0,
-                                    ),
-                                  ),
-                                  child: Center(
-                                    child: SleekDeviceIcon(
-                                      isLaptop: isLaptopDevice,
-                                      color: AppColors.primaryLight.withAlpha(
-                                        200,
-                                      ),
-                                      size: 18.rx(
-                                        isDesktop,
-                                        desktopScale: scale,
-                                      ),
-                                    ),
                                   ),
                                 ),
                                 SizedBox(
-                                  height: 5.rh(isDesktop, desktopScale: scale),
+                                  height: 6.rh(isDesktop, desktopScale: scale),
                                 ),
                                 // Label Text
                                 Expanded(

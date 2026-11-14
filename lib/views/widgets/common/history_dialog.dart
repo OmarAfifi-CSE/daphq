@@ -51,6 +51,7 @@ class _HistoryDialogState extends State<HistoryDialog> {
   }
 
   Future<void> _loadData() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
     final data = await HistoryService.loadHistory();
     if (mounted) {
@@ -99,6 +100,7 @@ class _HistoryDialogState extends State<HistoryDialog> {
 
     if (confirm == true) {
       await HistoryService.clearHistory();
+      if (!mounted) return;
       _loadData();
     }
   }
@@ -171,12 +173,13 @@ class _HistoryDialogState extends State<HistoryDialog> {
   Widget build(BuildContext context) {
     Widget content;
     if (widget.isDesktop) {
+      final screenSize = MediaQuery.sizeOf(context);
       content = Dialog(
         backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 60),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
         child: Container(
-          width: 500,
-          height: 600,
+          width: (screenSize.width - 80.0).clamp(0.0, 500.0).toDouble(),
+          height: (screenSize.height - 48.0).clamp(0.0, 600.0).toDouble(),
           decoration: BoxDecoration(
             color: AppColors.background.withAlpha(245),
             borderRadius: BorderRadius.circular(20),
@@ -195,7 +198,7 @@ class _HistoryDialogState extends State<HistoryDialog> {
     } else {
       // Mobile Bottom Sheet
       content = Container(
-        height: MediaQuery.of(context).size.height * 0.75,
+        height: MediaQuery.sizeOf(context).height * 0.75,
         decoration: BoxDecoration(
           color: AppColors.background,
           borderRadius: const BorderRadius.only(
@@ -233,6 +236,7 @@ class _HistoryDialogState extends State<HistoryDialog> {
       },
       listener: (context, state) async {
         await Future.delayed(const Duration(milliseconds: 100));
+        if (!mounted) return;
         _loadData();
       },
       child: content,
@@ -251,12 +255,16 @@ class _HistoryDialogState extends State<HistoryDialog> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'Transfer History',
-                style: TextStyle(
-                  color: AppColors.textPrimary,
-                  fontWeight: FontWeight.w700,
-                  fontSize: widget.isDesktop ? 18 : 18.sp,
+              Flexible(
+                child: Text(
+                  'Transfer History',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.w700,
+                    fontSize: widget.isDesktop ? 18 : 18.sp,
+                  ),
                 ),
               ),
               Row(
@@ -301,38 +309,6 @@ class _HistoryDialogState extends State<HistoryDialog> {
                     vertical: 10,
                   ),
                   itemCount: _history.length,
-                  prototypeItem: Container(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.transparent),
-                    ),
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: widget.isDesktop ? 14.0 : 12.w,
-                        vertical: 10,
-                      ),
-                      child: Row(
-                        children: [
-                          const SizedBox(width: 48, height: 48),
-                          SizedBox(width: widget.isDesktop ? 16 : 14.w),
-                          const Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text('', maxLines: 2),
-                                SizedBox(height: 4),
-                                Text('', maxLines: 1),
-                                SizedBox(height: 4),
-                                Text('', maxLines: 1),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
                   itemBuilder: (context, index) {
                     return _buildHistoryItem(_history[index], index);
                   },

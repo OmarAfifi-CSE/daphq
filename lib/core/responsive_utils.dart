@@ -32,7 +32,7 @@ extension ResponsiveContext on BuildContext {
   /// Calculates a smooth, dampened scale factor for desktop/windows screens
   /// when the window size exceeds the default size (1100x700).
   double get desktopScale {
-    final size = MediaQuery.of(this).size;
+    final size = MediaQuery.sizeOf(this);
     final w = size.width;
     final h = size.height;
 
