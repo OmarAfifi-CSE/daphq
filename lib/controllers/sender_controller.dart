@@ -1,9 +1,13 @@
-import 'dart:io';
-import 'dart:convert';
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:path/path.dart' as p;
-import '../models/transfer_model.dart';
+
 import '../core/app_constants.dart';
+import '../models/transfer_model.dart';
+import '../security/device_identity_service.dart';
+import 'v2_protocol_framing.dart';
 
 /// Typed exception thrown by [SenderController.sendData] carrying the
 /// user-facing message and machine-readable terminal [TransferPhase].
@@ -19,18 +23,26 @@ class TransferSendException implements Exception {
 
 /// Handles the sender side of the file transfer protocol.
 ///
-/// Connects to a receiver, sends a JSON metadata header describing the files,
-/// waits for authorization, then streams raw file bytes over TCP.
+/// Supports both v1 raw TCP streaming and v2 TLS-pinned adaptive Multi-Stream
+/// (`1–4` parallel streams) + Reverse-Connect (for Windows Defender zero-prompt P2P).
 class SenderController {
   Socket? _activeSocket;
+  final Set<Socket> _activeWorkerSockets = <Socket>{};
+  ServerSocket? _reversePlainServer;
+  SecureServerSocket? _reverseSecureServer;
+  Completer<({Socket socket, BufferedSocketReader reader})?>?
+      _reverseControlCompleter;
+  final Map<int, Completer<Socket>> _reverseDataWaiters =
+      <int, Completer<Socket>>{};
+  final List<Socket> _reverseUnclaimedData = <Socket>[];
   bool _isCancelled = false;
+  int _activeTransferSeq = 0;
   String? _cancelReason;
   bool _wasRejectedByReceiver = false;
   String? _currentTargetDeviceName;
 
-  /// Sends a file or folder to the receiver at [targetIp].
-  ///
-  /// Calls [onUpdate] with progress updates and [onDone] when finished.
+  /// Sends files or folders to the receiver at [targetIp] (or awaits reverse outbound
+  /// connections from the receiver when [listenForReverseReceiver] is true).
   Future<void> sendData({
     required List<String> paths,
     required String targetIp,
@@ -38,17 +50,31 @@ class SenderController {
     required String senderDeviceName,
     required Function(TransferModel) onUpdate,
     int port = AppConstants.transferPort,
+    bool useTls = false,
+    String? expectedPeerFingerprint,
+    String? Function()? expectedPeerFingerprintProvider,
+    DeviceIdentity? localIdentity,
+    int parallelStreams = 1,
+    bool listenForReverseReceiver = false,
+    String? reverseAuthToken,
+    void Function(int boundPort)? onReverseListening,
+    Future<bool> Function(String actualFingerprint)? onVerifyPeerFingerprint,
   }) async {
+    final int myTransferSeq = ++_activeTransferSeq;
     _isCancelled = false;
     _cancelReason = null;
     _wasRejectedByReceiver = false;
     _currentTargetDeviceName = targetDeviceName;
-    Socket? socket;
-    StreamSubscription<dynamic>? socketSub;
+
+    Socket? controlSocket;
+    BufferedSocketReader? controlReader;
+    final List<BufferedSocketReader> auxiliaryReaders = <BufferedSocketReader>[];
+    StreamSubscription<Socket>? reverseAcceptSub;
     final Stopwatch stopwatch = Stopwatch();
     int sentBytes = 0;
     double totalSizeBytes = 0;
     String? originalName;
+
     try {
       onUpdate(
         TransferModel(
@@ -59,12 +85,9 @@ class SenderController {
       );
 
       // 1. Prepare file list from multiple paths
-      List<Map<String, dynamic>> fileList = [];
-
+      final List<Map<String, dynamic>> fileList = [];
       int discoveredCount = 0;
 
-      // Flush a batch of files by calling entity.length() in parallel.
-      // This keeps Dart's I/O isolate pool busy instead of waiting serially.
       Future<void> flushBatch(List<File> batch, String fromPath) async {
         if (_isCancelled) return;
         final results = await Future.wait(
@@ -80,7 +103,7 @@ class SenderController {
                 "size": size,
               };
             } catch (_) {
-              return null; // Skip locked/protected files
+              return null;
             }
           }),
         );
@@ -92,25 +115,23 @@ class SenderController {
         }
       }
 
-      for (String path in paths) {
+      for (final String path in paths) {
         if (_isCancelled) break;
         if (await FileSystemEntity.isDirectory(path)) {
           final dir = Directory(path);
           final fromPath = dir.parent.path;
           const int batchSize = 64;
-          List<File> batch = [];
+          final List<File> batch = [];
 
-          await for (var entity
+          await for (final entity
               in dir
                   .list(recursive: true, followLinks: false)
                   .handleError((_) {})) {
-            if (_isCancelled) break; // Stop listing immediately on cancel
+            if (_isCancelled) break;
             if (entity is File) {
               batch.add(entity);
               discoveredCount++;
 
-              // Update the file count every 50 files so the user sees
-              // live progress on slow devices with large directories.
               if (discoveredCount % 50 == 0) {
                 onUpdate(
                   TransferModel(
@@ -128,7 +149,6 @@ class SenderController {
             }
           }
           if (!_isCancelled) {
-            // Flush any remaining files in the last partial batch
             await flushBatch(batch, fromPath);
           }
         } else {
@@ -142,7 +162,6 @@ class SenderController {
 
       if (_isCancelled) throw "Transfer Cancelled";
 
-      // Plan T-009: deduplicate collisions case-insensitively across the batch.
       deduplicateRelativePaths(fileList);
 
       if (fileList.isEmpty) throw "No files found in selection.";
@@ -151,8 +170,6 @@ class SenderController {
         throw "Error: The selected item is empty (0.0 MB).";
       }
 
-      // Build the JSON header BEFORE connecting so we can validate its size
-      // without disturbing the receiver.
       String resolveName(String path) {
         final base = p.basename(path);
         if (base.isEmpty || base == r'\' || base == '/') {
@@ -165,7 +182,25 @@ class SenderController {
           ? resolveName(paths[0])
           : "${resolveName(paths[0])} and ${paths.length - 1} more";
 
+      final int requestedStreams = parallelStreams.clamp(1, 4);
+      final bool isV2Requested = useTls ||
+          requestedStreams > 1 ||
+          localIdentity != null ||
+          listenForReverseReceiver;
+      final String sessionId = generateTransferSessionId();
+
+      final String? initialExpectedFp =
+          (expectedPeerFingerprint != null &&
+                  expectedPeerFingerprint.trim().isNotEmpty)
+              ? expectedPeerFingerprint.trim().toLowerCase()
+              : null;
+
       final Map<String, dynamic> metadata = {
+        if (isV2Requested) "v": 2,
+        if (isV2Requested) "sessionId": sessionId,
+        if (isV2Requested) "streams": requestedStreams,
+        if (localIdentity != null) "senderPeerId": localIdentity.peerId,
+        if (localIdentity != null) "senderFp": localIdentity.certFingerprint,
         "fileName": originalName,
         "fileSize": totalSizeBytes,
         "senderDeviceName": senderDeviceName,
@@ -176,124 +211,248 @@ class SenderController {
             .toList(),
       };
 
-      final String header = "${jsonEncode(metadata)}\n";
+      final String preflightHeader = "${jsonEncode(metadata)}\n";
 
-      // Pre-flight size check — fail before connecting so the receiver
-      // is never disturbed.
+      if (preflightHeader.length > 32 * 1024 * 1024) {
+        throw "Too many files selected (${fileList.length} files). "
+            "The transfer metadata is too large. "
+            "Please select a subfolder instead of the entire drive root.";
+      }
+
+      onUpdate(
+        TransferModel(
+          status: listenForReverseReceiver
+              ? "Waiting for direct reverse link..."
+              : "Connecting...",
+          fileName: originalName,
+          phase: TransferPhase.waitingAuth,
+        ),
+      );
+
+      final Completer<({Socket socket, BufferedSocketReader reader})?>
+          reverseControlCompleter =
+          Completer<({Socket socket, BufferedSocketReader reader})?>();
+      reverseControlCompleter.future.catchError((_) => null);
+      _reverseControlCompleter = reverseControlCompleter;
+      _reverseDataWaiters.clear();
+      _reverseUnclaimedData.clear();
+
+      String? observedPeerFp = initialExpectedFp;
+
+      if (listenForReverseReceiver) {
+        final tlsContext = useTls ? localIdentity?.createServerContext() : null;
+        final bound = await bindTransferServer(
+          port: port,
+          retryDelay: const Duration(milliseconds: 250),
+          maxAttempts: 4,
+          isCancelled: () => _isCancelled,
+          onAttempt: (_, _) {},
+          tlsContext: tlsContext,
+        );
+        _reversePlainServer = bound.plain;
+        _reverseSecureServer = bound.secure;
+        final int boundPort =
+            _reverseSecureServer?.port ?? _reversePlainServer?.port ?? port;
+        final Stream<Socket> acceptStream =
+            _reverseSecureServer ?? _reversePlainServer!;
+
+        reverseAcceptSub = acceptStream.listen(
+          (incoming) {
+            incoming.setOption(SocketOption.tcpNoDelay, true);
+            _dispatchReverseIncomingSocket(
+              incoming: incoming,
+              expectedSessionId: sessionId,
+              expectedReverseToken: reverseAuthToken,
+              onControlConnected: (sock, reader) {
+                if (!reverseControlCompleter.isCompleted &&
+                    !_isCancelled &&
+                    myTransferSeq == _activeTransferSeq) {
+                  reverseControlCompleter.complete(
+                    (socket: sock, reader: reader),
+                  );
+                } else {
+                  unawaited(reader.cancel());
+                  sock.destroy();
+                }
+              },
+              onDataWorkerConnected: (workerIdx, sock, reader) {
+                if (_isCancelled || myTransferSeq != _activeTransferSeq) {
+                  unawaited(reader.cancel());
+                  sock.destroy();
+                  return;
+                }
+                auxiliaryReaders.add(reader);
+                final waiter = _reverseDataWaiters.remove(workerIdx);
+                if (waiter != null && !waiter.isCompleted) {
+                  waiter.complete(sock);
+                } else {
+                  _reverseUnclaimedData.add(sock);
+                }
+              },
+            );
+          },
+          onError: (_) {},
+          cancelOnError: false,
+        );
+
+        onReverseListening?.call(boundPort);
+        final ctrl = await reverseControlCompleter.future.timeout(
+          const Duration(seconds: 15),
+        );
+        if (ctrl == null) {
+          throw "Transfer Cancelled";
+        }
+        controlSocket = ctrl.socket;
+        controlReader = ctrl.reader;
+      } else {
+        controlSocket = await connectTransferSocket(
+          host: targetIp,
+          port: port,
+          useTls: useTls,
+          timeout: const Duration(
+            seconds: AppConstants.connectionTimeoutSeconds,
+          ),
+          expectedPeerFingerprint: initialExpectedFp,
+          onVerifyPeerFingerprint: useTls
+              ? (actualFp) async {
+                  observedPeerFp = actualFp.trim().toLowerCase();
+                  if (onVerifyPeerFingerprint != null) {
+                    return onVerifyPeerFingerprint(actualFp);
+                  }
+                  return true;
+                }
+              : onVerifyPeerFingerprint,
+        );
+        controlReader = BufferedSocketReader(controlSocket);
+      }
+
+      if (_isCancelled) throw "Transfer Cancelled";
+      _activeSocket = controlSocket;
+
+      if (useTls && !listenForReverseReceiver) {
+        final peerCert = controlSocket is SecureSocket
+            ? controlSocket.peerCertificate
+            : null;
+        if (peerCert != null) {
+          observedPeerFp =
+              DeviceIdentityService.fingerprintFromCertificate(peerCert);
+        }
+        if (observedPeerFp == null || observedPeerFp!.isEmpty) {
+          throw const HandshakeException('Missing receiver TLS certificate');
+        }
+      }
+
+      if (localIdentity != null && isV2Requested) {
+        final String serverFpForProof = listenForReverseReceiver
+            ? (useTls ? localIdentity.certFingerprint : 'plain')
+            : (useTls ? observedPeerFp! : 'plain');
+        final String proofMessage = DeviceIdentityService.buildAuthProofMessage(
+          sessionId: sessionId,
+          senderPeerId: localIdentity.peerId,
+          senderFingerprint: localIdentity.certFingerprint,
+          serverFingerprint: serverFpForProof,
+        );
+        metadata["senderCertPem"] = localIdentity.certificatePem;
+        metadata["senderProof"] = DeviceIdentityService.signAuthProof(
+          privateKeyPem: localIdentity.privateKeyPem,
+          message: proofMessage,
+        );
+      }
+
+      final String header = "${jsonEncode(metadata)}\n";
       if (header.length > 32 * 1024 * 1024) {
         throw "Too many files selected (${fileList.length} files). "
             "The transfer metadata is too large. "
             "Please select a subfolder instead of the entire drive root.";
       }
 
-      // Connect to receiver only after all validations pass
-      onUpdate(
-        TransferModel(
-          status: "Connecting...",
-          fileName: originalName,
-          phase: TransferPhase.waitingAuth,
-        ),
-      );
-      socket = await Socket.connect(
-        targetIp,
-        port,
-        timeout: const Duration(seconds: AppConstants.connectionTimeoutSeconds),
-      );
-      _activeSocket = socket;
-      socket.setOption(SocketOption.tcpNoDelay, true);
-
-      // Send file metadata (JSON header)
       try {
-        socket.write(header);
-        await socket.flush();
+        controlSocket.write(header);
+        await controlSocket.flush();
       } on SocketException {
         throw "Connection lost before sending data. Please check network/Hotspot.";
       }
 
-      // Set up listeners for Receiver responses (READY and DONE)
       final Completer<Map<String, dynamic>> readyCompleter = Completer();
       final Completer<void> doneCompleter = Completer();
-      // Prevent unhandled zone errors if socket closes before await reaches these futures.
       readyCompleter.future.catchError((_) => <String, dynamic>{});
       doneCompleter.future.catchError((_) {});
-      final List<int> responseBytes = [];
 
-      socketSub = socket.listen(
-        (data) {
-          responseBytes.addAll(data);
-          while (true) {
-            final int newlineIndex = responseBytes.indexOf(10); // \n
-            if (newlineIndex == -1) break;
-            final String line = utf8
-                .decode(responseBytes.sublist(0, newlineIndex), allowMalformed: true)
-                .trim();
-            responseBytes.removeRange(0, newlineIndex + 1);
-
-            if (line.isNotEmpty) {
-              try {
-                final Map<String, dynamic> response = jsonDecode(line);
-                if (response["status"] == "REJECTED") {
-                  final reason = response["reason"];
-                  final String errorMsg = reason == "OUT_OF_SPACE"
-                      ? "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}: Insufficient storage space."
-                      : reason == "HEADER_TOO_LARGE"
-                      ? "Too many files — the transfer metadata is too large. Please select a subfolder instead."
-                      : "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}.";
-                  if (!readyCompleter.isCompleted) {
-                    _wasRejectedByReceiver = true;
-                    readyCompleter.completeError(errorMsg);
-                  } else {
-                    _isCancelled = true;
-                    _wasRejectedByReceiver = true;
-                    _cancelReason = errorMsg;
-                    if (!doneCompleter.isCompleted) {
-                      doneCompleter.completeError(errorMsg);
-                    }
-                    socket?.destroy();
-                  }
-                } else if (response["s"] == "r") {
-                  if (!readyCompleter.isCompleted) {
-                    readyCompleter.complete({});
-                  }
-                } else if (response["s"] == "d") {
+      unawaited(
+        controlReader.drainLines(
+          onLine: (line) {
+            try {
+              final Map<String, dynamic> response =
+                  jsonDecode(line) as Map<String, dynamic>;
+              if (response["status"] == "REJECTED") {
+                final reason = response["reason"];
+                final String errorMsg = reason == "OUT_OF_SPACE"
+                    ? "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}: Insufficient storage space."
+                    : reason == "HEADER_TOO_LARGE"
+                    ? "Too many files — the transfer metadata is too large. Please select a subfolder instead."
+                    : "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}.";
+                if (!readyCompleter.isCompleted) {
+                  _wasRejectedByReceiver = true;
+                  readyCompleter.completeError(errorMsg);
+                } else {
+                  _isCancelled = true;
+                  _wasRejectedByReceiver = true;
+                  _cancelReason = errorMsg;
                   if (!doneCompleter.isCompleted) {
-                    doneCompleter.complete();
+                    doneCompleter.completeError(errorMsg);
                   }
+                  controlSocket?.destroy();
                 }
-              } catch (_) {}
+              } else if (response["s"] == "r") {
+                if (!readyCompleter.isCompleted) {
+                  readyCompleter.complete(response);
+                }
+              } else if (response["s"] == "d") {
+                if (!doneCompleter.isCompleted) {
+                  doneCompleter.complete();
+                }
+              }
+            } catch (_) {}
+          },
+          onError: (_) {
+            if (!readyCompleter.isCompleted) {
+              readyCompleter.completeError("Receiver disconnected.");
             }
-          }
-        },
-        onError: (e) {
-          if (!readyCompleter.isCompleted) {
-            readyCompleter.completeError("Receiver disconnected.");
-          }
-          if (!doneCompleter.isCompleted) {
-            doneCompleter.completeError("Receiver disconnected.");
-          }
-        },
-        onDone: () {
-          if (!readyCompleter.isCompleted) {
-            readyCompleter.completeError("Receiver disconnected.");
-          }
-          if (!doneCompleter.isCompleted) {
-            doneCompleter.completeError("Receiver disconnected.");
-          }
-        },
-        cancelOnError: true,
+            if (!doneCompleter.isCompleted) {
+              doneCompleter.completeError("Receiver disconnected.");
+            }
+          },
+          onDone: () {
+            if (!readyCompleter.isCompleted) {
+              readyCompleter.completeError("Receiver disconnected.");
+            }
+            if (!doneCompleter.isCompleted) {
+              doneCompleter.completeError("Receiver disconnected.");
+            }
+          },
+        ),
       );
 
-      // Wait for authorization and readiness
+      final String? waitingSas =
+          (useTls && localIdentity != null && observedPeerFp != null && observedPeerFp!.length == 64)
+              ? localIdentity.computeSasWith(observedPeerFp!)
+              : null;
+
       onUpdate(
         TransferModel(
-          status: "Waiting for Receiver to Accept...",
+          status: waitingSas != null
+              ? "Waiting for Receiver (Code: $waitingSas)..."
+              : "Waiting for Receiver to Accept...",
           fileName: originalName,
           totalSize: totalSizeBytes / 1024 / 1024,
           phase: TransferPhase.waitingAuth,
+          sasCode: waitingSas,
         ),
       );
+
+      late final Map<String, dynamic> readyResponse;
       try {
-        await readyCompleter.future.timeout(
+        readyResponse = await readyCompleter.future.timeout(
           const Duration(minutes: AppConstants.authTimeoutMinutes),
           onTimeout: () => throw "Timeout",
         );
@@ -304,11 +463,93 @@ class SenderController {
         rethrow;
       }
 
-      // Measure speed from actual wire start (after user authorization)
+      final int negotiatedVersion = (readyResponse["v"] as num?)?.toInt() ?? 1;
+      final int acceptedStreams =
+          ((readyResponse["streams"] as num?)?.toInt() ?? 1).clamp(1, 4);
+
+      if (useTls && negotiatedVersion >= 2) {
+        final String? readyReceiverFp =
+            (readyResponse["receiverFp"] as String?)?.trim().toLowerCase();
+        final String? dynamicExpectedFp =
+            expectedPeerFingerprintProvider?.call()?.trim().toLowerCase();
+        final String? effectiveExpectedFp =
+            (dynamicExpectedFp != null && dynamicExpectedFp.isNotEmpty)
+                ? dynamicExpectedFp
+                : observedPeerFp;
+
+        if (!listenForReverseReceiver) {
+          if (readyReceiverFp != null &&
+              readyReceiverFp.isNotEmpty &&
+              effectiveExpectedFp != null &&
+              readyReceiverFp != effectiveExpectedFp) {
+            throw const HandshakeException(
+              'Receiver READY identity does not match TLS certificate',
+            );
+          }
+        } else {
+          if (readyReceiverFp == null || readyReceiverFp.length != 64) {
+            throw const HandshakeException(
+              'Missing receiver certificate fingerprint in reverse READY',
+            );
+          }
+          if (effectiveExpectedFp != null &&
+              effectiveExpectedFp.isNotEmpty &&
+              readyReceiverFp != effectiveExpectedFp) {
+            throw const HandshakeException(
+              'Reverse receiver certificate fingerprint mismatch',
+            );
+          }
+          final String? readyPeerId =
+              (readyResponse["receiverPeerId"] as String?)?.trim().toLowerCase();
+          final String? readyCertPem =
+              readyResponse["receiverCertPem"] as String?;
+          final String? readyProof = readyResponse["receiverProof"] as String?;
+          if (localIdentity != null) {
+            if (readyPeerId == null ||
+                readyPeerId.isEmpty ||
+                readyCertPem == null ||
+                readyProof == null ||
+                readyProof.isEmpty) {
+              throw const HandshakeException(
+                'Missing reverse receiver ECDSA identity proof',
+              );
+            }
+            final String msg = DeviceIdentityService.buildAuthProofMessage(
+              sessionId: sessionId,
+              senderPeerId: readyPeerId,
+              senderFingerprint: readyReceiverFp,
+              serverFingerprint: localIdentity.certFingerprint,
+            );
+            final bool proofOk = DeviceIdentityService.verifyAuthProof(
+              senderCertPem: readyCertPem,
+              expectedFingerprint: readyReceiverFp,
+              message: msg,
+              signatureB64: readyProof,
+            );
+            if (!proofOk) {
+              throw const HandshakeException(
+                'Reverse receiver ECDSA identity proof invalid',
+              );
+            }
+          }
+          observedPeerFp = readyReceiverFp;
+          if (onVerifyPeerFingerprint != null) {
+            final allowed = await onVerifyPeerFingerprint(readyReceiverFp);
+            if (!allowed) {
+              throw const HandshakeException(
+                'Reverse receiver TLS certificate rejected by trust policy',
+              );
+            }
+          }
+        }
+      }
+
       stopwatch.start();
       onUpdate(
         TransferModel(
-          status: "Pumping Data...",
+          status: acceptedStreams > 1
+              ? "Turbo Pumping ($acceptedStreams streams)..."
+              : "Pumping Data...",
           fileName: originalName,
           totalSize: totalSizeBytes / 1024 / 1024,
           progress: 0.0,
@@ -316,58 +557,211 @@ class SenderController {
         ),
       );
 
-      // Stream file data
       DateTime lastUpdate = DateTime.now();
       int bytesSinceUpdate = 0;
-      int bytesBuffered = 0;
 
-      for (var f in fileList) {
-        if (_isCancelled) throw "Transfer Cancelled";
-        final File fileToRead = File(f["absPath"] as String);
-        final int fileSize = f["size"] as int;
-        int bytesSentForFile = 0;
+      void reportBytesSent(int deltaBytes, String activeFileName) {
+        sentBytes += deltaBytes;
+        bytesSinceUpdate += deltaBytes;
+        final now = DateTime.now();
+        final elapsedMs = now.difference(lastUpdate).inMilliseconds;
+        if (elapsedMs > AppConstants.speedUpdateIntervalMs) {
+          final double speed =
+              (bytesSinceUpdate / 1024 / 1024) / (elapsedMs / 1000.0);
+          onUpdate(
+            TransferModel(
+              speed: speed,
+              transferred: sentBytes / 1024 / 1024,
+              fileName: activeFileName,
+              status: acceptedStreams > 1
+                  ? "Turbo Pumping ($acceptedStreams streams)..."
+                  : "Pumping Data...",
+              totalSize: totalSizeBytes / 1024 / 1024,
+              progress: totalSizeBytes > 0 ? sentBytes / totalSizeBytes : 0.0,
+              phase: TransferPhase.sending,
+            ),
+          );
+          bytesSinceUpdate = 0;
+          lastUpdate = now;
+        }
+      }
 
-        if (fileSize <= 64 * 1024) {
-          // Fast path for small files (<= 64KB): read completely into memory
-          try {
-            final bytes = await fileToRead.readAsBytes();
-            if (_isCancelled) throw "Transfer Cancelled";
-            if (bytes.length != fileSize) {
-              throw "File '${p.basename(f["absPath"] as String)}' changed on disk during transfer.";
-            }
-            socket.add(bytes);
-            bytesSentForFile = bytes.length;
-            sentBytes += bytes.length;
-            bytesSinceUpdate += bytes.length;
-            bytesBuffered += bytes.length;
+      if (negotiatedVersion >= 2 && acceptedStreams > 1) {
+        final stealer = ChunkWorkStealer(fileList);
 
-            if (bytesBuffered >= AppConstants.socketFlushThresholdBytes) {
-              await socket.flush();
-              bytesBuffered = 0;
+        Future<Socket> acquireWorkerSocket(int workerIdx) async {
+          if (listenForReverseReceiver) {
+            if (_reverseUnclaimedData.isNotEmpty) {
+              return _reverseUnclaimedData.removeAt(0);
             }
-          } catch (e) {
-            if (_isCancelled) throw "Transfer Cancelled";
-            if (e is SocketException ||
-                e.toString().contains("reset by peer")) {
-              throw "Receiver disconnected during transfer.";
-            }
-            rethrow;
+            final c = Completer<Socket>();
+            _reverseDataWaiters[workerIdx] = c;
+            return c.future.timeout(
+              const Duration(seconds: 15),
+            );
           }
-        } else {
-          // Standard path for larger files: stream in chunks
-          final reader = fileToRead.openRead();
-          try {
-            await for (var chunk in reader) {
+
+          final sock = await connectTransferSocket(
+            host: targetIp,
+            port: port,
+            useTls: useTls,
+            timeout: const Duration(
+              seconds: AppConstants.connectionTimeoutSeconds,
+            ),
+            expectedPeerFingerprint: observedPeerFp,
+          );
+          sock.write(
+            '${jsonEncode({"v": 2, "role": "data", "sessionId": sessionId, "workerIndex": workerIdx})}\n',
+          );
+          await sock.flush();
+          return sock;
+        }
+
+        bool sessionAborted = false;
+        Object? firstWorkerError;
+        bool isWorkerAborted() =>
+            _isCancelled ||
+            sessionAborted ||
+            myTransferSeq != _activeTransferSeq;
+
+        void abortWorkersImmediately(Object error) {
+          sessionAborted = true;
+          firstWorkerError ??= error;
+          for (final waiter in _reverseDataWaiters.values) {
+            if (!waiter.isCompleted) {
+              waiter.completeError(error);
+            }
+          }
+          _reverseDataWaiters.clear();
+          for (final ws in _activeWorkerSockets.toList()) {
+            try {
+              ws.destroy();
+            } catch (_) {}
+          }
+        }
+
+        await Future.wait(
+          List<Future<void>>.generate(acceptedStreams, (workerIdx) async {
+            if (isWorkerAborted()) return;
+            Socket? workerSocket;
+            RandomAccessFile? cachedRaf;
+            try {
+              workerSocket = await acquireWorkerSocket(workerIdx);
+              if (isWorkerAborted()) {
+                workerSocket.destroy();
+                return;
+              }
+              _activeWorkerSockets.add(workerSocket);
+              int? cachedFileIdx;
+              int buffered = 0;
+
+              while (!isWorkerAborted()) {
+                final task = stealer.nextTask();
+                if (task == null) break;
+
+                if (cachedFileIdx != task.fileIndex) {
+                  await cachedRaf?.close();
+                  cachedRaf = await File(task.absPath).open(
+                    mode: FileMode.read,
+                  );
+                  cachedFileIdx = task.fileIndex;
+                }
+
+                await cachedRaf!.setPosition(task.offset);
+                final payload = await cachedRaf.read(task.length);
+                if (payload.length != task.length) {
+                  throw "File '${p.basename(task.absPath)}' changed on disk during transfer.";
+                }
+                if (isWorkerAborted()) break;
+
+                workerSocket.add(
+                  buildV2FrameHeader(
+                    fileIndex: task.fileIndex,
+                    fileOffset: task.offset,
+                    payloadLength: payload.length,
+                  ),
+                );
+                workerSocket.add(payload);
+                buffered += daphqFrameHeaderSize + payload.length;
+
+                if (buffered >= AppConstants.socketFlushThresholdBytes) {
+                  await workerSocket.flush();
+                  buffered = 0;
+                }
+
+                reportBytesSent(payload.length, p.basename(task.absPath));
+              }
+
+              if (isWorkerAborted()) {
+                throw firstWorkerError ?? "Transfer Cancelled";
+              }
+
+              workerSocket.add(buildV2EofFrame());
+              await workerSocket.flush();
+            } catch (e) {
+              abortWorkersImmediately(e);
+            } finally {
+              await cachedRaf?.close();
+              if (workerSocket != null) {
+                _activeWorkerSockets.remove(workerSocket);
+                try {
+                  await workerSocket.close();
+                } catch (_) {
+                  workerSocket.destroy();
+                }
+              }
+            }
+          }),
+        );
+        if (firstWorkerError != null) {
+          throw firstWorkerError!;
+        }
+      } else {
+        // Legacy v1 single-socket raw payload pump
+        int bytesBuffered = 0;
+        for (final f in fileList) {
+          if (_isCancelled) throw "Transfer Cancelled";
+          final File fileToRead = File(f["absPath"] as String);
+          final int fileSize = f["size"] as int;
+          int bytesSentForFile = 0;
+
+          if (fileSize <= 64 * 1024) {
+            try {
+              final bytes = await fileToRead.readAsBytes();
+              if (_isCancelled) throw "Transfer Cancelled";
+              if (bytes.length != fileSize) {
+                throw "File '${p.basename(f["absPath"] as String)}' changed on disk during transfer.";
+              }
+              controlSocket.add(bytes);
+              bytesSentForFile = bytes.length;
+              bytesBuffered += bytes.length;
+
+              if (bytesBuffered >= AppConstants.socketFlushThresholdBytes) {
+                await controlSocket.flush();
+                bytesBuffered = 0;
+              }
+              reportBytesSent(bytes.length, p.basename(f["path"] as String));
+            } catch (e) {
+              if (_isCancelled) throw "Transfer Cancelled";
+              if (e is SocketException ||
+                  e.toString().contains("reset by peer")) {
+                throw "Receiver disconnected during transfer.";
+              }
+              rethrow;
+            }
+          } else {
+            final reader = fileToRead.openRead();
+            await for (final chunk in reader) {
               if (_isCancelled) throw "Transfer Cancelled";
               bytesSentForFile += chunk.length;
               if (bytesSentForFile > fileSize) {
                 throw "File '${p.basename(f["absPath"] as String)}' grew on disk during transfer.";
               }
               try {
-                socket.add(chunk);
+                controlSocket.add(chunk);
                 bytesBuffered += chunk.length;
                 if (bytesBuffered >= AppConstants.socketFlushThresholdBytes) {
-                  await socket.flush();
+                  await controlSocket.flush();
                   bytesBuffered = 0;
                 }
               } catch (e) {
@@ -380,69 +774,21 @@ class SenderController {
               }
 
               if (_isCancelled) throw "Transfer Cancelled";
-              sentBytes += chunk.length;
-              bytesSinceUpdate += chunk.length;
-
-              // Trigger speed/progress UI update if needed inside the chunk streaming loop
-              final now = DateTime.now();
-              final elapsedMs = now.difference(lastUpdate).inMilliseconds;
-              if (elapsedMs > AppConstants.speedUpdateIntervalMs) {
-                final double speed =
-                    (bytesSinceUpdate / 1024 / 1024) / (elapsedMs / 1000.0);
-                onUpdate(
-                  TransferModel(
-                    speed: speed,
-                    transferred: sentBytes / 1024 / 1024,
-                    fileName: p.basename(f["path"] as String),
-                    status: "Pumping Data...",
-                    totalSize: totalSizeBytes / 1024 / 1024,
-                    progress: totalSizeBytes > 0
-                        ? sentBytes / totalSizeBytes
-                        : 0.0,
-                    phase: TransferPhase.sending,
-                  ),
-                );
-                bytesSinceUpdate = 0;
-                lastUpdate = now;
-              }
+              reportBytesSent(chunk.length, p.basename(f["path"] as String));
             }
             if (bytesSentForFile != fileSize) {
               throw "File '${p.basename(f["absPath"] as String)}' changed on disk during transfer.";
             }
-          } finally {}
+          }
         }
-
-        // Trigger speed/progress UI update if needed
-        final now = DateTime.now();
-        final elapsedMs = now.difference(lastUpdate).inMilliseconds;
-        if (elapsedMs > AppConstants.speedUpdateIntervalMs) {
-          final double speed =
-              (bytesSinceUpdate / 1024 / 1024) / (elapsedMs / 1000.0);
-          onUpdate(
-            TransferModel(
-              speed: speed,
-              transferred: sentBytes / 1024 / 1024,
-              fileName: p.basename(f["path"] as String),
-              status: "Pumping Data...",
-              totalSize: totalSizeBytes / 1024 / 1024,
-              progress: totalSizeBytes > 0 ? sentBytes / totalSizeBytes : 0.0,
-              phase: TransferPhase.sending,
-            ),
-          );
-          bytesSinceUpdate = 0;
-          lastUpdate = now;
-        }
+        await controlSocket.flush();
       }
 
-      await socket.flush();
-
-      // Stop the stopwatch immediately after payload bytes are flushed
       stopwatch.stop();
       final double finalMB = totalSizeBytes / 1024 / 1024;
       final double elapsedSec = stopwatch.elapsedMilliseconds / 1000.0;
       final double avg = elapsedSec > 0.001 ? (finalMB / elapsedSec) : 0.0;
 
-      // Wait for receiver confirmation that disk finalize succeeded
       onUpdate(
         TransferModel(
           status: "Finalizing... Saving to disk",
@@ -463,9 +809,8 @@ class SenderController {
         },
       );
 
-      await socketSub.cancel();
-      socketSub = null;
-      await socket.close();
+      await controlReader.cancel();
+      await controlSocket.close();
 
       onUpdate(
         TransferModel(
@@ -481,6 +826,27 @@ class SenderController {
       );
     } on PathAccessException catch (e) {
       final msg = "Error: $e";
+      onUpdate(
+        TransferModel(
+          status: msg,
+          fileName: originalName ?? "",
+          phase: TransferPhase.failed,
+        ),
+      );
+      throw TransferSendException(msg, TransferPhase.failed);
+    } on HandshakeException catch (e) {
+      final msg =
+          "Security Alert: Peer identity verification failed (${e.message}).";
+      onUpdate(
+        TransferModel(
+          status: msg,
+          fileName: originalName ?? "",
+          phase: TransferPhase.failed,
+        ),
+      );
+      throw TransferSendException(msg, TransferPhase.failed);
+    } on TlsException catch (e) {
+      final msg = "Security Alert: TLS handshake failed (${e.message}).";
       onUpdate(
         TransferModel(
           status: msg,
@@ -533,14 +899,104 @@ class SenderController {
       );
       throw TransferSendException(terminalStatus, terminalPhase);
     } finally {
+      if (_reverseControlCompleter != null &&
+          !_reverseControlCompleter!.isCompleted) {
+        _reverseControlCompleter!.completeError('Transfer Cancelled');
+      }
+      _reverseControlCompleter = null;
+      for (final waiter in _reverseDataWaiters.values) {
+        if (!waiter.isCompleted) {
+          waiter.completeError('Transfer Cancelled');
+        }
+      }
+      _reverseDataWaiters.clear();
+      for (final sock in _reverseUnclaimedData) {
+        try {
+          sock.destroy();
+        } catch (_) {}
+      }
+      _reverseUnclaimedData.clear();
+
       try {
-        await socketSub?.cancel();
+        await reverseAcceptSub?.cancel();
       } catch (_) {}
       try {
-        socket?.destroy();
+        await _reverseSecureServer?.close();
+      } catch (_) {}
+      try {
+        await _reversePlainServer?.close();
+      } catch (_) {}
+      _reverseSecureServer = null;
+      _reversePlainServer = null;
+
+      try {
+        await controlReader?.cancel();
+      } catch (_) {}
+      for (final r in auxiliaryReaders) {
+        try {
+          await r.cancel();
+        } catch (_) {}
+      }
+      auxiliaryReaders.clear();
+      for (final ws in _activeWorkerSockets.toList()) {
+        try {
+          ws.destroy();
+        } catch (_) {}
+      }
+      _activeWorkerSockets.clear();
+      try {
+        controlSocket?.destroy();
       } catch (_) {}
       _activeSocket = null;
-      _isCancelled = false;
+      if (myTransferSeq == _activeTransferSeq) {
+        _isCancelled = false;
+      }
+    }
+  }
+
+  void _dispatchReverseIncomingSocket({
+    required Socket incoming,
+    required String expectedSessionId,
+    String? expectedReverseToken,
+    required void Function(Socket socket, BufferedSocketReader reader)
+        onControlConnected,
+    required void Function(
+      int workerIndex,
+      Socket socket,
+      BufferedSocketReader reader,
+    )
+        onDataWorkerConnected,
+  }) async {
+    try {
+      final reader = BufferedSocketReader(incoming);
+      final res = await reader.readJsonHeader(
+        maxHeaderBytes: 64 * 1024,
+        timeout: const Duration(seconds: 10),
+      );
+      if (res == null) {
+        incoming.destroy();
+        return;
+      }
+      if (expectedReverseToken != null &&
+          expectedReverseToken.isNotEmpty &&
+          res.header["reverseToken"] != expectedReverseToken) {
+        await reader.cancel();
+        incoming.destroy();
+        return;
+      }
+      final role = res.header["role"] as String?;
+      if (role == "reverse_control") {
+        onControlConnected(incoming, reader);
+      } else if (role == "data" &&
+          res.header["sessionId"] == expectedSessionId) {
+        final idx = (res.header["workerIndex"] as num?)?.toInt() ?? 0;
+        onDataWorkerConnected(idx, incoming, reader);
+      } else {
+        await reader.cancel();
+        incoming.destroy();
+      }
+    } catch (_) {
+      incoming.destroy();
     }
   }
 
@@ -578,9 +1034,34 @@ class SenderController {
   /// Cancels an active send operation.
   void cancel({String? reason}) {
     _isCancelled = true;
+    _activeTransferSeq++;
     _cancelReason = reason;
+    if (_reverseControlCompleter != null &&
+        !_reverseControlCompleter!.isCompleted) {
+      _reverseControlCompleter!.completeError(reason ?? 'Transfer Cancelled');
+    }
+    for (final waiter in _reverseDataWaiters.values) {
+      if (!waiter.isCompleted) {
+        waiter.completeError(reason ?? 'Transfer Cancelled');
+      }
+    }
+    _reverseDataWaiters.clear();
+    for (final sock in _reverseUnclaimedData) {
+      try {
+        sock.destroy();
+      } catch (_) {}
+    }
+    _reverseUnclaimedData.clear();
+    _reversePlainServer?.close();
+    _reverseSecureServer?.close();
     _activeSocket?.destroy();
     _activeSocket = null;
+    for (final ws in _activeWorkerSockets.toList()) {
+      try {
+        ws.destroy();
+      } catch (_) {}
+    }
+    _activeWorkerSockets.clear();
   }
 
   /// Maps a [SocketException] to a user-friendly error message.

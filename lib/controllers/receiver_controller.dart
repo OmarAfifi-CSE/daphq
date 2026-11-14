@@ -1,26 +1,284 @@
-import 'dart:io';
-import 'dart:convert';
-import 'dart:typed_data';
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:path/path.dart' as p;
 import 'package:storage_space/storage_space.dart';
+
+import '../core/app_constants.dart';
 import '../models/transfer_model.dart';
+import '../security/device_identity_service.dart';
+import 'v2_protocol_framing.dart';
 
 export '../models/transfer_model.dart' show TransferPhase;
-import '../core/app_constants.dart';
+export 'v2_protocol_framing.dart' show TransferAuthRequest;
+
+class _V2FileTarget {
+  final int index;
+  final String partialPath;
+  final String targetPath;
+  final int targetSize;
+  final void Function(String path) onPartialCreated;
+  final void Function(String path) onPartialFinalized;
+
+  int bytesReceived = 0;
+  final List<({int start, int end})> _writtenRanges = <({int start, int end})>[];
+  RandomAccessFile? _raf;
+  Future<void> _writeChain = Future<void>.value();
+  bool _dirEnsured = false;
+  bool _finalized = false;
+  bool _aborted = false;
+
+  _V2FileTarget({
+    required this.index,
+    required this.partialPath,
+    required this.targetPath,
+    required this.targetSize,
+    required this.onPartialCreated,
+    required this.onPartialFinalized,
+  });
+
+  void _recordRangeAndMerge(int start, int length) {
+    final int end = start + length;
+    int insertIdx = 0;
+    while (insertIdx < _writtenRanges.length &&
+        _writtenRanges[insertIdx].start < start) {
+      insertIdx++;
+    }
+    if (insertIdx > 0 && _writtenRanges[insertIdx - 1].end > start) {
+      throw const FormatException('Overlapping or duplicate chunk range');
+    }
+    if (insertIdx < _writtenRanges.length && _writtenRanges[insertIdx].start < end) {
+      throw const FormatException('Overlapping or duplicate chunk range');
+    }
+
+    int mergedStart = start;
+    int mergedEnd = end;
+    if (insertIdx > 0 && _writtenRanges[insertIdx - 1].end == start) {
+      mergedStart = _writtenRanges[insertIdx - 1].start;
+      _writtenRanges.removeAt(insertIdx - 1);
+      insertIdx--;
+    }
+    if (insertIdx < _writtenRanges.length && _writtenRanges[insertIdx].start == end) {
+      mergedEnd = _writtenRanges[insertIdx].end;
+      _writtenRanges.removeAt(insertIdx);
+    }
+    _writtenRanges.insert(insertIdx, (start: mergedStart, end: mergedEnd));
+    bytesReceived += length;
+  }
+
+  Future<void> enqueueChunk(int offset, Uint8List data) {
+    if (_aborted || _finalized) {
+      return Future<void>.value();
+    }
+    if (data.isEmpty) {
+      return Future<void>.value();
+    }
+    if (offset < 0 || offset + data.length > targetSize) {
+      throw const FormatException('Chunk out of file bounds');
+    }
+    _recordRangeAndMerge(offset, data.length);
+    if (bytesReceived > targetSize) {
+      throw const FormatException('Received bytes exceed declared file size');
+    }
+    final bool isComplete = bytesReceived == targetSize &&
+        _writtenRanges.length == 1 &&
+        _writtenRanges.first.start == 0 &&
+        _writtenRanges.first.end == targetSize;
+
+    _writeChain = _writeChain.then((_) async {
+      if (_aborted || _finalized) return;
+      if (!_dirEnsured) {
+        await Directory(p.dirname(targetPath)).create(recursive: true);
+        _dirEnsured = true;
+      }
+      if (_raf == null) {
+        onPartialCreated(partialPath);
+        _raf = await File(partialPath).open(mode: FileMode.write);
+      }
+      await _raf!.setPosition(offset);
+      await _raf!.writeFrom(data);
+
+      if (isComplete) {
+        await _raf!.flush();
+        await _raf!.close();
+        _raf = null;
+        await File(partialPath).rename(targetPath);
+        _finalized = true;
+        onPartialFinalized(partialPath);
+      }
+    });
+
+    return _writeChain;
+  }
+
+  Future<void> awaitPendingWrites() => _writeChain;
+
+  Future<void> abortAndCleanup() async {
+    _aborted = true;
+    try {
+      await _writeChain;
+    } catch (_) {}
+    try {
+      await _raf?.close();
+    } catch (_) {}
+    _raf = null;
+    if (!_finalized) {
+      try {
+        final f = File(partialPath);
+        if (f.existsSync()) f.deleteSync();
+      } catch (_) {}
+      onPartialFinalized(partialPath);
+    }
+  }
+}
+
+class _V2ReceiveSession {
+  final String sessionId;
+  final int expectedStreams;
+  final List<_V2FileTarget> fileTargets;
+  final int totalExpectedBytes;
+  final Duration chunkTimeout;
+  final bool Function() isCancelled;
+  final void Function(int bytesDelta, String activeFileName) onProgress;
+
+  final Completer<void> _allWorkersDone = Completer<void>();
+  final List<Socket> _workerSockets = <Socket>[];
+  int _completedWorkers = 0;
+  int _connectedWorkers = 0;
+  int receivedBytes = 0;
+  bool aborted = false;
+  bool completedCleanly = false;
+  Object? _firstWorkerError;
+
+  _V2ReceiveSession({
+    required this.sessionId,
+    required this.expectedStreams,
+    required this.fileTargets,
+    required this.totalExpectedBytes,
+    required this.chunkTimeout,
+    required this.isCancelled,
+    required this.onProgress,
+  });
+
+  Future<void> runWorkerConnection({
+    required Socket socket,
+    required BufferedSocketReader reader,
+  }) async {
+    if (aborted) {
+      socket.destroy();
+      return;
+    }
+    _connectedWorkers++;
+    _workerSockets.add(socket);
+
+    try {
+      await consumeV2WorkerFrames(
+        reader: reader,
+        chunkTimeout: chunkTimeout,
+        isCancelled: () => aborted || isCancelled(),
+        onChunk: (int fileIndex, int offset, Uint8List payload) async {
+          if (fileIndex < 0 || fileIndex >= fileTargets.length) {
+            throw const FormatException('Invalid fileIndex in frame');
+          }
+          final target = fileTargets[fileIndex];
+          receivedBytes += payload.length;
+          await target.enqueueChunk(offset, payload);
+          onProgress(payload.length, p.basename(target.targetPath));
+        },
+      );
+    } catch (e) {
+      _firstWorkerError ??= e;
+      if (!_allWorkersDone.isCompleted) {
+        _allWorkersDone.completeError(e);
+      }
+    } finally {
+      await reader.cancel();
+      try {
+        await socket.close();
+      } catch (_) {
+        socket.destroy();
+      }
+      _workerSockets.remove(socket);
+      _completedWorkers++;
+      if (_firstWorkerError == null &&
+          _completedWorkers >= expectedStreams &&
+          !_allWorkersDone.isCompleted) {
+        _allWorkersDone.complete();
+      }
+    }
+  }
+
+  Future<void> awaitWorkers({required Duration idleConnectTimeout}) async {
+    // Guard against workers never connecting or partial worker set stalling after READY
+    Timer? connectWatchdog;
+    if (_connectedWorkers < expectedStreams) {
+      connectWatchdog = Timer(idleConnectTimeout, () {
+        if (_connectedWorkers < expectedStreams && !_allWorkersDone.isCompleted) {
+          _allWorkersDone.completeError(
+            TimeoutException(
+              'Missing data workers ($_connectedWorkers/$expectedStreams connected)',
+            ),
+          );
+        }
+      });
+    }
+    try {
+      await _allWorkersDone.future;
+    } finally {
+      connectWatchdog?.cancel();
+    }
+  }
+
+  Future<void> finalizeAndVerify() async {
+    for (final target in fileTargets) {
+      if (target.targetSize == 0) continue;
+      await target.awaitPendingWrites();
+      if (!target._finalized) {
+        throw 'Transfer incomplete for ${p.basename(target.targetPath)}';
+      }
+    }
+    if (receivedBytes < totalExpectedBytes) {
+      throw 'Incomplete multi-stream payload ($receivedBytes / $totalExpectedBytes)';
+    }
+    completedCleanly = true;
+  }
+
+  Future<void> abort() async {
+    aborted = true;
+    for (final ws in _workerSockets.toList()) {
+      try {
+        ws.destroy();
+      } catch (_) {}
+    }
+    _workerSockets.clear();
+    for (final target in fileTargets) {
+      await target.abortAndCleanup();
+    }
+    if (!_allWorkersDone.isCompleted) {
+      _allWorkersDone.completeError('Transfer Cancelled');
+    }
+  }
+}
 
 /// Handles the receiver side of the file transfer protocol.
 ///
-/// Binds a TCP server, accepts incoming connections, parses the JSON metadata
-/// header, requests user authorization, then writes incoming bytes to disk.
+/// Binds a plain TCP or TLS 1.3 server (or connects outbound in Reverse-Connect
+/// mode), accepts incoming connections, validates metadata & peer trust/SAS,
+/// authorizes, and writes incoming streams atomically via `.daphq-partial`.
 class ReceiverController {
   static int _fallbackNameCounter = 0;
 
-  ServerSocket? _server;
+  ServerSocket? _plainServer;
+  SecureServerSocket? _secureServer;
   Socket? _activeClient;
+  BufferedSocketReader? _activeClientReader;
   IOSink? _activeSink;
   String? _activePartialPath;
   final Set<String> _activePartialPaths = <String>{};
+  _V2ReceiveSession? _activeV2Session;
+  bool _hasActiveTransfer = false;
   void Function()? _activeAuthDismissCallback;
   bool _isCancelled = false;
   String? _cancelReason;
@@ -29,14 +287,9 @@ class ReceiverController {
   String? _currentSenderDeviceName;
   Map<String, dynamic>? lastReceivedMetadata;
 
-  /// Machine-readable lifecycle phase (plan T-002) — set at control-flow
-  /// boundaries so the cubit never parses status strings again.
   TransferPhase currentPhase = TransferPhase.idle;
 
-  /// Starts a TCP server and waits for incoming file transfers.
-  ///
-  /// [saveDirectory] is the folder where received files will be saved.
-  /// [onRequestAuth] is called to ask the user whether to accept a transfer.
+  /// Starts listening for incoming transfers over TCP or TLS (`tlsContext != null`).
   Future<void> startReceiver({
     required String saveDirectory,
     required String deviceName,
@@ -53,79 +306,54 @@ class ReceiverController {
     int port = AppConstants.transferPort,
     void Function(int boundPort)? onListening,
     Future<int?> Function()? freeBytesProvider,
+    SecurityContext? tlsContext,
+    DeviceIdentity? localIdentity,
+    Future<bool> Function(TransferAuthRequest request)? onRequestAuthV2,
+    int maxParallelStreams = 4,
   }) async {
     _isCancelled = false;
     _cancelReason = null;
     currentPhase = TransferPhase.idle;
     final Set<String> createdDirs = {};
+
     try {
-      if (_server != null) {
-        await _server!.close();
-        _server = null;
-        // Small delay to ensure OS releases the port
+      await _closeServers();
+      if (_plainServer != null || _secureServer != null) {
         await Future.delayed(const Duration(milliseconds: 200));
       }
 
-      int attempts = 0;
-      const int maxAttempts = 5;
-      Object? lastError;
-
-      while (attempts < maxAttempts && !_isCancelled) {
-        onUpdate(
-          TransferModel(
-            status:
-                "Initializing Server (Attempt ${attempts + 1}/$maxAttempts)...",
-            phase: TransferPhase.idle,
-          ),
-        );
-        try {
-          // Primary strategy: Bind to all interfaces (0.0.0.0)
-          _server = await ServerSocket.bind(
-            InternetAddress.anyIPv4,
-            port,
-            shared: true,
-          );
-          break; // Success
-        } catch (e) {
-          lastError = e;
-
-          // Fallback strategy: Try binding to specific available interfaces
-          try {
-            final interfaces = await NetworkInterface.list(
-              type: InternetAddressType.IPv4,
+      late final ({ServerSocket? plain, SecureServerSocket? secure}) bound;
+      try {
+        bound = await bindTransferServer(
+          port: port,
+          retryDelay: const Duration(seconds: 1),
+          maxAttempts: 5,
+          isCancelled: () => _isCancelled,
+          tlsContext: tlsContext,
+          onAttempt: (attempt, total) {
+            onUpdate(
+              TransferModel(
+                status: "Initializing Server (Attempt $attempt/$total)...",
+                phase: TransferPhase.idle,
+              ),
             );
-            for (var interface in interfaces) {
-              for (var addr in interface.addresses) {
-                if (!addr.isLoopback) {
-                  try {
-                    _server = await ServerSocket.bind(
-                      addr,
-                      port,
-                      shared: true,
-                    );
-                    if (_server != null) break;
-                  } catch (_) {}
-                }
-              }
-              if (_server != null) break;
-            }
-          } catch (_) {}
-
-          if (_server != null) break; // Success via fallback
-
-          attempts++;
-          if (attempts < maxAttempts && !_isCancelled) {
-            await Future.delayed(const Duration(seconds: 1));
-          }
+          },
+        );
+      } catch (lastError) {
+        if (!_isCancelled) {
+          throw "Could not bind server. Please check your network or Hotspot.\n\nTip: Try turning your Hotspot off and on again to reset the connection. (${lastError is SocketException ? lastError.message : lastError})";
         }
+        return;
       }
 
-      if (_server == null && !_isCancelled) {
-        throw "Could not bind server. Please check your network or Hotspot.\n\nTip: Try turning your Hotspot off and on again to reset the connection. (${lastError is SocketException ? lastError.message : lastError})";
+      _plainServer = bound.plain;
+      _secureServer = bound.secure;
+      final int? boundPort = _secureServer?.port ?? _plainServer?.port;
+      if ((_plainServer == null && _secureServer == null) || _isCancelled) {
+        return;
       }
 
-      if (_isCancelled) return;
-      onListening?.call(_server!.port);
+      onListening?.call(boundPort!);
       currentPhase = TransferPhase.idle;
       onUpdate(
         TransferModel(
@@ -134,670 +362,25 @@ class ReceiverController {
         ),
       );
 
-      await for (Socket client in _server!) {
-        // If we already have an active transfer, reject the new one immediately
-        if (_activeClient != null || _activeSink != null) {
-          try {
-            client.write(
-              "${jsonEncode({"status": "REJECTED", "reason": "BUSY"})}\n",
-            );
-            await client.flush();
-            client.destroy();
-          } catch (_) {}
-          continue;
-        }
-
-        _activeClient = client;
-        _activeAuthDismissCallback = onAuthDismissed;
-        _isActiveTransferCancelled = false;
-        _activeTransferCancelReason = null;
-
-        // Wrap the transfer logic in an asynchronous closure so it doesn't block the ServerSocket from accepting/rejecting other connections!
-        () async {
-          try {
-            _activeClient!.setOption(SocketOption.tcpNoDelay, true);
-          } catch (_) {}
-          Map<String, dynamic>? metadata;
-          int totalExpectedBytes = 0;
-          int received = 0;
-          String? originalName;
-          final Stopwatch stopwatch = Stopwatch();
-
-          try {
-            bool isRejected = false;
-            final List<Future<void>> closeFutures = [];
-
-            List<int> headerBuffer = [];
-
-            int currentFileIndex = 0;
-            int bytesReadForCurrentFile = 0;
-            IOSink? currentSink;
-            BytesBuilder? currentBuffer;
-            String? currentSavePath;
-            String? currentPartialPath;
-
-            int bytesSinceUpdate = 0;
-            DateTime lastTime = DateTime.now();
-
-            chunkLoop:
-            await for (var chunk in client.timeout(
-              const Duration(seconds: AppConstants.transferTimeoutSeconds),
-            )) {
-              int offset = 0;
-
-              // Parse JSON header
-              if (metadata == null) {
-                int newlineIndex = chunk.indexOf(10); // \n
-                if (newlineIndex != -1) {
-                  headerBuffer.addAll(chunk.sublist(0, newlineIndex));
-
-                  if (headerBuffer.length > 32 * 1024 * 1024) {
-                    // Header is abnormally large — reject gracefully instead of crashing.
-                    try {
-                      client.write(
-                        "${jsonEncode({"status": "REJECTED", "reason": "HEADER_TOO_LARGE"})}\n",
-                      );
-                      await client.flush();
-                      client.destroy();
-                    } catch (_) {}
-                    isRejected = true;
-                    currentPhase = TransferPhase.idle;
-                    onUpdate(
-                      TransferModel(
-                        status: "Ready & Waiting...",
-                        phase: TransferPhase.idle,
-                      ),
-                    );
-                    break;
-                  }
-
-                  String jsonStr = utf8.decode(headerBuffer);
-                  final decoded = jsonDecode(jsonStr);
-                  if (decoded is! Map<String, dynamic>) {
-                    throw "Invalid transfer metadata.";
-                  }
-                  metadata = decoded;
-                  lastReceivedMetadata = metadata;
-                  originalName = metadata["fileName"]?.toString();
-                  _currentSenderDeviceName =
-                      metadata["senderDeviceName"]?.toString() ??
-                      "the other device";
-
-                  offset = newlineIndex + 1;
-
-                  // Validate files list and total expected payload up-front
-                  final rawFiles = metadata["files"];
-                  if (rawFiles is! List || rawFiles.isEmpty) {
-                    throw "No valid files in transfer metadata.";
-                  }
-                  totalExpectedBytes = 0;
-                  for (final entry in rawFiles) {
-                    if (entry is! Map ||
-                        entry["path"] is! String ||
-                        entry["size"] is! int ||
-                        (entry["size"] as int) < 0) {
-                      throw "Invalid file entry in transfer metadata.";
-                    }
-                    totalExpectedBytes += entry["size"] as int;
-                  }
-                  double totalSizeMB = totalExpectedBytes / 1024 / 1024;
-
-                  // Pre-fetch storage space concurrently in the background while the user is viewing the authorization dialog!
-                  // This ensures we never block the dialog display and never delay the ready signal after the user accepts.
-                  final Future<int?> freeSpaceBytesFuture =
-                      freeBytesProvider != null
-                      ? freeBytesProvider().catchError((_) => null)
-                      : getStorageSpace(
-                              lowOnSpaceThreshold: 0,
-                              fractionDigits: 1,
-                            )
-                            .timeout(const Duration(milliseconds: 1500))
-                            .then<int?>((val) => val.free)
-                            .catchError((_) => null);
-
-                  currentPhase = TransferPhase.waitingAuth;
-                  final bool isAccepted = await onRequestAuth(
-                    client.remoteAddress.address,
-                    _currentSenderDeviceName ?? "Unknown Device",
-                    rawFiles.length,
-                    totalSizeMB,
-                  ).timeout(
-                    const Duration(minutes: AppConstants.authTimeoutMinutes),
-                    onTimeout: () {
-                      onAuthDismissed?.call();
-                      return false;
-                    },
-                  );
-
-                  if (!isAccepted || _isCancelled || _isActiveTransferCancelled) {
-                    try {
-                      client.write("${jsonEncode({"status": "REJECTED"})}\n");
-                      await client.flush();
-                    } catch (_) {}
-                    client.destroy();
-                    isRejected = true;
-                    currentPhase = TransferPhase.idle;
-                    onUpdate(
-                      TransferModel(
-                        status: "Transfer Rejected. Ready & Waiting...",
-                        phase: TransferPhase.idle,
-                      ),
-                    );
-                    break;
-                  } else {
-                    // Update UI immediately to let the user know we accepted and are starting!
-                    currentPhase = TransferPhase.receiving;
-                    onUpdate(
-                      TransferModel(
-                        status: "Connecting & Starting...",
-                        totalSize: totalExpectedBytes / 1024 / 1024,
-                        progress: 0.0,
-                        fileName: originalName ?? "",
-                        phase: TransferPhase.receiving,
-                      ),
-                    );
-
-                    // Post-acceptance Free Space Check (Awaiting the pre-fetched future, which is already resolved in 0ms)
-                    try {
-                      final int? freeBytes = await freeSpaceBytesFuture;
-                      if (freeBytes != null && freeBytes < totalExpectedBytes) {
-                        client.write(
-                          "${jsonEncode({"status": "REJECTED", "reason": "OUT_OF_SPACE"})}\n",
-                        );
-                        await client.flush();
-                        client.destroy();
-                        isRejected = true;
-                        currentPhase = TransferPhase.idle;
-                        final freeMb = (freeBytes / 1024 / 1024).toStringAsFixed(1);
-                        onUpdate(
-                          TransferModel(
-                            status:
-                                "Transfer rejected: Not enough space "
-                                "(need ${(totalSizeMB).toStringAsFixed(1)} MB, "
-                                "$freeMb MB available). Ready & Waiting...",
-                            phase: TransferPhase.idle,
-                          ),
-                        );
-                        break;
-                      }
-                    } catch (_) {
-                      // If space check fails for some reason (e.g. platform error),
-                      // we proceed as a fallback rather than blocking the transfer.
-                    }
-
-                    // Resolve collision-safe & traversal-safe target paths for every item
-                    try {
-                      _prepareTargetPaths(saveDirectory, metadata);
-                    } catch (e) {
-                      try {
-                        client.write(
-                          "${jsonEncode({"status": "REJECTED", "reason": "INVALID_PATH"})}\n",
-                        );
-                        await client.flush();
-                        client.destroy();
-                      } catch (_) {}
-                      rethrow;
-                    }
-
-                    try {
-                      client.write("${jsonEncode({"s": "r"})}\n");
-                      await client.flush();
-                      stopwatch.start();
-                    } catch (_) {
-                      throw "Sender disconnected before starting.";
-                    }
-
-                    final List<dynamic> initialFiles =
-                        metadata["files"] as List<dynamic>;
-                    currentFileIndex = await _drainZeroByteFiles(
-                      files: initialFiles,
-                      currentFileIndex: currentFileIndex,
-                      saveDirectory: saveDirectory,
-                      createdDirs: createdDirs,
-                      closeFutures: closeFutures,
-                    );
-                    if (currentFileIndex >= initialFiles.length) {
-                      break chunkLoop;
-                    }
-                  }
-                } else {
-                  headerBuffer.addAll(chunk);
-                  if (headerBuffer.length > 32 * 1024 * 1024) {
-                    // Header is abnormally large — reject gracefully instead of crashing.
-                    try {
-                      client.write(
-                        "${jsonEncode({"status": "REJECTED", "reason": "HEADER_TOO_LARGE"})}\n",
-                      );
-                      await client.flush();
-                      client.destroy();
-                    } catch (_) {}
-                    isRejected = true;
-                    currentPhase = TransferPhase.idle;
-                    onUpdate(
-                      TransferModel(
-                        status: "Ready & Waiting...",
-                        phase: TransferPhase.idle,
-                      ),
-                    );
-                    break;
-                  }
-                  continue;
-                }
-              }
-
-              final List<dynamic> files = metadata["files"] as List<dynamic>;
-              while (offset < chunk.length && currentFileIndex < files.length) {
-                final fileMeta = files[currentFileIndex];
-                final int targetSize = fileMeta["size"] as int;
-
-                // Open target partial for writing if not already open
-                if (currentSink == null && currentBuffer == null) {
-                  bytesReadForCurrentFile = 0;
-                  final savePath = _resolveContainmentCheckedPath(
-                    saveDirectory,
-                    fileMeta["path"] as String,
-                  );
-                  final parentPath = p.dirname(savePath);
-                  if (!createdDirs.contains(parentPath)) {
-                    Directory(parentPath).createSync(recursive: true);
-                    createdDirs.add(parentPath);
-                  }
-
-                  currentSavePath = savePath;
-                  currentPartialPath = '$savePath.daphq-partial';
-
-                  if (targetSize <= 512 * 1024) {
-                    currentBuffer = BytesBuilder(copy: false);
-                  } else {
-                    _activePartialPath = currentPartialPath;
-                    _activePartialPaths.add(currentPartialPath);
-                    final f = File(currentPartialPath);
-                    currentSink = f.openWrite();
-                    _activeSink = currentSink;
-                  }
-                }
-
-                final int remainingInChunk = chunk.length - offset;
-                final int bytesNeeded = targetSize - bytesReadForCurrentFile;
-                final int bytesToProcess = remainingInChunk <= bytesNeeded
-                    ? remainingInChunk
-                    : bytesNeeded;
-
-                if (bytesToProcess > 0) {
-                  if (currentBuffer != null) {
-                    currentBuffer.add(
-                      Uint8List.sublistView(
-                        chunk,
-                        offset,
-                        offset + bytesToProcess,
-                      ),
-                    );
-                  } else if (currentSink != null) {
-                    currentSink.add(
-                      Uint8List.sublistView(
-                        chunk,
-                        offset,
-                        offset + bytesToProcess,
-                      ),
-                    );
-                  }
-                  bytesReadForCurrentFile += bytesToProcess;
-                  received += bytesToProcess;
-                  bytesSinceUpdate += bytesToProcess;
-                  offset += bytesToProcess;
-                }
-
-                // Update speed in UI
-                final now = DateTime.now();
-                final elapsedMs = now.difference(lastTime).inMilliseconds;
-                if (elapsedMs > AppConstants.speedUpdateIntervalMs) {
-                  final double speed =
-                      (bytesSinceUpdate / 1024 / 1024) / (elapsedMs / 1000.0);
-                  onUpdate(
-                    TransferModel(
-                      speed: speed,
-                      transferred: received / 1024 / 1024,
-                      fileName: p.basename(fileMeta["path"] as String),
-                      status: "Receiving Data...",
-                      totalSize: totalExpectedBytes / 1024 / 1024,
-                      progress: totalExpectedBytes > 0
-                          ? received / totalExpectedBytes
-                          : 0.0,
-                      phase: TransferPhase.receiving,
-                    ),
-                  );
-                  bytesSinceUpdate = 0;
-                  lastTime = now;
-                }
-
-                // Finalize current file when its full payload is received
-                if (bytesReadForCurrentFile == targetSize) {
-                  final String targetPath = currentSavePath!;
-                  final String partialPath = currentPartialPath!;
-                  currentSavePath = null;
-                  currentPartialPath = null;
-
-                  if (currentBuffer != null) {
-                    final bufferToSave = currentBuffer;
-                    currentBuffer = null;
-                    _activePartialPaths.add(partialPath);
-                    closeFutures.add(
-                      _finalizeBufferedFile(
-                        partialPath: partialPath,
-                        targetPath: targetPath,
-                        bytes: bufferToSave.takeBytes(),
-                      ),
-                    );
-                  } else if (currentSink != null) {
-                    final sinkToClose = currentSink;
-                    currentSink = null;
-                    if (identical(_activeSink, sinkToClose)) {
-                      _activeSink = null;
-                    }
-                    closeFutures.add(
-                      _finalizeStreamedFile(
-                        sink: sinkToClose,
-                        partialPath: partialPath,
-                        targetPath: targetPath,
-                      ),
-                    );
-                  }
-
-                  // Bound concurrent disk finalizations to protect FDs and RAM
-                  if (closeFutures.length >= 64) {
-                    await Future.wait(closeFutures);
-                    closeFutures.clear();
-                  }
-
-                  bytesReadForCurrentFile = 0;
-                  currentFileIndex++;
-
-                  // Drain any zero-byte files immediately so trailing empty
-                  // files are finalized without waiting for extra socket chunks.
-                  currentFileIndex = await _drainZeroByteFiles(
-                    files: files,
-                    currentFileIndex: currentFileIndex,
-                    saveDirectory: saveDirectory,
-                    createdDirs: createdDirs,
-                    closeFutures: closeFutures,
-                  );
-
-                  if (currentFileIndex >= files.length) {
-                    break chunkLoop;
-                  }
-                }
-              }
-            } // end await for chunk
-
-            if (isRejected) {
-              return;
-            }
-
-            if (_isCancelled || _isActiveTransferCancelled) {
-              if (currentSink != null) {
-                final sink = currentSink;
-                currentSink = null;
-                if (identical(_activeSink, sink)) _activeSink = null;
-                try {
-                  await sink.close();
-                } catch (_) {}
-              }
-              throw _activeTransferCancelReason ??
-                  _cancelReason ??
-                  "Transfer Cancelled";
-            }
-
-            // Guard: if metadata is null, the sender connected but dropped before header
-            if (metadata == null) {
-              currentPhase = TransferPhase.idle;
-              onUpdate(
-                TransferModel(
-                  status: "Ready & Waiting as $deviceName",
-                  phase: TransferPhase.idle,
-                ),
-              );
-              return;
-            }
-
-            // Check for premature connection drop before finalizing partials
-            if (received < totalExpectedBytes) {
-              if (currentSink != null) {
-                final sink = currentSink;
-                currentSink = null;
-                if (identical(_activeSink, sink)) _activeSink = null;
-                try {
-                  await sink.close();
-                } catch (_) {}
-              }
-              currentBuffer = null;
-              throw "Transfer cancelled by ${_currentSenderDeviceName ?? 'the other device'}";
-            }
-
-            final List<dynamic> files = metadata["files"] as List<dynamic>;
-
-            // Handle an open file if the stream ended right at its byte boundary (e.g. 0-byte file)
-            if (currentFileIndex < files.length &&
-                (currentBuffer != null || currentSink != null)) {
-              final int targetSize = files[currentFileIndex]["size"] as int;
-              if (bytesReadForCurrentFile == targetSize &&
-                  currentSavePath != null &&
-                  currentPartialPath != null) {
-                final String targetPath = currentSavePath;
-                final String partialPath = currentPartialPath;
-                currentSavePath = null;
-                currentPartialPath = null;
-
-                if (currentBuffer != null) {
-                  final bufferToSave = currentBuffer;
-                  currentBuffer = null;
-                  _activePartialPaths.add(partialPath);
-                  closeFutures.add(
-                    _finalizeBufferedFile(
-                      partialPath: partialPath,
-                      targetPath: targetPath,
-                      bytes: bufferToSave.takeBytes(),
-                    ),
-                  );
-                } else if (currentSink != null) {
-                  final sinkToClose = currentSink;
-                  currentSink = null;
-                  if (identical(_activeSink, sinkToClose)) {
-                    _activeSink = null;
-                  }
-                  closeFutures.add(
-                    _finalizeStreamedFile(
-                      sink: sinkToClose,
-                      partialPath: partialPath,
-                      targetPath: targetPath,
-                    ),
-                  );
-                }
-                currentFileIndex++;
-              }
-            }
-
-            // Create any trailing 0-byte files remaining in metadata after all payload bytes arrived
-            currentFileIndex = await _drainZeroByteFiles(
-              files: files,
-              currentFileIndex: currentFileIndex,
-              saveDirectory: saveDirectory,
-              createdDirs: createdDirs,
-              closeFutures: closeFutures,
-            );
-            if (currentFileIndex < files.length) {
-              throw "Transfer cancelled by ${_currentSenderDeviceName ?? 'the other device'}";
-            }
-
-            // Notify finalizing phase while draining all background disk writes & atomic renames
-            if (closeFutures.isNotEmpty) {
-              currentPhase = TransferPhase.finalizing;
-              onUpdate(
-                TransferModel(
-                  status: "Finalizing... Saving to disk",
-                  transferred: received / 1024 / 1024,
-                  totalSize: totalExpectedBytes / 1024 / 1024,
-                  progress: 1.0,
-                  fileName: originalName ?? "",
-                  phase: TransferPhase.finalizing,
-                ),
-              );
-              await Future.wait(closeFutures);
-              closeFutures.clear();
-            }
-
-            // Send tiny done signal since everything is safely written & renamed on disk
-            try {
-              client.write('${jsonEncode({"s": "d"})}\n');
-              await client.flush();
-            } catch (_) {}
-
-            stopwatch.stop();
-            final double finalMB = received / 1024 / 1024;
-            final double elapsedSec = stopwatch.elapsedMilliseconds / 1000.0;
-            final double avgSpeed =
-                elapsedSec > 0.001 ? (finalMB / elapsedSec) : 0.0;
-            currentPhase = TransferPhase.done;
-
-            onUpdate(
-              TransferModel(
-                status: "Transfer Complete!",
-                transferred: finalMB,
-                totalSize: finalMB,
-                progress: 1.0,
-                avgSpeed: avgSpeed.toStringAsFixed(2),
-                totalTime: elapsedSec.toStringAsFixed(1),
-                fileName: originalName ?? "Multiple Items",
-                phase: TransferPhase.done,
-              ),
-            );
-
-            // All done signal and writes completed
-          } on PathAccessException {
-            currentPhase = TransferPhase.failed;
-            onUpdate(
-              TransferModel(
-                status: "Error: Permission Denied",
-                totalSize: totalExpectedBytes / 1024 / 1024,
-                fileName: originalName ?? "",
-                phase: TransferPhase.failed,
-              ),
-            );
-          } catch (e) {
-            if (_isCancelled ||
-                _isActiveTransferCancelled ||
-                e is TimeoutException) {
-              currentPhase = TransferPhase.cancelled;
-            } else if (e is SocketException) {
-              final osError = e.osError?.errorCode;
-              final msg = e.message.toLowerCase();
-              currentPhase = (osError == 104 ||
-                      osError == 10054 ||
-                      osError == 32 ||
-                      msg.contains('connection reset by peer'))
-                  ? TransferPhase.cancelled
-                  : TransferPhase.failed;
-            } else if (e.toString().contains('Transfer cancelled')) {
-              currentPhase = TransferPhase.cancelled;
-            } else {
-              currentPhase = TransferPhase.failed;
-            }
-            if (_isCancelled) {
-              onUpdate(
-                TransferModel(
-                  status: _cancelReason ?? "Transfer Cancelled.",
-                  transferred: received / 1024 / 1024,
-                  totalSize: totalExpectedBytes / 1024 / 1024,
-                  progress: totalExpectedBytes > 0
-                      ? received / totalExpectedBytes
-                      : 0.0,
-                  fileName: originalName ?? "",
-                  phase: TransferPhase.cancelled,
-                ),
-              );
-            } else if (_isActiveTransferCancelled) {
-              onUpdate(
-                TransferModel(
-                  status: _activeTransferCancelReason ?? "Transfer Cancelled.",
-                  transferred: received / 1024 / 1024,
-                  totalSize: totalExpectedBytes / 1024 / 1024,
-                  progress: totalExpectedBytes > 0
-                      ? received / totalExpectedBytes
-                      : 0.0,
-                  fileName: originalName ?? "",
-                  phase: TransferPhase.cancelled,
-                ),
-              );
-            } else if (e is SocketException) {
-              onUpdate(
-                TransferModel(
-                  status: _mapReceiverSocketError(e),
-                  transferred: received / 1024 / 1024,
-                  totalSize: totalExpectedBytes / 1024 / 1024,
-                  progress: totalExpectedBytes > 0
-                      ? received / totalExpectedBytes
-                      : 0.0,
-                  fileName: originalName ?? "",
-                  phase: currentPhase,
-                ),
-              );
-            } else if (e is TimeoutException) {
-              onUpdate(
-                TransferModel(
-                  status:
-                      "Transfer cancelled by ${_currentSenderDeviceName ?? 'sender'} (Connection Timeout).",
-                  transferred: received / 1024 / 1024,
-                  totalSize: totalExpectedBytes / 1024 / 1024,
-                  progress: totalExpectedBytes > 0
-                      ? received / totalExpectedBytes
-                      : 0.0,
-                  fileName: originalName ?? "",
-                  phase: TransferPhase.cancelled,
-                ),
-              );
-            } else {
-              String errorMsg = e.toString();
-              if (errorMsg.endsWith('.')) {
-                errorMsg = errorMsg.substring(0, errorMsg.length - 1);
-              }
-              onUpdate(
-                TransferModel(
-                  status: "$errorMsg. Ready & Waiting...",
-                  transferred: received / 1024 / 1024,
-                  totalSize: totalExpectedBytes / 1024 / 1024,
-                  progress: totalExpectedBytes > 0
-                      ? received / totalExpectedBytes
-                      : 0.0,
-                  fileName: originalName ?? "",
-                  phase: currentPhase,
-                ),
-              );
-            }
-          } finally {
-            try {
-              onAuthDismissed?.call();
-              // CRITICAL: Close active sink BEFORE deleting partials so OS releases file handle
-              if (_activeSink != null) {
-                try {
-                  await _activeSink!.close();
-                } catch (_) {}
-                _activeSink = null;
-              }
-              // Plan T-010: remove any incomplete .daphq-partial files on abort/error
-              for (final partial in _activePartialPaths.toList()) {
-                _safeDeleteFile(partial);
-              }
-              _activePartialPaths.clear();
-              if (_activePartialPath != null) {
-                _safeDeleteFile(_activePartialPath!);
-                _activePartialPath = null;
-              }
-              client.destroy();
-            } catch (_) {}
-            _activeAuthDismissCallback = null;
-            _activeClient = null;
-            _activeSink = null;
-          }
-        }();
+      final Stream<Socket> rawAcceptStream = _secureServer ?? _plainServer!;
+      final Stream<Socket> acceptStream = rawAcceptStream.handleError((_) {});
+      await for (final Socket client in acceptStream) {
+        unawaited(
+          _dispatchAcceptedSocket(
+            client: client,
+            saveDirectory: saveDirectory,
+            deviceName: deviceName,
+            createdDirs: createdDirs,
+            onUpdate: onUpdate,
+            onRequestAuth: onRequestAuth,
+            onRequestAuthV2: onRequestAuthV2,
+            onAuthDismissed: onAuthDismissed,
+            freeBytesProvider: freeBytesProvider,
+            localIdentity: localIdentity,
+            isTlsConnection: tlsContext != null,
+            maxParallelStreams: maxParallelStreams,
+          ),
+        );
       }
     } on PathAccessException {
       currentPhase = TransferPhase.failed;
@@ -808,7 +391,1034 @@ class ReceiverController {
         ),
       );
     } catch (e) {
-      if (_isCancelled || e is TimeoutException) {
+      _handleOuterReceiverError(e, onUpdate);
+    } finally {
+      _activeAuthDismissCallback?.call();
+      _activeAuthDismissCallback = null;
+      _activeClient = null;
+      _activeClientReader = null;
+      _activeSink = null;
+      _hasActiveTransfer = false;
+      _isCancelled = false;
+      onDone();
+    }
+  }
+
+  /// Reverse-Connect mode: Windows receiver dials outbound TCP/TLS to an Android sender
+  /// avoiding Windows Defender Public-profile inbound firewall blocks without Admin rights.
+  Future<void> acceptReverseTransfer({
+    required String senderIp,
+    required int port,
+    required String saveDirectory,
+    required String deviceName,
+    required Function(TransferModel) onUpdate,
+    Future<bool> Function(
+      String senderIp,
+      String senderDeviceName,
+      int fileCount,
+      double totalSizeMB,
+    )?
+    onRequestAuth,
+    Future<bool> Function(TransferAuthRequest request)? onRequestAuthV2,
+    void Function()? onAuthDismissed,
+    bool useTls = false,
+    String? expectedSenderFingerprint,
+    String? reverseAuthToken,
+    DeviceIdentity? localIdentity,
+    Future<int?> Function()? freeBytesProvider,
+    int maxParallelStreams = 4,
+    void Function()? onDone,
+  }) async {
+    if (_hasActiveTransfer || _activeClient != null || _activeSink != null) {
+      return;
+    }
+    _isCancelled = false;
+    _cancelReason = null;
+    _isActiveTransferCancelled = false;
+    _activeTransferCancelReason = null;
+    final Set<String> createdDirs = <String>{};
+
+    Socket? controlSocket;
+    BufferedSocketReader? reader;
+    bool ownsActiveSlot = false;
+    bool bailedBecauseBusy = false;
+    try {
+      String? pinnedSenderFp = (expectedSenderFingerprint != null &&
+              expectedSenderFingerprint.trim().isNotEmpty)
+          ? expectedSenderFingerprint.trim().toLowerCase()
+          : null;
+
+      controlSocket = await connectTransferSocket(
+        host: senderIp,
+        port: port,
+        useTls: useTls,
+        timeout: const Duration(seconds: 15),
+        expectedPeerFingerprint: pinnedSenderFp,
+        onVerifyPeerFingerprint: (useTls && pinnedSenderFp == null)
+            ? (actualFp) async {
+                pinnedSenderFp = actualFp.trim().toLowerCase();
+                return pinnedSenderFp!.isNotEmpty;
+              }
+            : null,
+      );
+
+      if (_isCancelled || _isActiveTransferCancelled) {
+        controlSocket.destroy();
+        return;
+      }
+
+      if (useTls &&
+          pinnedSenderFp == null &&
+          controlSocket is SecureSocket &&
+          controlSocket.peerCertificate != null) {
+        pinnedSenderFp = DeviceIdentityService.fingerprintFromCertificate(
+          controlSocket.peerCertificate!,
+        );
+      }
+
+      controlSocket.write(
+        '${jsonEncode({
+          "v": 2,
+          "role": "reverse_control",
+          if (reverseAuthToken != null && reverseAuthToken.isNotEmpty)
+            "reverseToken": reverseAuthToken,
+          if (localIdentity != null) "receiverPeerId": localIdentity.peerId,
+          if (localIdentity != null) "receiverFp": localIdentity.certFingerprint,
+        })}\n',
+      );
+      await controlSocket.flush();
+
+      reader = BufferedSocketReader(controlSocket);
+      final headerResult = await reader.readJsonHeader(
+        maxHeaderBytes: 32 * 1024 * 1024,
+        timeout: const Duration(
+          seconds: AppConstants.transferTimeoutSeconds,
+        ),
+      );
+      if (headerResult == null || _isCancelled || _isActiveTransferCancelled) {
+        await reader.cancel();
+        controlSocket.destroy();
+        return;
+      }
+
+      if (_hasActiveTransfer || _activeClient != null || _activeSink != null) {
+        bailedBecauseBusy = true;
+        await reader.cancel();
+        controlSocket.destroy();
+        return;
+      }
+
+      ownsActiveSlot = true;
+      _hasActiveTransfer = true;
+      _activeClient = controlSocket;
+      _activeClientReader = reader;
+      _activeAuthDismissCallback = onAuthDismissed;
+
+      await _handleTransferSession(
+        client: controlSocket,
+        reader: reader,
+        metadata: headerResult.header,
+        initialPayload: headerResult.initialPayload,
+        saveDirectory: saveDirectory,
+        deviceName: deviceName,
+        createdDirs: createdDirs,
+        onUpdate: onUpdate,
+        onRequestAuth: onRequestAuth ?? (_, _, _, _) async => false,
+        onRequestAuthV2: onRequestAuthV2,
+        onAuthDismissed: onAuthDismissed,
+        freeBytesProvider: freeBytesProvider,
+        localIdentity: localIdentity,
+        isTlsConnection: useTls,
+        maxParallelStreams: maxParallelStreams,
+        reverseConnectTarget: (
+          ip: senderIp,
+          port: port,
+          useTls: useTls,
+          expectedFingerprint: pinnedSenderFp,
+          reverseToken: reverseAuthToken,
+        ),
+      );
+    } catch (e) {
+      if (!bailedBecauseBusy && (ownsActiveSlot || !_hasActiveTransfer)) {
+        _handleOuterReceiverError(e, onUpdate);
+      }
+    } finally {
+      if (ownsActiveSlot) {
+        _activeAuthDismissCallback?.call();
+        _activeAuthDismissCallback = null;
+        _hasActiveTransfer = false;
+        _activeClient = null;
+        _activeClientReader = null;
+        _activeSink = null;
+      }
+      if (!bailedBecauseBusy) {
+        onDone?.call();
+      }
+    }
+  }
+
+  Future<void> _dispatchAcceptedSocket({
+    required Socket client,
+    required String saveDirectory,
+    required String deviceName,
+    required Set<String> createdDirs,
+    required Function(TransferModel) onUpdate,
+    required Future<bool> Function(String, String, int, double) onRequestAuth,
+    required Future<bool> Function(TransferAuthRequest)? onRequestAuthV2,
+    required void Function()? onAuthDismissed,
+    required Future<int?> Function()? freeBytesProvider,
+    required DeviceIdentity? localIdentity,
+    required bool isTlsConnection,
+    required int maxParallelStreams,
+  }) async {
+    try {
+      client.setOption(SocketOption.tcpNoDelay, true);
+    } catch (_) {}
+
+    final reader = BufferedSocketReader(client);
+    try {
+      final headerResult = await reader.readJsonHeader(
+        maxHeaderBytes: 32 * 1024 * 1024,
+        timeout: const Duration(
+          seconds: AppConstants.transferTimeoutSeconds,
+        ),
+      );
+      if (headerResult == null) {
+        client.destroy();
+        return;
+      }
+
+      final Map<String, dynamic> header = headerResult.header;
+      if (header["role"] == "data") {
+        final session = _activeV2Session;
+        final String? sid = header["sessionId"] as String?;
+        if (session == null || sid != session.sessionId || session.aborted) {
+          try {
+            client.write(
+              "${jsonEncode({"status": "REJECTED", "reason": "INVALID_SESSION"})}\n",
+            );
+            await client.flush();
+          } catch (_) {}
+          client.destroy();
+          return;
+        }
+        await session.runWorkerConnection(socket: client, reader: reader);
+        return;
+      }
+
+      if (_hasActiveTransfer || _activeClient != null || _activeSink != null) {
+        try {
+          client.write(
+            "${jsonEncode({"status": "REJECTED", "reason": "BUSY"})}\n",
+          );
+          await client.flush();
+          client.destroy();
+        } catch (_) {}
+        return;
+      }
+
+      _hasActiveTransfer = true;
+      _activeClient = client;
+      _activeClientReader = reader;
+      _activeAuthDismissCallback = onAuthDismissed;
+      _isActiveTransferCancelled = false;
+      _activeTransferCancelReason = null;
+
+      await _handleTransferSession(
+        client: client,
+        reader: reader,
+        metadata: header,
+        initialPayload: headerResult.initialPayload,
+        saveDirectory: saveDirectory,
+        deviceName: deviceName,
+        createdDirs: createdDirs,
+        onUpdate: onUpdate,
+        onRequestAuth: onRequestAuth,
+        onRequestAuthV2: onRequestAuthV2,
+        onAuthDismissed: onAuthDismissed,
+        freeBytesProvider: freeBytesProvider,
+        localIdentity: localIdentity,
+        isTlsConnection: isTlsConnection,
+        maxParallelStreams: maxParallelStreams,
+      );
+    } on FormatException catch (e) {
+      if (e.message == 'HEADER_TOO_LARGE') {
+        try {
+          client.write(
+            "${jsonEncode({"status": "REJECTED", "reason": "HEADER_TOO_LARGE"})}\n",
+          );
+          await client.flush();
+          client.destroy();
+        } catch (_) {}
+        currentPhase = TransferPhase.idle;
+        onUpdate(
+          TransferModel(
+            status: "Ready & Waiting...",
+            phase: TransferPhase.idle,
+          ),
+        );
+      } else {
+        client.destroy();
+      }
+    } catch (_) {
+      client.destroy();
+    }
+  }
+
+  Future<void> _handleTransferSession({
+    required Socket client,
+    required BufferedSocketReader reader,
+    required Map<String, dynamic> metadata,
+    required Uint8List initialPayload,
+    required String saveDirectory,
+    required String deviceName,
+    required Set<String> createdDirs,
+    required Function(TransferModel) onUpdate,
+    required Future<bool> Function(String, String, int, double) onRequestAuth,
+    required Future<bool> Function(TransferAuthRequest)? onRequestAuthV2,
+    required void Function()? onAuthDismissed,
+    required Future<int?> Function()? freeBytesProvider,
+    required DeviceIdentity? localIdentity,
+    required bool isTlsConnection,
+    required int maxParallelStreams,
+    ({
+      String ip,
+      int port,
+      bool useTls,
+      String? expectedFingerprint,
+      String? reverseToken,
+    })?
+        reverseConnectTarget,
+  }) async {
+    int totalExpectedBytes = 0;
+    int received = 0;
+    String? originalName;
+    final Stopwatch stopwatch = Stopwatch();
+    _V2ReceiveSession? v2Session;
+
+    try {
+      bool isRejected = false;
+      final List<Future<void>> closeFutures = [];
+
+      lastReceivedMetadata = metadata;
+      originalName = metadata["fileName"]?.toString();
+      _currentSenderDeviceName =
+          metadata["senderDeviceName"]?.toString() ?? "the other device";
+
+      final rawFiles = metadata["files"];
+      if (rawFiles is! List || rawFiles.isEmpty) {
+        throw "No valid files in transfer metadata.";
+      }
+      totalExpectedBytes = 0;
+      for (final entry in rawFiles) {
+        if (entry is! Map ||
+            entry["path"] is! String ||
+            entry["size"] is! int ||
+            (entry["size"] as int) < 0) {
+          throw "Invalid file entry in transfer metadata.";
+        }
+        totalExpectedBytes += entry["size"] as int;
+      }
+      final double totalSizeMB = totalExpectedBytes / 1024 / 1024;
+
+      final Future<int?> freeSpaceBytesFuture = freeBytesProvider != null
+          ? freeBytesProvider().catchError((_) => null)
+          : getStorageSpace(
+                  lowOnSpaceThreshold: 0,
+                  fractionDigits: 1,
+                )
+                .timeout(const Duration(milliseconds: 1500))
+                .then<int?>((val) => val.free)
+                .catchError((_) => null);
+
+      currentPhase = TransferPhase.waitingAuth;
+      final String? senderPeerId =
+          (metadata["senderPeerId"] as String?)?.trim().toLowerCase();
+      final String? senderFp =
+          (metadata["senderFp"] as String?)?.trim().toLowerCase();
+      final String? senderCertPem = metadata["senderCertPem"] as String?;
+      final String? senderProof = metadata["senderProof"] as String?;
+      final String? sasCode = (localIdentity != null && senderFp != null)
+          ? localIdentity.computeSasWith(senderFp)
+          : null;
+
+      bool isIdentityVerified = false;
+      if (isTlsConnection && senderFp != null && senderFp.length == 64) {
+        String? reverseTlsFp;
+        if (reverseConnectTarget != null &&
+            client is SecureSocket &&
+            client.peerCertificate != null) {
+          reverseTlsFp = DeviceIdentityService.fingerprintFromCertificate(
+            client.peerCertificate!,
+          );
+        }
+        final String? serverFpForProof = reverseConnectTarget != null
+            ? (reverseTlsFp ??
+                reverseConnectTarget.expectedFingerprint?.trim().toLowerCase())
+            : localIdentity?.certFingerprint.trim().toLowerCase();
+
+        bool proofOk = false;
+        if (senderPeerId != null &&
+            senderPeerId.isNotEmpty &&
+            senderCertPem != null &&
+            senderProof != null &&
+            serverFpForProof != null &&
+            serverFpForProof.isNotEmpty) {
+          final String sessionId = (metadata["sessionId"] as String?) ?? '';
+          final String msg = DeviceIdentityService.buildAuthProofMessage(
+            sessionId: sessionId,
+            senderPeerId: senderPeerId,
+            senderFingerprint: senderFp,
+            serverFingerprint: serverFpForProof,
+          );
+          proofOk = DeviceIdentityService.verifyAuthProof(
+            senderCertPem: senderCertPem,
+            expectedFingerprint: senderFp,
+            message: msg,
+            signatureB64: senderProof,
+          );
+        }
+
+        if (reverseConnectTarget != null) {
+          final bool matchesReverseTls =
+              reverseTlsFp != null && reverseTlsFp == senderFp;
+          isIdentityVerified = matchesReverseTls &&
+              (senderProof == null || proofOk);
+        } else {
+          isIdentityVerified = proofOk;
+        }
+      }
+
+      final bool isAccepted = await (onRequestAuthV2 != null
+              ? onRequestAuthV2(
+                  TransferAuthRequest(
+                    senderIp: client.remoteAddress.address,
+                    senderDeviceName:
+                        _currentSenderDeviceName ?? "Unknown Device",
+                    fileCount: rawFiles.length,
+                    totalSizeMB: totalSizeMB,
+                    senderPeerId: senderPeerId,
+                    senderFingerprint: senderFp,
+                    sasCode: sasCode,
+                    isTls: isTlsConnection,
+                    isReverseConnect: reverseConnectTarget != null,
+                    isIdentityVerified: isIdentityVerified,
+                  ),
+                )
+              : onRequestAuth(
+                  client.remoteAddress.address,
+                  _currentSenderDeviceName ?? "Unknown Device",
+                  rawFiles.length,
+                  totalSizeMB,
+                ))
+          .timeout(
+        const Duration(minutes: AppConstants.authTimeoutMinutes),
+        onTimeout: () {
+          onAuthDismissed?.call();
+          return false;
+        },
+      );
+
+      if (!isAccepted || _isCancelled || _isActiveTransferCancelled) {
+        try {
+          client.write("${jsonEncode({"status": "REJECTED"})}\n");
+          await client.flush();
+        } catch (_) {}
+        client.destroy();
+        isRejected = true;
+        currentPhase = TransferPhase.idle;
+        onUpdate(
+          TransferModel(
+            status: "Transfer Rejected. Ready & Waiting...",
+            phase: TransferPhase.idle,
+          ),
+        );
+        return;
+      }
+
+      currentPhase = TransferPhase.receiving;
+      onUpdate(
+        TransferModel(
+          status: "Connecting & Starting...",
+          totalSize: totalSizeMB,
+          progress: 0.0,
+          fileName: originalName ?? "",
+          phase: TransferPhase.receiving,
+        ),
+      );
+
+      try {
+        final int? freeBytes = await freeSpaceBytesFuture;
+        if (freeBytes != null && freeBytes < totalExpectedBytes) {
+          client.write(
+            "${jsonEncode({"status": "REJECTED", "reason": "OUT_OF_SPACE"})}\n",
+          );
+          await client.flush();
+          client.destroy();
+          isRejected = true;
+          currentPhase = TransferPhase.idle;
+          final freeMb = (freeBytes / 1024 / 1024).toStringAsFixed(1);
+          onUpdate(
+            TransferModel(
+              status:
+                  "Transfer rejected: Not enough space "
+                  "(need ${(totalSizeMB).toStringAsFixed(1)} MB, "
+                  "$freeMb MB available). Ready & Waiting...",
+              phase: TransferPhase.idle,
+            ),
+          );
+          return;
+        }
+      } catch (_) {}
+
+      try {
+        _prepareTargetPaths(saveDirectory, metadata);
+      } catch (_) {
+        try {
+          client.write(
+            "${jsonEncode({"status": "REJECTED", "reason": "INVALID_PATH"})}\n",
+          );
+          await client.flush();
+          client.destroy();
+        } catch (_) {}
+        rethrow;
+      }
+
+      final int requestedVersion = (metadata["v"] as num?)?.toInt() ?? 1;
+      final int requestedStreams =
+          ((metadata["streams"] as num?)?.toInt() ?? 1).clamp(1, 4);
+      final String? sessionId = metadata["sessionId"] as String?;
+      final int acceptedStreams = (requestedVersion >= 2 &&
+              requestedStreams > 1 &&
+              sessionId != null &&
+              totalExpectedBytes > 0)
+          ? requestedStreams.clamp(1, maxParallelStreams)
+          : 1;
+
+      int bytesSinceUpdate = 0;
+      DateTime lastTime = DateTime.now();
+
+      if (acceptedStreams > 1 && sessionId != null) {
+        final List<_V2FileTarget> targets = <_V2FileTarget>[];
+        for (var i = 0; i < rawFiles.length; i++) {
+          final fileMeta = rawFiles[i];
+          final savePath = _resolveContainmentCheckedPath(
+            saveDirectory,
+            fileMeta["path"] as String,
+          );
+          targets.add(
+            _V2FileTarget(
+              index: i,
+              partialPath: '$savePath.daphq-partial',
+              targetPath: savePath,
+              targetSize: fileMeta["size"] as int,
+              onPartialCreated: _activePartialPaths.add,
+              onPartialFinalized: _activePartialPaths.remove,
+            ),
+          );
+        }
+
+        v2Session = _V2ReceiveSession(
+          sessionId: sessionId,
+          expectedStreams: acceptedStreams,
+          fileTargets: targets,
+          totalExpectedBytes: totalExpectedBytes,
+          chunkTimeout: const Duration(
+            seconds: AppConstants.transferTimeoutSeconds,
+          ),
+          isCancelled: () => _isCancelled || _isActiveTransferCancelled,
+          onProgress: (deltaBytes, activeFileName) {
+            received += deltaBytes;
+            bytesSinceUpdate += deltaBytes;
+            final now = DateTime.now();
+            final elapsedMs = now.difference(lastTime).inMilliseconds;
+            if (elapsedMs > AppConstants.speedUpdateIntervalMs) {
+              final double speed =
+                  (bytesSinceUpdate / 1024 / 1024) / (elapsedMs / 1000.0);
+              onUpdate(
+                TransferModel(
+                  speed: speed,
+                  transferred: received / 1024 / 1024,
+                  fileName: activeFileName,
+                  status: "Turbo Receiving ($acceptedStreams streams)...",
+                  totalSize: totalSizeMB,
+                  progress: totalExpectedBytes > 0
+                      ? received / totalExpectedBytes
+                      : 0.0,
+                  phase: TransferPhase.receiving,
+                ),
+              );
+              bytesSinceUpdate = 0;
+              lastTime = now;
+            }
+          },
+        );
+        _activeV2Session = v2Session;
+      }
+
+      String? receiverProof;
+      if (localIdentity != null &&
+          reverseConnectTarget != null &&
+          isTlsConnection &&
+          requestedVersion >= 2) {
+        final serverFpForReady =
+            reverseConnectTarget.expectedFingerprint?.trim().toLowerCase() ?? '';
+        if (serverFpForReady.length == 64) {
+          final proofMsg = DeviceIdentityService.buildAuthProofMessage(
+            sessionId: sessionId ?? 'v2',
+            senderPeerId: localIdentity.peerId,
+            senderFingerprint: localIdentity.certFingerprint,
+            serverFingerprint: serverFpForReady,
+          );
+          receiverProof = DeviceIdentityService.signAuthProof(
+            privateKeyPem: localIdentity.privateKeyPem,
+            message: proofMsg,
+          );
+        }
+      }
+
+      try {
+        client.write(
+          '${jsonEncode({
+            "s": "r",
+            if (requestedVersion >= 2) "v": 2,
+            if (requestedVersion >= 2) "streams": acceptedStreams,
+            if (requestedVersion >= 2 && localIdentity != null)
+              "receiverPeerId": localIdentity.peerId,
+            if (requestedVersion >= 2 && localIdentity != null)
+              "receiverFp": localIdentity.certFingerprint,
+            if (receiverProof != null && localIdentity != null)
+              "receiverCertPem": localIdentity.certificatePem,
+            "receiverProof": ?receiverProof,
+          })}\n',
+        );
+        await client.flush();
+        stopwatch.start();
+      } catch (_) {
+        throw "Sender disconnected before starting.";
+      }
+
+      if (v2Session != null) {
+        final activeV2 = v2Session;
+        if (reverseConnectTarget != null) {
+          if (reverseConnectTarget.useTls &&
+              (reverseConnectTarget.expectedFingerprint == null ||
+                  reverseConnectTarget.expectedFingerprint!.isEmpty)) {
+            throw const HandshakeException(
+              'Reverse data workers require a pinned sender certificate',
+            );
+          }
+          for (var w = 0; w < acceptedStreams; w++) {
+            final workerIdx = w;
+            unawaited(() async {
+              try {
+                final workerSocket = await connectTransferSocket(
+                  host: reverseConnectTarget.ip,
+                  port: reverseConnectTarget.port,
+                  useTls: reverseConnectTarget.useTls,
+                  timeout: const Duration(seconds: 15),
+                  expectedPeerFingerprint:
+                      reverseConnectTarget.expectedFingerprint,
+                );
+                workerSocket.write(
+                  '${jsonEncode({
+                    "v": 2,
+                    "role": "data",
+                    "sessionId": sessionId,
+                    "workerIndex": workerIdx,
+                    if (reverseConnectTarget.reverseToken != null &&
+                        reverseConnectTarget.reverseToken!.isNotEmpty)
+                      "reverseToken": reverseConnectTarget.reverseToken,
+                  })}\n',
+                );
+                await workerSocket.flush();
+                await activeV2.runWorkerConnection(
+                  socket: workerSocket,
+                  reader: BufferedSocketReader(workerSocket),
+                );
+              } catch (e) {
+                if (!activeV2.aborted && !activeV2.completedCleanly) {
+                  await activeV2.abort();
+                }
+              }
+            }());
+          }
+        }
+
+        // Watch Control socket for premature disconnect/abort while workers transfer.
+        unawaited(
+          reader.drainLines(
+            onLine: (line) {
+              try {
+                final decoded = jsonDecode(line);
+                if (decoded is Map && decoded["status"] == "REJECTED") {
+                  unawaited(activeV2.abort());
+                }
+              } catch (_) {}
+            },
+            onError: (_) {
+              if (!activeV2.completedCleanly) {
+                unawaited(activeV2.abort());
+              }
+            },
+            onDone: () {
+              if (!activeV2.completedCleanly) {
+                unawaited(activeV2.abort());
+              }
+            },
+          ),
+        );
+
+        await v2Session.awaitWorkers(
+          idleConnectTimeout: Duration(
+            seconds: reverseConnectTarget != null ? 15 : 10,
+          ),
+        );
+
+        currentPhase = TransferPhase.finalizing;
+        onUpdate(
+          TransferModel(
+            status: "Finalizing... Saving to disk",
+            transferred: received / 1024 / 1024,
+            totalSize: totalSizeMB,
+            progress: 1.0,
+            fileName: originalName ?? "",
+            phase: TransferPhase.finalizing,
+          ),
+        );
+
+        await v2Session.finalizeAndVerify();
+
+        // Finalize any 0-byte files in the batch only after workers complete cleanly
+        // so aborted or rejected transfers never leave empty stray files behind.
+        for (final entry in rawFiles) {
+          if (_isCancelled || _isActiveTransferCancelled) break;
+          if ((entry["size"] as int) == 0) {
+            final zeroPath = _resolveContainmentCheckedPath(
+              saveDirectory,
+              entry["path"] as String,
+            );
+            final parentPath = p.dirname(zeroPath);
+            if (!createdDirs.contains(parentPath)) {
+              Directory(parentPath).createSync(recursive: true);
+              createdDirs.add(parentPath);
+            }
+            final partialPath = '$zeroPath.daphq-partial';
+            _activePartialPaths.add(partialPath);
+            closeFutures.add(
+              _finalizeBufferedFile(
+                partialPath: partialPath,
+                targetPath: zeroPath,
+                bytes: Uint8List(0),
+              ),
+            );
+            if (closeFutures.length >= 64) {
+              await Future.wait(closeFutures);
+              closeFutures.clear();
+            }
+          }
+        }
+        if (closeFutures.isNotEmpty) {
+          await Future.wait(closeFutures);
+          closeFutures.clear();
+        }
+      } else {
+        // Legacy v1 single-stream payload pipeline
+        int currentFileIndex = await _drainZeroByteFiles(
+          files: rawFiles,
+          currentFileIndex: 0,
+          saveDirectory: saveDirectory,
+          createdDirs: createdDirs,
+          closeFutures: closeFutures,
+        );
+
+        int bytesReadForCurrentFile = 0;
+        IOSink? currentSink;
+        BytesBuilder? currentBuffer;
+        String? currentSavePath;
+        String? currentPartialPath;
+
+        Future<void> processPayloadChunk(Uint8List chunk) async {
+          int offset = 0;
+          while (offset < chunk.length && currentFileIndex < rawFiles.length) {
+            final fileMeta = rawFiles[currentFileIndex];
+            final int targetSize = fileMeta["size"] as int;
+
+            if (currentSink == null && currentBuffer == null) {
+              bytesReadForCurrentFile = 0;
+              final savePath = _resolveContainmentCheckedPath(
+                saveDirectory,
+                fileMeta["path"] as String,
+              );
+              final parentPath = p.dirname(savePath);
+              if (!createdDirs.contains(parentPath)) {
+                Directory(parentPath).createSync(recursive: true);
+                createdDirs.add(parentPath);
+              }
+
+              currentSavePath = savePath;
+              currentPartialPath = '$savePath.daphq-partial';
+
+              if (targetSize <= 512 * 1024) {
+                currentBuffer = BytesBuilder(copy: false);
+              } else {
+                _activePartialPath = currentPartialPath;
+                _activePartialPaths.add(currentPartialPath!);
+                currentSink = File(currentPartialPath!).openWrite();
+                _activeSink = currentSink;
+              }
+            }
+
+            final int remainingInChunk = chunk.length - offset;
+            final int bytesNeeded = targetSize - bytesReadForCurrentFile;
+            final int bytesToProcess = remainingInChunk <= bytesNeeded
+                ? remainingInChunk
+                : bytesNeeded;
+
+            if (bytesToProcess > 0) {
+              final slice = Uint8List.sublistView(
+                chunk,
+                offset,
+                offset + bytesToProcess,
+              );
+              if (currentBuffer != null) {
+                currentBuffer!.add(slice);
+              } else if (currentSink != null) {
+                currentSink!.add(slice);
+              }
+              bytesReadForCurrentFile += bytesToProcess;
+              received += bytesToProcess;
+              bytesSinceUpdate += bytesToProcess;
+              offset += bytesToProcess;
+            }
+
+            final now = DateTime.now();
+            final elapsedMs = now.difference(lastTime).inMilliseconds;
+            if (elapsedMs > AppConstants.speedUpdateIntervalMs) {
+              final double speed =
+                  (bytesSinceUpdate / 1024 / 1024) / (elapsedMs / 1000.0);
+              onUpdate(
+                TransferModel(
+                  speed: speed,
+                  transferred: received / 1024 / 1024,
+                  fileName: p.basename(fileMeta["path"] as String),
+                  status: "Receiving Data...",
+                  totalSize: totalSizeMB,
+                  progress: totalExpectedBytes > 0
+                      ? received / totalExpectedBytes
+                      : 0.0,
+                  phase: TransferPhase.receiving,
+                ),
+              );
+              bytesSinceUpdate = 0;
+              lastTime = now;
+            }
+
+            if (bytesReadForCurrentFile == targetSize) {
+              final String targetPath = currentSavePath!;
+              final String partialPath = currentPartialPath!;
+              currentSavePath = null;
+              currentPartialPath = null;
+
+              if (currentBuffer != null) {
+                final bufferToSave = currentBuffer!;
+                currentBuffer = null;
+                _activePartialPaths.add(partialPath);
+                closeFutures.add(
+                  _finalizeBufferedFile(
+                    partialPath: partialPath,
+                    targetPath: targetPath,
+                    bytes: bufferToSave.takeBytes(),
+                  ),
+                );
+              } else if (currentSink != null) {
+                final sinkToClose = currentSink!;
+                currentSink = null;
+                if (identical(_activeSink, sinkToClose)) {
+                  _activeSink = null;
+                }
+                closeFutures.add(
+                  _finalizeStreamedFile(
+                    sink: sinkToClose,
+                    partialPath: partialPath,
+                    targetPath: targetPath,
+                  ),
+                );
+              }
+
+              if (closeFutures.length >= 64) {
+                await Future.wait(closeFutures);
+                closeFutures.clear();
+              }
+
+              bytesReadForCurrentFile = 0;
+              currentFileIndex++;
+
+              currentFileIndex = await _drainZeroByteFiles(
+                files: rawFiles,
+                currentFileIndex: currentFileIndex,
+                saveDirectory: saveDirectory,
+                createdDirs: createdDirs,
+                closeFutures: closeFutures,
+              );
+            }
+          }
+        }
+
+        if (currentFileIndex < rawFiles.length) {
+          if (initialPayload.isNotEmpty) {
+            await processPayloadChunk(initialPayload);
+          }
+
+          while (currentFileIndex < rawFiles.length &&
+              !_isCancelled &&
+              !_isActiveTransferCancelled) {
+            final hasNext = await reader.moveNext(
+              timeout: const Duration(
+                seconds: AppConstants.transferTimeoutSeconds,
+              ),
+            );
+            if (!hasNext) break;
+            await processPayloadChunk(reader.current);
+          }
+        }
+
+        if (isRejected) return;
+
+        if (_isCancelled || _isActiveTransferCancelled) {
+          if (currentSink != null) {
+            final sink = currentSink;
+            currentSink = null;
+            if (identical(_activeSink, sink)) _activeSink = null;
+            try {
+              await sink!.close();
+            } catch (_) {}
+          }
+          throw _activeTransferCancelReason ??
+              _cancelReason ??
+              "Transfer Cancelled";
+        }
+
+        if (received < totalExpectedBytes) {
+          if (currentSink != null) {
+            final sink = currentSink;
+            currentSink = null;
+            if (identical(_activeSink, sink)) _activeSink = null;
+            try {
+              await sink!.close();
+            } catch (_) {}
+          }
+          currentBuffer = null;
+          throw "Transfer cancelled by ${_currentSenderDeviceName ?? 'the other device'}";
+        }
+
+        if (currentFileIndex < rawFiles.length &&
+            (currentBuffer != null || currentSink != null)) {
+          final int targetSize = rawFiles[currentFileIndex]["size"] as int;
+          if (bytesReadForCurrentFile == targetSize &&
+              currentSavePath != null &&
+              currentPartialPath != null) {
+            final String targetPath = currentSavePath!;
+            final String partialPath = currentPartialPath!;
+            currentSavePath = null;
+            currentPartialPath = null;
+
+            if (currentBuffer != null) {
+              final bufferToSave = currentBuffer!;
+              currentBuffer = null;
+              _activePartialPaths.add(partialPath);
+              closeFutures.add(
+                _finalizeBufferedFile(
+                  partialPath: partialPath,
+                  targetPath: targetPath,
+                  bytes: bufferToSave.takeBytes(),
+                ),
+              );
+            } else if (currentSink != null) {
+              final sinkToClose = currentSink!;
+              currentSink = null;
+              if (identical(_activeSink, sinkToClose)) {
+                _activeSink = null;
+              }
+              closeFutures.add(
+                _finalizeStreamedFile(
+                  sink: sinkToClose,
+                  partialPath: partialPath,
+                  targetPath: targetPath,
+                ),
+              );
+            }
+            currentFileIndex++;
+          }
+        }
+
+        currentFileIndex = await _drainZeroByteFiles(
+          files: rawFiles,
+          currentFileIndex: currentFileIndex,
+          saveDirectory: saveDirectory,
+          createdDirs: createdDirs,
+          closeFutures: closeFutures,
+        );
+        if (currentFileIndex < rawFiles.length) {
+          throw "Transfer cancelled by ${_currentSenderDeviceName ?? 'the other device'}";
+        }
+
+        if (closeFutures.isNotEmpty) {
+          currentPhase = TransferPhase.finalizing;
+          onUpdate(
+            TransferModel(
+              status: "Finalizing... Saving to disk",
+              transferred: received / 1024 / 1024,
+              totalSize: totalSizeMB,
+              progress: 1.0,
+              fileName: originalName ?? "",
+              phase: TransferPhase.finalizing,
+            ),
+          );
+          await Future.wait(closeFutures);
+          closeFutures.clear();
+        }
+      }
+
+      try {
+        client.write('${jsonEncode({"s": "d"})}\n');
+        await client.flush();
+      } catch (_) {}
+
+      stopwatch.stop();
+      final double finalMB = received / 1024 / 1024;
+      final double elapsedSec = stopwatch.elapsedMilliseconds / 1000.0;
+      final double avgSpeed = elapsedSec > 0.001 ? (finalMB / elapsedSec) : 0.0;
+      currentPhase = TransferPhase.done;
+
+      onUpdate(
+        TransferModel(
+          status: "Transfer Complete!",
+          transferred: finalMB,
+          totalSize: finalMB,
+          progress: 1.0,
+          avgSpeed: avgSpeed.toStringAsFixed(2),
+          totalTime: elapsedSec.toStringAsFixed(1),
+          fileName: originalName ?? "Multiple Items",
+          phase: TransferPhase.done,
+        ),
+      );
+    } on PathAccessException {
+      currentPhase = TransferPhase.failed;
+      onUpdate(
+        TransferModel(
+          status: "Error: Permission Denied",
+          totalSize: totalExpectedBytes / 1024 / 1024,
+          fileName: originalName ?? "",
+          phase: TransferPhase.failed,
+        ),
+      );
+    } catch (e) {
+      if (v2Session != null && !v2Session.completedCleanly) {
+        await v2Session.abort();
+      }
+
+      if (_isCancelled || _isActiveTransferCancelled || e is TimeoutException) {
         currentPhase = TransferPhase.cancelled;
       } else if (e is SocketException) {
         final osError = e.osError?.errorCode;
@@ -819,67 +1429,186 @@ class ReceiverController {
                 msg.contains('connection reset by peer'))
             ? TransferPhase.cancelled
             : TransferPhase.failed;
+      } else if (e.toString().toLowerCase().contains('transfer cancelled')) {
+        currentPhase = TransferPhase.cancelled;
       } else {
         currentPhase = TransferPhase.failed;
       }
+
       if (_isCancelled) {
         onUpdate(
           TransferModel(
-            status: _cancelReason ?? "Transfer Cancelled",
+            status: _cancelReason ?? "Transfer Cancelled.",
+            transferred: received / 1024 / 1024,
+            totalSize: totalExpectedBytes / 1024 / 1024,
+            progress:
+                totalExpectedBytes > 0 ? received / totalExpectedBytes : 0.0,
+            fileName: originalName ?? "",
+            phase: TransferPhase.cancelled,
+          ),
+        );
+      } else if (_isActiveTransferCancelled) {
+        onUpdate(
+          TransferModel(
+            status: _activeTransferCancelReason ?? "Transfer Cancelled.",
+            transferred: received / 1024 / 1024,
+            totalSize: totalExpectedBytes / 1024 / 1024,
+            progress:
+                totalExpectedBytes > 0 ? received / totalExpectedBytes : 0.0,
+            fileName: originalName ?? "",
             phase: TransferPhase.cancelled,
           ),
         );
       } else if (e is SocketException) {
-        final msg = e.message.toLowerCase();
-        final osError = e.osError?.errorCode;
-        if (osError == 104 ||
-            osError == 10054 ||
-            osError == 32 ||
-            msg.contains("connection reset by peer")) {
-          onUpdate(
-            TransferModel(
-              status:
-                  "Transfer cancelled by ${_currentSenderDeviceName ?? 'the other device'}.",
-              phase: TransferPhase.cancelled,
-            ),
-          );
-        } else {
-          onUpdate(
-            TransferModel(
-              status:
-                  "Network Error: Please check network or Hotspot connection.",
-              phase: TransferPhase.failed,
-            ),
-          );
-        }
+        onUpdate(
+          TransferModel(
+            status: _mapReceiverSocketError(e),
+            transferred: received / 1024 / 1024,
+            totalSize: totalExpectedBytes / 1024 / 1024,
+            progress:
+                totalExpectedBytes > 0 ? received / totalExpectedBytes : 0.0,
+            fileName: originalName ?? "",
+            phase: currentPhase,
+          ),
+        );
       } else if (e is TimeoutException) {
         onUpdate(
           TransferModel(
             status:
                 "Transfer cancelled by ${_currentSenderDeviceName ?? 'sender'} (Connection Timeout).",
+            transferred: received / 1024 / 1024,
+            totalSize: totalExpectedBytes / 1024 / 1024,
+            progress:
+                totalExpectedBytes > 0 ? received / totalExpectedBytes : 0.0,
+            fileName: originalName ?? "",
+            phase: TransferPhase.cancelled,
+          ),
+        );
+      } else {
+        String errorMsg = e.toString();
+        if (errorMsg.endsWith('.')) {
+          errorMsg = errorMsg.substring(0, errorMsg.length - 1);
+        }
+        onUpdate(
+          TransferModel(
+            status: "$errorMsg. Ready & Waiting...",
+            transferred: received / 1024 / 1024,
+            totalSize: totalExpectedBytes / 1024 / 1024,
+            progress:
+                totalExpectedBytes > 0 ? received / totalExpectedBytes : 0.0,
+            fileName: originalName ?? "",
+            phase: currentPhase,
+          ),
+        );
+      }
+    } finally {
+      try {
+        onAuthDismissed?.call();
+        if (_activeSink != null) {
+          try {
+            await _activeSink!.close();
+          } catch (_) {}
+          _activeSink = null;
+        }
+        if (v2Session != null && !v2Session.completedCleanly) {
+          await v2Session.abort();
+        }
+        for (final partial in _activePartialPaths.toList()) {
+          _safeDeleteFile(partial);
+        }
+        _activePartialPaths.clear();
+        if (_activePartialPath != null) {
+          _safeDeleteFile(_activePartialPath!);
+          _activePartialPath = null;
+        }
+        await reader.cancel();
+        client.destroy();
+      } catch (_) {}
+      if (identical(_activeV2Session, v2Session)) {
+        _activeV2Session = null;
+      }
+      _activeAuthDismissCallback = null;
+      _activeClient = null;
+      _activeClientReader = null;
+      _activeSink = null;
+      _hasActiveTransfer = false;
+    }
+  }
+
+  void _handleOuterReceiverError(Object e, Function(TransferModel) onUpdate) {
+    if (_isCancelled || e is TimeoutException) {
+      currentPhase = TransferPhase.cancelled;
+    } else if (e is SocketException) {
+      final osError = e.osError?.errorCode;
+      final msg = e.message.toLowerCase();
+      currentPhase = (osError == 104 ||
+              osError == 10054 ||
+              osError == 32 ||
+              msg.contains('connection reset by peer'))
+          ? TransferPhase.cancelled
+          : TransferPhase.failed;
+    } else {
+      currentPhase = TransferPhase.failed;
+    }
+
+    if (_isCancelled) {
+      onUpdate(
+        TransferModel(
+          status: _cancelReason ?? "Transfer Cancelled",
+          phase: TransferPhase.cancelled,
+        ),
+      );
+    } else if (e is SocketException) {
+      final msg = e.message.toLowerCase();
+      final osError = e.osError?.errorCode;
+      if (osError == 104 ||
+          osError == 10054 ||
+          osError == 32 ||
+          msg.contains("connection reset by peer")) {
+        onUpdate(
+          TransferModel(
+            status:
+                "Transfer cancelled by ${_currentSenderDeviceName ?? 'the other device'}.",
             phase: TransferPhase.cancelled,
           ),
         );
       } else {
         onUpdate(
           TransferModel(
-            status: "Error: $e",
-            phase: currentPhase,
+            status: "Network Error: Please check network or Hotspot connection.",
+            phase: TransferPhase.failed,
           ),
         );
       }
-    } finally {
-      _activeAuthDismissCallback?.call();
-      _activeAuthDismissCallback = null;
-      _activeClient = null;
-      _activeSink = null;
-      _isCancelled = false;
-      onDone(); // Only call onDone when the method truly finishes (server closed)
+    } else if (e is TimeoutException) {
+      onUpdate(
+        TransferModel(
+          status:
+              "Transfer cancelled by ${_currentSenderDeviceName ?? 'sender'} (Connection Timeout).",
+          phase: TransferPhase.cancelled,
+        ),
+      );
+    } else {
+      onUpdate(
+        TransferModel(
+          status: "Error: $e",
+          phase: currentPhase,
+        ),
+      );
     }
   }
 
-  /// Finalizes any consecutive zero-byte entries starting at [currentFileIndex]
-  /// and returns the next unconsumed file index.
+  Future<void> _closeServers() async {
+    try {
+      await _plainServer?.close();
+    } catch (_) {}
+    try {
+      await _secureServer?.close();
+    } catch (_) {}
+    _plainServer = null;
+    _secureServer = null;
+  }
+
   Future<int> _drainZeroByteFiles({
     required List<dynamic> files,
     required int currentFileIndex,
@@ -917,8 +1646,6 @@ class ReceiverController {
     return currentFileIndex;
   }
 
-  /// Writes [bytes] into [partialPath] and atomically renames to [targetPath].
-  /// On any error, deletes [partialPath] and rethrows so the transfer fails cleanly.
   Future<void> _finalizeBufferedFile({
     required String partialPath,
     required String targetPath,
@@ -936,7 +1663,6 @@ class ReceiverController {
     }
   }
 
-  /// Drains [sink] into [partialPath] and atomically renames to [targetPath].
   Future<void> _finalizeStreamedFile({
     required IOSink sink,
     required String partialPath,
@@ -964,8 +1690,6 @@ class ReceiverController {
     } catch (_) {}
   }
 
-  /// Resolves [rawRelPath] inside [saveDirectory], enforcing T-001 traversal
-  /// rejection and strict path containment.
   static String _resolveContainmentCheckedPath(
     String saveDirectory,
     String rawRelPath,
@@ -982,9 +1706,6 @@ class ReceiverController {
     return savePath;
   }
 
-  /// Validates every metadata file path against traversal and remaps each
-  /// top-level item to a collision-free name under [saveDirectory], preserving
-  /// existing files/folders on disk and preventing intra-batch overwrites.
   static void _prepareTargetPaths(
     String saveDirectory,
     Map<String, dynamic> metadata,
@@ -1000,15 +1721,14 @@ class ReceiverController {
       if (safeRel == null) {
         throw "Security: rejected an unsafe path in the transfer metadata.";
       }
-      final String sanitizedRoot = originalName != null &&
-              originalName.isNotEmpty
-          ? _sanitizeFileName(originalName)
-          : p.posix.split(safeRel).first;
+      final String sanitizedRoot =
+          originalName != null && originalName.isNotEmpty
+              ? _sanitizeFileName(originalName)
+              : p.posix.split(safeRel).first;
       files[0]["path"] = _generateUniquePath(saveDirectory, sanitizedRoot);
       return;
     }
 
-    // Validate all relative paths up-front and collect unique top-level roots.
     final Map<String, String> rootRemap = {};
     final Set<String> reservedLower = {};
     final List<List<String>> parsedSegments = [];
@@ -1033,8 +1753,6 @@ class ReceiverController {
       }
     }
 
-    // Re-root each file and ensure no two items collide inside the same batch
-    // (even from an external/un-deduplicated sender).
     final Set<String> seenTargetsLower = {};
     for (int i = 0; i < files.length; i++) {
       final segments = parsedSegments[i];
@@ -1043,7 +1761,8 @@ class ReceiverController {
 
       if (!seenTargetsLower.add(candidateRel.toLowerCase())) {
         final parentIdx = candidateRel.lastIndexOf('/');
-        final parent = parentIdx >= 0 ? candidateRel.substring(0, parentIdx + 1) : '';
+        final parent =
+            parentIdx >= 0 ? candidateRel.substring(0, parentIdx + 1) : '';
         final base = p.posix.basenameWithoutExtension(candidateRel);
         final ext = p.posix.extension(candidateRel);
         int counter = 1;
@@ -1065,19 +1784,35 @@ class ReceiverController {
     _activeTransferCancelReason = reason;
     _activeAuthDismissCallback?.call();
 
-    if (_activeClient != null) {
+    unawaited(_activeV2Session?.abort());
+
+    final activeClient = _activeClient;
+    _activeClient = null;
+    if (activeClient != null) {
       try {
-        _activeClient!.write(
+        activeClient.write(
           "${jsonEncode({"status": "REJECTED", "reason": "CANCELLED"})}\n",
         );
-        _activeClient!.flush().then((_) {
-          _activeClient?.destroy();
-          _activeClient = null;
-        });
-      } catch (_) {}
+        unawaited(
+          activeClient
+              .flush()
+              .timeout(const Duration(milliseconds: 250), onTimeout: () {})
+              .catchError((_) {})
+              .whenComplete(() {
+            try {
+              activeClient.destroy();
+            } catch (_) {}
+          }),
+        );
+      } catch (_) {
+        try {
+          activeClient.destroy();
+        } catch (_) {}
+      }
     }
 
-    // Close active sink so partial file locks are released before cleanup
+    unawaited(_activeClientReader?.cancel());
+    _activeClientReader = null;
     _activeSink?.close();
     _activeSink = null;
   }
@@ -1088,24 +1823,42 @@ class ReceiverController {
     _cancelReason = reason;
     _activeAuthDismissCallback?.call();
 
-    if (_activeClient != null) {
+    unawaited(_activeV2Session?.abort());
+
+    final activeClient = _activeClient;
+    _activeClient = null;
+    if (activeClient != null) {
       try {
-        _activeClient!.write("${jsonEncode({"status": "REJECTED"})}\n");
-        _activeClient!.flush().then((_) {
-          _activeClient?.destroy();
-          _activeClient = null;
-        });
-      } catch (_) {}
+        activeClient.write("${jsonEncode({"status": "REJECTED"})}\n");
+        unawaited(
+          activeClient
+              .flush()
+              .timeout(const Duration(milliseconds: 250), onTimeout: () {})
+              .catchError((_) {})
+              .whenComplete(() {
+            try {
+              activeClient.destroy();
+            } catch (_) {}
+          }),
+        );
+      } catch (_) {
+        try {
+          activeClient.destroy();
+        } catch (_) {}
+      }
     }
 
-    _server?.close();
-    _server = null;
+    unawaited(_activeClientReader?.cancel());
+    _activeClientReader = null;
+    _plainServer?.close();
+    _secureServer?.close();
+    _plainServer = null;
+    _secureServer = null;
 
     _activeSink?.close();
     _activeSink = null;
   }
 
-  /// Maps a [SocketException] to a user-friendly error message for receiver.
   String _mapReceiverSocketError(SocketException e) {
     final msg = e.message.toLowerCase();
     final osError = e.osError?.errorCode;
@@ -1119,16 +1872,6 @@ class ReceiverController {
     }
   }
 
-  /// Normalizes a relative path from transfer metadata and rejects any
-  /// attempt to escape the receive directory (plan T-001).
-  ///
-  /// - Rejects null bytes, POSIX root paths, and Windows drive-letter/UNC paths
-  ///   consistently on every OS.
-  /// - Collapses and normalizes separators via POSIX rules, then rejects any
-  ///   remaining `..` / `.` segments (traversal).
-  /// - Every surviving segment is run through [_sanitizeFileName] so reserved
-  ///   names and illegal characters are cleaned before disk writes.
-  /// Returns the safe relative path, or null when the path must be rejected.
   static String? safeRelativePath(String raw) {
     if (raw.isEmpty || raw.contains('\x00')) return null;
     final unified = raw.replaceAll(r'\', '/');
@@ -1153,10 +1896,7 @@ class ReceiverController {
     return safeSegments.join('/');
   }
 
-  /// Sanitizes a filename by removing illegal characters and reserved OS names.
   static String _sanitizeFileName(String name) {
-    // Strip path separators and Windows/FAT illegal characters (< > : " / \ | ? *)
-    // uniformly so transfers stay valid across Windows and Android storage.
     String sanitized = name.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
 
     final reserved = RegExp(
@@ -1167,7 +1907,6 @@ class ReceiverController {
       sanitized = "file_$sanitized";
     }
 
-    // Ensure the name isn't empty or just dots
     if (sanitized.isEmpty || sanitized.trim().replaceAll('.', '').isEmpty) {
       sanitized = "received_file_${++_fallbackNameCounter}";
     }
@@ -1175,8 +1914,6 @@ class ReceiverController {
     return sanitized;
   }
 
-  /// Generates a unique path by appending (1), (2), etc. if the file or directory exists
-  /// on disk or collides (case-insensitively) with [reservedLower].
   static String _generateUniquePath(
     String dir,
     String name, {
