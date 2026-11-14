@@ -74,7 +74,9 @@ void main(List<String> args) async {
 
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
-  FlutterForegroundTask.initCommunicationPort();
+  if (Platform.isAndroid) {
+    FlutterForegroundTask.initCommunicationPort();
+  }
 
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(systemNavigationBarColor: AppColors.background),
@@ -149,6 +151,27 @@ Future<void> requestAllPermissions() async {
     } else {
       await [Permission.storage, Permission.notification].request();
     }
+
+    // Additive, non-blocking Direct Fabric permissions (BLE & Nearby Wi-Fi Direct).
+    try {
+      if (sdkInt >= 33) {
+        await [
+          Permission.nearbyWifiDevices,
+          Permission.bluetoothScan,
+          Permission.bluetoothAdvertise,
+          Permission.bluetoothConnect,
+        ].request();
+      } else if (sdkInt >= 31) {
+        await [
+          Permission.bluetoothScan,
+          Permission.bluetoothAdvertise,
+          Permission.bluetoothConnect,
+          Permission.locationWhenInUse,
+        ].request();
+      } else {
+        await [Permission.locationWhenInUse].request();
+      }
+    } catch (_) {}
   }
 }
 
@@ -239,12 +262,18 @@ class _AppInitState extends State<_AppInit> {
         context.read<TransferCubit>().addExternalFiles(paths);
       }
     });
+    DesktopIntegrationService.flushPendingArgs();
   }
 
   @override
   void dispose() {
     _externalFilesSubscription?.cancel();
-    SharingService.dispose();
+    if (Platform.isAndroid) {
+      SharingService.dispose();
+    }
+    if (Platform.isWindows) {
+      DesktopIntegrationService.dispose();
+    }
     super.dispose();
   }
 

@@ -131,8 +131,18 @@ class DesktopIntegrationService {
   }
 
   static void addInitialArgs(List<String> args) {
-    if (args.isNotEmpty) {
+    if (args.isEmpty) return;
+    if (_controller.hasListener) {
       _controller.add(args);
+    } else {
+      _pendingPaths.addAll(args);
+    }
+  }
+
+  static void flushPendingArgs() {
+    if (_pendingPaths.isNotEmpty && _controller.hasListener) {
+      _controller.add(List.from(_pendingPaths));
+      _pendingPaths.clear();
     }
   }
 

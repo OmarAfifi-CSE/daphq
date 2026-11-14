@@ -1,5 +1,8 @@
 import '../models/transfer_model.dart';
 import '../models/discovery_model.dart';
+import '../fabric/peer_models.dart';
+import '../fabric/smart_link_evaluator.dart';
+import '../security/trusted_devices_service.dart';
 import '../core/app_constants.dart';
 
 class AuthRequest {
@@ -7,12 +10,24 @@ class AuthRequest {
   final String senderName;
   final int fileCount;
   final double totalSizeMB;
+  final String? senderPeerId;
+  final String? senderFingerprint;
+  final String? sasCode;
+  final bool isTls;
+  final bool isTrustedPeer;
+  final bool isFingerprintMismatch;
 
   AuthRequest({
     required this.senderIp,
     required this.senderName,
     required this.fileCount,
     required this.totalSizeMB,
+    this.senderPeerId,
+    this.senderFingerprint,
+    this.sasCode,
+    this.isTls = false,
+    this.isTrustedPeer = false,
+    this.isFingerprintMismatch = false,
   });
 
   String get formattedSize {
@@ -34,8 +49,16 @@ class TransferState {
   final String targetIp;
   final bool showProgressView;
 
-  // Discovery fields
+  // Discovery & Direct Fabric fields
   final List<DiscoveryModel> discoveredDevices;
+  final List<UnifiedPeer> unifiedPeers;
+  final TransportPreference transportPreference;
+  final List<TrustedDevice> trustedDevices;
+  final String? localPeerId;
+  final String? localFingerprint;
+  final bool isDirectLinkConnecting;
+  final String? directLinkStatus;
+  final LocalRadioCapabilities? localRadioCapabilities;
   final String deviceName;
   final bool isAdvancedMode;
 
@@ -61,6 +84,14 @@ class TransferState {
     String? targetIp,
     this.showProgressView = false,
     this.discoveredDevices = const [],
+    this.unifiedPeers = const [],
+    this.transportPreference = TransportPreference.autoSmart,
+    this.trustedDevices = const [],
+    this.localPeerId,
+    this.localFingerprint,
+    this.isDirectLinkConnecting = false,
+    this.directLinkStatus,
+    this.localRadioCapabilities,
     this.deviceName = 'Unknown Device',
     this.isAdvancedMode = false,
     this.errorMessage,
@@ -85,6 +116,14 @@ class TransferState {
     String? targetIp,
     bool? showProgressView,
     List<DiscoveryModel>? discoveredDevices,
+    List<UnifiedPeer>? unifiedPeers,
+    TransportPreference? transportPreference,
+    List<TrustedDevice>? trustedDevices,
+    String? localPeerId,
+    String? localFingerprint,
+    bool? isDirectLinkConnecting,
+    String? directLinkStatus,
+    LocalRadioCapabilities? localRadioCapabilities,
     String? deviceName,
     bool? isAdvancedMode,
     String? errorMessage,
@@ -100,6 +139,7 @@ class TransferState {
     bool clearFeedback = false,
     bool clearAuthRequest = false,
     bool clearSelection = false,
+    bool clearDirectLinkStatus = false,
   }) {
     return TransferState(
       model: model ?? this.model,
@@ -112,6 +152,18 @@ class TransferState {
       targetIp: targetIp ?? this.targetIp,
       showProgressView: showProgressView ?? this.showProgressView,
       discoveredDevices: discoveredDevices ?? this.discoveredDevices,
+      unifiedPeers: unifiedPeers ?? this.unifiedPeers,
+      transportPreference: transportPreference ?? this.transportPreference,
+      trustedDevices: trustedDevices ?? this.trustedDevices,
+      localPeerId: localPeerId ?? this.localPeerId,
+      localFingerprint: localFingerprint ?? this.localFingerprint,
+      isDirectLinkConnecting:
+          isDirectLinkConnecting ?? this.isDirectLinkConnecting,
+      directLinkStatus: clearDirectLinkStatus
+          ? null
+          : (directLinkStatus ?? this.directLinkStatus),
+      localRadioCapabilities:
+          localRadioCapabilities ?? this.localRadioCapabilities,
       deviceName: deviceName ?? this.deviceName,
       isAdvancedMode: isAdvancedMode ?? this.isAdvancedMode,
       errorMessage: clearFeedback ? null : (errorMessage ?? this.errorMessage),
