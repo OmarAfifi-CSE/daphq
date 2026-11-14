@@ -1347,16 +1347,17 @@ class TransferCubit extends Cubit<TransferState> {
         }
       }
 
-      final result = await FilePicker.pickFiles(
-        allowMultiple: true,
+      final files = await FilePicker.pickFiles(
         type: (Platform.isWindows || Platform.isMacOS || Platform.isLinux)
             ? FileType.any
             : type,
         initialDirectory: initialDirectory,
       );
 
-      if (result != null) {
-        await addSelectedPaths(result.paths.whereType<String>().toList());
+      if (files.isNotEmpty) {
+        await addSelectedPaths(
+          files.map((file) => file.path).whereType<String>().toList(),
+        );
       }
     } catch (e) {
       _safeEmit(state.copyWith(errorMessage: "Error picking files: $e"));

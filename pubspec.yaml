@@ -11,24 +11,24 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  file_picker: ^11.0.2
-  permission_handler: ^12.0.1
+  file_picker: ^13.3.3
+  permission_handler: ^12.0.3
   flutter_bloc: ^9.1.1
   flutter_screenutil: ^5.9.3
-  crypto: ^3.0.7
-  window_manager: ^0.5.1
-  flutter_foreground_task: ^9.2.2
+  crypto: ^3.0.8
+  window_manager: ^0.5.2
+  flutter_foreground_task: ^11.0.3
   path: ^1.9.1
   http: ^1.6.0
-  package_info_plus: ^9.0.1
-  url_launcher: ^6.3.2
-  path_provider: ^2.1.5
-  device_info_plus: ^12.4.0
-  connectivity_plus: ^7.1.1
-  storage_space: ^1.2.0
+  package_info_plus: ^10.2.2
+  url_launcher: ^6.3.3
+  path_provider: ^2.1.6
+  device_info_plus: ^13.3.0
+  connectivity_plus: ^7.3.2
+  storage_space: ^1.4.0
   ffi: ^2.2.0
-  flutter_markdown: ^0.7.7+1
-  open_filex: ^4.7.0
+  flutter_markdown_plus: ^1.0.12
+  open_filex: ^5.0.0
   basic_utils: ^5.8.2
   qr_flutter: ^4.1.0
 
