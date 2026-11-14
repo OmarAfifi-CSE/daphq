@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../models/discovery_model.dart';
+import '../fabric/peer_models.dart';
 import '../core/app_constants.dart';
 
 enum ServiceStatus { idle, discovering, recovering, failed, noConnection }
@@ -12,6 +13,9 @@ class DiscoveryService {
 
   final StreamController<List<DiscoveryModel>> _devicesController =
       StreamController<List<DiscoveryModel>>.broadcast();
+
+  final StreamController<DiscoveryModel> _heartbeatController =
+      StreamController<DiscoveryModel>.broadcast();
 
   final StreamController<ServiceStatus> _statusController =
       StreamController<ServiceStatus>.broadcast();
@@ -28,8 +32,12 @@ class DiscoveryService {
   Timer? _connectivityPollTimer;
   StreamSubscription? _connectivitySubscription;
 
-  Set<String> _localIps = {};
+  final Set<String> _localIps = {};
   String? _lastDeviceName;
+  String? _localPeerId;
+  String? _localFingerprint;
+  PeerCapabilities? _localCapabilities;
+  int _listenPort = AppConstants.transferPort;
   bool isDiscoverable = true;
   bool _running = false;
   bool _isReopening = false;
@@ -38,14 +46,16 @@ class DiscoveryService {
   int _currentBackoffSeconds = 3;
 
   Stream<List<DiscoveryModel>> get devicesStream => _devicesController.stream;
+  Stream<DiscoveryModel> get heartbeatStream => _heartbeatController.stream;
   Stream<ServiceStatus> get statusStream => _statusController.stream;
 
   void _updateStatus(ServiceStatus status) {
-    _status = status;
     if (_statusController.isClosed) return;
+    if (!_running && status != ServiceStatus.idle) return;
+    _status = status;
     _statusController.add(status);
 
-    if (status == ServiceStatus.noConnection) {
+    if (_running && status == ServiceStatus.noConnection) {
       _startConnectivityPolling();
     } else {
       _connectivityPollTimer?.cancel();
@@ -71,18 +81,46 @@ class DiscoveryService {
     });
   }
 
-  Future<void> startDiscovery(String deviceName) async {
+  void updateAdvertisementMetadata({
+    String? peerId,
+    String? certFingerprint,
+    PeerCapabilities? capabilities,
+    int? listenPort,
+  }) {
+    if (peerId != null) _localPeerId = peerId;
+    if (certFingerprint != null) _localFingerprint = certFingerprint;
+    if (capabilities != null) _localCapabilities = capabilities;
+    if (listenPort != null) _listenPort = listenPort;
+    if (_running && isDiscoverable && _lastDeviceName != null) {
+      _broadcastPresence(_lastDeviceName!, isOnline: true);
+    }
+  }
+
+  Future<void> startDiscovery(
+    String deviceName, {
+    String? peerId,
+    String? certFingerprint,
+    PeerCapabilities? capabilities,
+    int? listenPort,
+  }) async {
     if (_running) return;
     _running = true;
     _lastDeviceName = deviceName;
+    if (peerId != null) _localPeerId = peerId;
+    if (certFingerprint != null) _localFingerprint = certFingerprint;
+    if (capabilities != null) _localCapabilities = capabilities;
+    if (listenPort != null) _listenPort = listenPort;
 
     await _updateLocalIps();
+    if (!_running || _devicesController.isClosed) return;
 
     if (await _hasLocalNetwork()) {
+      if (!_running || _devicesController.isClosed) return;
       await _openSocket(deviceName);
     } else {
       _updateStatus(ServiceStatus.noConnection);
     }
+    if (!_running || _devicesController.isClosed) return;
 
     _broadcastTimer = Timer.periodic(
       const Duration(seconds: AppConstants.discoveryIntervalSeconds),
@@ -139,6 +177,7 @@ class DiscoveryService {
   void dispose() {
     stop();
     _devicesController.close();
+    _heartbeatController.close();
     _statusController.close();
   }
 
@@ -146,8 +185,11 @@ class DiscoveryService {
     if (!_running) return;
 
     _discoveredDevices.clear();
-    _devicesController.add([]);
+    if (!_devicesController.isClosed) {
+      _devicesController.add([]);
+    }
     await _updateLocalIps();
+    if (!_running) return;
 
     _reopenTimer?.cancel();
     _reopenTimer = null;
@@ -167,13 +209,14 @@ class DiscoveryService {
     await _openSocket(deviceName);
   }
 
-  static bool _isVirtualInterfaceName(String rawName) {
+  static bool isVirtualInterfaceName(String rawName) {
     final name = rawName.toLowerCase();
     const virtualKeywords = [
       'vbox',
       'vmware',
       'wsl',
       'veth',
+      'vethernet',
       'virtual',
       'default switch',
       'pseudo',
@@ -193,16 +236,51 @@ class DiscoveryService {
       'docker',
       'tap',
       'tun',
+      'tailscale',
+      'zerotier',
+      'wireguard',
+      'wintun',
+      'nordlynx',
+      'proton',
+      'mullvad',
+      'openvpn',
+      'hamachi',
+      'radmin',
+      'utun',
     ];
-    return virtualKeywords.any(name.contains);
+    if (virtualKeywords.any(name.contains)) return true;
+    return RegExp(r'(^|[^a-z0-9])wg\d*($|[^a-z0-9])').hasMatch(name);
   }
 
-  static bool _isUsableAddress(InternetAddress addr) {
+  static bool isUsableAddress(InternetAddress addr) {
     final ip = addr.address;
     return !addr.isLoopback &&
         !ip.startsWith('169.254') &&
         !ip.startsWith('127.') &&
         !ip.startsWith('0.');
+  }
+
+  static bool hasUsableInterface(Iterable<NetworkInterface> interfaces) {
+    return interfaces.any((iface) {
+      if (isVirtualInterfaceName(iface.name)) return false;
+      return iface.addresses.any(isUsableAddress);
+    });
+  }
+
+  static Future<String?> findBestLocalLanIp() async {
+    try {
+      final interfaces = await NetworkInterface.list(
+        includeLoopback: false,
+        type: InternetAddressType.IPv4,
+      );
+      for (final iface in interfaces) {
+        if (isVirtualInterfaceName(iface.name)) continue;
+        for (final addr in iface.addresses) {
+          if (isUsableAddress(addr)) return addr.address;
+        }
+      }
+    } catch (_) {}
+    return null;
   }
 
   Future<bool> _hasLocalNetwork() async {
@@ -211,49 +289,9 @@ class DiscoveryService {
         includeLoopback: false,
         type: InternetAddressType.IPv4,
       );
-
-      if (!Platform.isWindows) {
-        return interfaces.any((iface) {
-          if (_isVirtualInterfaceName(iface.name)) return false;
-          return iface.addresses.any(_isUsableAddress);
-        });
-      }
-
-      for (final iface in interfaces) {
-        if (_isVirtualInterfaceName(iface.name)) continue;
-
-        for (final addr in iface.addresses) {
-          if (!_isUsableAddress(addr)) continue;
-          final ip = addr.address;
-
-          final parts = ip.split('.');
-          if (parts.length != 4) continue;
-          final gateway = '${parts[0]}.${parts[1]}.${parts[2]}.1';
-
-          try {
-            final sock = await Socket.connect(
-              gateway,
-              80,
-              sourceAddress: InternetAddress(ip),
-              timeout: const Duration(milliseconds: 800),
-            );
-            sock.destroy();
-            return true;
-          } on SocketException catch (e) {
-            final code = e.osError?.errorCode;
-            if (code == 111 || code == 10061 || code == 10060) {
-              return true;
-            }
-            continue;
-          } catch (_) {
-            continue;
-          }
-        }
-      }
-
-      return false;
+      return hasUsableInterface(interfaces);
     } catch (_) {
-      return false;
+      return true;
     }
   }
 
@@ -340,7 +378,9 @@ class DiscoveryService {
         _retryCount++;
         if (_retryCount > 1) {
           _updateStatus(ServiceStatus.failed);
-          _updateLocalIps().then((_) => _startFailedStateWatchdog(deviceName));
+          _updateLocalIps().then((_) {
+            if (_running) _startFailedStateWatchdog(deviceName);
+          });
           return;
         }
         _updateStatus(ServiceStatus.recovering);
@@ -368,13 +408,9 @@ class DiscoveryService {
   }
 
   void _handlePacket(Datagram dg) {
+    if (!_running) return;
     if (_localIps.contains(dg.address.address)) return;
-
-    _updateLocalIps().then((_) {
-      if (!_running) return;
-      if (_localIps.contains(dg.address.address)) return;
-      _processPacket(dg);
-    });
+    _processPacket(dg);
   }
 
   void _processPacket(Datagram dg) {
@@ -385,7 +421,8 @@ class DiscoveryService {
       final ip = dg.address.address;
 
       if (json['status'] == 'OFFLINE') {
-        if (_discoveredDevices.remove(ip) != null) {
+        if (_discoveredDevices.remove(ip) != null &&
+            !_devicesController.isClosed) {
           _devicesController.add(_discoveredDevices.values.toList());
         }
         return;
@@ -394,7 +431,17 @@ class DiscoveryService {
       final existing = _discoveredDevices[ip];
       final device = DiscoveryModel.fromJson(json, ip);
       _discoveredDevices[ip] = device;
-      if (existing == null || existing.name != device.name) {
+      if (!_heartbeatController.isClosed) {
+        _heartbeatController.add(device);
+      }
+      final bool changed =
+          existing == null ||
+          existing.name != device.name ||
+          existing.peerId != device.peerId ||
+          existing.certFingerprint != device.certFingerprint ||
+          existing.port != device.port ||
+          existing.caps != device.caps;
+      if (changed && !_devicesController.isClosed) {
         _devicesController.add(_discoveredDevices.values.toList());
       }
     } catch (_) {}
@@ -412,6 +459,11 @@ class DiscoveryService {
           'type': 'DAPHQ_DISCOVERY',
           'name': deviceName,
           'status': isOnline ? 'ONLINE' : 'OFFLINE',
+          'port': _listenPort,
+          if (_localPeerId != null) 'peerId': _localPeerId,
+          if (_localFingerprint != null) 'fp': _localFingerprint,
+          if (_localCapabilities != null)
+            'caps': _localCapabilities!.toFlagsByte(),
         }),
       );
 
@@ -421,7 +473,7 @@ class DiscoveryService {
       );
 
       for (final interface in interfaces) {
-        if (_isVirtualInterfaceName(interface.name)) {
+        if (isVirtualInterfaceName(interface.name)) {
           continue;
         }
 
@@ -494,8 +546,12 @@ class DiscoveryService {
       }
       return false;
     });
-    if (changed) _devicesController.add(_discoveredDevices.values.toList());
+    if (changed && !_devicesController.isClosed) {
+      _devicesController.add(_discoveredDevices.values.toList());
+    }
 
+    await _updateLocalIps();
+    if (!_running) return;
     if (_socket != null && _status == ServiceStatus.discovering) {
       if (!await _hasLocalNetwork()) {
         _updateStatus(ServiceStatus.noConnection);
@@ -510,10 +566,11 @@ class DiscoveryService {
         includeLoopback: true,
         type: InternetAddressType.IPv4,
       );
-      _localIps = {
-        for (final i in interfaces)
-          for (final a in i.addresses) a.address,
-      };
+      _localIps
+        ..clear()
+        ..addAll(
+          interfaces.expand((i) => i.addresses.map((a) => a.address)),
+        );
     } catch (_) {}
   }
 

@@ -15,6 +15,9 @@ class TransferModel {
   /// When set, the UI replaces the speed display with a file-count indicator.
   int? analyzeCount;
 
+  /// Short 4-digit SAS verification code when awaiting TLS handshake approval.
+  String? sasCode;
+
   TransferModel({
     this.speed = 0.0,
     this.transferred = 0.0,
@@ -26,6 +29,7 @@ class TransferModel {
     this.progress = 0.0,
     this.phase = TransferPhase.idle,
     this.analyzeCount,
+    this.sasCode,
   });
 }
 
