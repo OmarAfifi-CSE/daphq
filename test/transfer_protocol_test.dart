@@ -8,8 +8,10 @@ import 'package:path/path.dart' as p;
 
 import 'package:daphq/controllers/receiver_controller.dart';
 import 'package:daphq/controllers/sender_controller.dart';
+import 'package:daphq/controllers/v2_protocol_framing.dart';
 import 'package:daphq/core/app_constants.dart';
 import 'package:daphq/models/transfer_model.dart';
+import 'package:daphq/security/device_identity_service.dart';
 
 void main() {
   group('SenderController.deduplicateRelativePaths', () {
@@ -494,6 +496,730 @@ void main() {
 
     test('default port constant matches expected protocol port', () {
       expect(AppConstants.transferPort, 62004);
+    });
+  });
+
+  group('Zero-Router TLS + Multi-Stream v2 Protocol', () {
+    late Directory tempRoot;
+    late Directory receiveDir;
+    late Directory sendDir;
+    late Directory identityDirA;
+    late Directory identityDirB;
+    late DeviceIdentity rxIdentity;
+    late DeviceIdentity txIdentity;
+
+    setUp(() async {
+      tempRoot = await Directory.systemTemp.createTemp('daphq_v2_proto_');
+      receiveDir = await Directory(p.join(tempRoot.path, 'recv')).create();
+      sendDir = await Directory(p.join(tempRoot.path, 'send')).create();
+      identityDirA = await Directory(p.join(tempRoot.path, 'id_a')).create();
+      identityDirB = await Directory(p.join(tempRoot.path, 'id_b')).create();
+      rxIdentity = await DeviceIdentityService(
+        directoryProvider: () async => identityDirA,
+      ).loadOrCreate();
+      txIdentity = await DeviceIdentityService(
+        directoryProvider: () async => identityDirB,
+      ).loadOrCreate();
+    });
+
+    tearDown(() async {
+      try {
+        await tempRoot.delete(recursive: true);
+      } catch (_) {}
+    });
+
+    test('TLS pinned transfer succeeds on matching fingerprint and rejects spoofed fingerprint', () async {
+      final sampleFile = File(p.join(sendDir.path, 'secret.txt'));
+      await sampleFile.writeAsString('tls-authenticated-payload');
+
+      final receiver = ReceiverController();
+      final listening = Completer<int>();
+      final stopped = Completer<void>();
+      final done = Completer<void>();
+
+      unawaited(
+        receiver.startReceiver(
+          saveDirectory: receiveDir.path,
+          deviceName: 'TlsRx',
+          port: 0,
+          tlsContext: rxIdentity.createServerContext(),
+          localIdentity: rxIdentity,
+          onListening: (boundPort) {
+            if (!listening.isCompleted) listening.complete(boundPort);
+          },
+          freeBytesProvider: () async => 1024 * 1024 * 1024,
+          onUpdate: (m) {
+            if (m.phase == TransferPhase.done && !done.isCompleted) {
+              done.complete();
+            }
+          },
+          onRequestAuth: (_, _, _, _) async => true,
+          onDone: () {
+            if (!stopped.isCompleted) stopped.complete();
+          },
+        ),
+      );
+
+      final port = await listening.future.timeout(const Duration(seconds: 5));
+
+      try {
+        // 1. Spoofed / wrong expected fingerprint MUST be rejected before plaintext leaks
+        final badSender = SenderController();
+        await expectLater(
+          badSender.sendData(
+            paths: [sampleFile.path],
+            targetIp: '127.0.0.1',
+            port: port,
+            targetDeviceName: 'TlsRx',
+            senderDeviceName: 'TlsTx',
+            useTls: true,
+            expectedPeerFingerprint: '00' * 32,
+            localIdentity: txIdentity,
+            onUpdate: (_) {},
+          ),
+          throwsA(isA<TransferSendException>()),
+        );
+        expect(File(p.join(receiveDir.path, 'secret.txt')).existsSync(), isFalse);
+
+        // 2. Exact matching pinned fingerprint succeeds end-to-end
+        final goodSender = SenderController();
+        await goodSender.sendData(
+          paths: [sampleFile.path],
+          targetIp: '127.0.0.1',
+          port: port,
+          targetDeviceName: 'TlsRx',
+          senderDeviceName: 'TlsTx',
+          useTls: true,
+          expectedPeerFingerprint: rxIdentity.certFingerprint,
+          localIdentity: txIdentity,
+          onUpdate: (_) {},
+        );
+        await done.future.timeout(const Duration(seconds: 5));
+
+        final receivedFile = File(p.join(receiveDir.path, 'secret.txt'));
+        expect(receivedFile.existsSync(), isTrue);
+        expect(await receivedFile.readAsString(), 'tls-authenticated-payload');
+      } finally {
+        receiver.stop();
+        await stopped.future.timeout(const Duration(seconds: 5));
+      }
+    });
+
+    test('4-stream parallel TLS transfer delivers >2MB file, small files, and 0-byte file byte-identically', () async {
+      final largeData = Uint8List.fromList(
+        List<int>.generate(2 * 1024 * 1024 + 137, (i) => (i * 73 + 19) & 0xFF),
+      );
+      final smallData1 = utf8.encode('alpha-small-file');
+      final smallData2 = utf8.encode('omega-trailing-file');
+
+      final batchDir = await Directory(p.join(sendDir.path, 'turbo_pack')).create();
+      await File(p.join(batchDir.path, '01_video.bin')).writeAsBytes(largeData);
+      await File(p.join(batchDir.path, '02_note.txt')).writeAsBytes(smallData1);
+      await File(p.join(batchDir.path, '03_empty.dat')).writeAsBytes(const <int>[]);
+      await File(p.join(batchDir.path, '04_last.txt')).writeAsBytes(smallData2);
+
+      final receiver = ReceiverController();
+      final listening = Completer<int>();
+      final stopped = Completer<void>();
+      final done = Completer<void>();
+
+      unawaited(
+        receiver.startReceiver(
+          saveDirectory: receiveDir.path,
+          deviceName: 'TurboRx',
+          port: 0,
+          tlsContext: rxIdentity.createServerContext(),
+          localIdentity: rxIdentity,
+          onListening: (boundPort) {
+            if (!listening.isCompleted) listening.complete(boundPort);
+          },
+          freeBytesProvider: () async => 1024 * 1024 * 1024,
+          onUpdate: (m) {
+            if (m.phase == TransferPhase.done && !done.isCompleted) {
+              done.complete();
+            }
+          },
+          onRequestAuth: (_, _, _, _) async => true,
+          onDone: () {
+            if (!stopped.isCompleted) stopped.complete();
+          },
+        ),
+      );
+
+      final port = await listening.future.timeout(const Duration(seconds: 5));
+      try {
+        final sender = SenderController();
+        final senderPhases = <TransferPhase>[];
+        await sender.sendData(
+          paths: [batchDir.path],
+          targetIp: '127.0.0.1',
+          port: port,
+          targetDeviceName: 'TurboRx',
+          senderDeviceName: 'TurboTx',
+          useTls: true,
+          expectedPeerFingerprint: rxIdentity.certFingerprint,
+          localIdentity: txIdentity,
+          parallelStreams: 4,
+          onUpdate: (m) => senderPhases.add(m.phase),
+        );
+
+        await done.future.timeout(const Duration(seconds: 8));
+
+        final outDir = Directory(p.join(receiveDir.path, 'turbo_pack'));
+        expect(await File(p.join(outDir.path, '01_video.bin')).readAsBytes(), equals(largeData));
+        expect(await File(p.join(outDir.path, '02_note.txt')).readAsBytes(), equals(smallData1));
+        expect(await File(p.join(outDir.path, '03_empty.dat')).readAsBytes(), isEmpty);
+        expect(await File(p.join(outDir.path, '04_last.txt')).readAsBytes(), equals(smallData2));
+        expect(
+          outDir.listSync().where((e) => e.path.endsWith('.daphq-partial')),
+          isEmpty,
+        );
+        expect(senderPhases, containsAll([TransferPhase.sending, TransferPhase.finalizing, TransferPhase.done]));
+      } finally {
+        receiver.stop();
+        await stopped.future.timeout(const Duration(seconds: 5));
+      }
+    });
+
+    test('reverse-connect TLS 4-stream mode transfers cleanly with outbound receiver sockets', () async {
+      final largeData = Uint8List.fromList(
+        List<int>.generate(900 * 1024, (i) => (i * 17) & 0xFF),
+      );
+      final file = File(p.join(sendDir.path, 'reverse.bin'));
+      await file.writeAsBytes(largeData);
+
+      final sender = SenderController();
+      final reverseListening = Completer<int>();
+      final rxDone = Completer<void>();
+
+      final sendFuture = sender.sendData(
+        paths: [file.path],
+        targetIp: '127.0.0.1',
+        port: 0,
+        targetDeviceName: 'WinRx',
+        senderDeviceName: 'AndroidTx',
+        useTls: true,
+        localIdentity: txIdentity,
+        expectedPeerFingerprint: rxIdentity.certFingerprint,
+        parallelStreams: 4,
+        listenForReverseReceiver: true,
+        onReverseListening: (boundPort) {
+          if (!reverseListening.isCompleted) reverseListening.complete(boundPort);
+        },
+        onUpdate: (_) {},
+      );
+
+      final listenPort = await reverseListening.future.timeout(const Duration(seconds: 5));
+
+      final receiver = ReceiverController();
+      await receiver.acceptReverseTransfer(
+        senderIp: '127.0.0.1',
+        port: listenPort,
+        saveDirectory: receiveDir.path,
+        deviceName: 'WinRx',
+        useTls: true,
+        expectedSenderFingerprint: txIdentity.certFingerprint,
+        localIdentity: rxIdentity,
+        freeBytesProvider: () async => 1024 * 1024 * 1024,
+        onUpdate: (m) {
+          if (m.phase == TransferPhase.done && !rxDone.isCompleted) {
+            rxDone.complete();
+          }
+        },
+        onRequestAuth: (_, _, _, _) async => true,
+      );
+
+      await sendFuture.timeout(const Duration(seconds: 8));
+      await rxDone.future.timeout(const Duration(seconds: 5));
+
+      final recvFile = File(p.join(receiveDir.path, 'reverse.bin'));
+      expect(recvFile.existsSync(), isTrue);
+      expect(await recvFile.readAsBytes(), equals(largeData));
+    });
+
+    test('verifies ECDSA sender proof over TLS and flags spoofed peer metadata as unverified', () async {
+      final sampleFile = File(p.join(sendDir.path, 'auth_check.txt'));
+      await sampleFile.writeAsString('signed-transfer-ok');
+
+      final receiver = ReceiverController();
+      final listening = Completer<int>();
+      final stopped = Completer<void>();
+      final verifiedFlags = <bool>[];
+      final done = Completer<void>();
+
+      unawaited(
+        receiver.startReceiver(
+          saveDirectory: receiveDir.path,
+          deviceName: 'VerifyRx',
+          port: 0,
+          tlsContext: rxIdentity.createServerContext(),
+          localIdentity: rxIdentity,
+          onListening: (boundPort) {
+            if (!listening.isCompleted) listening.complete(boundPort);
+          },
+          freeBytesProvider: () async => 1024 * 1024 * 1024,
+          onUpdate: (m) {
+            if (m.phase == TransferPhase.done && !done.isCompleted) {
+              done.complete();
+            }
+          },
+          onRequestAuth: (_, _, _, _) async => false,
+          onRequestAuthV2: (req) async {
+            verifiedFlags.add(req.isIdentityVerified);
+            return req.isIdentityVerified;
+          },
+          onDone: () {
+            if (!stopped.isCompleted) stopped.complete();
+          },
+        ),
+      );
+
+      final port = await listening.future.timeout(const Duration(seconds: 5));
+      try {
+        // 1. Spoofed control frame claiming txIdentity without valid senderProof
+        final spoofSock = await connectTransferSocket(
+          host: '127.0.0.1',
+          port: port,
+          useTls: true,
+          timeout: const Duration(seconds: 5),
+          expectedPeerFingerprint: rxIdentity.certFingerprint,
+        );
+        spoofSock.write(
+          '${jsonEncode({
+            'v': 2,
+            'sessionId': 'spoof-sid-1',
+            'streams': 1,
+            'senderPeerId': txIdentity.peerId,
+            'senderFp': txIdentity.certFingerprint,
+            'fileName': 'spoof.txt',
+            'fileSize': 5,
+            'senderDeviceName': 'Spoofer',
+            'isFolder': false,
+            'files': [
+              {'path': 'spoof.txt', 'size': 5},
+            ],
+          })}\n',
+        );
+        await spoofSock.flush();
+        final reply = await BufferedSocketReader(spoofSock).readJsonHeader(
+          timeout: const Duration(seconds: 5),
+          maxHeaderBytes: 64 * 1024,
+        );
+        expect(reply?.header['status'], 'REJECTED');
+        spoofSock.destroy();
+
+        // 2. Real SenderController signs proof bound to rxIdentity cert & session
+        await SenderController().sendData(
+          paths: [sampleFile.path],
+          targetIp: '127.0.0.1',
+          port: port,
+          targetDeviceName: 'VerifyRx',
+          senderDeviceName: 'VerifyTx',
+          useTls: true,
+          expectedPeerFingerprint: rxIdentity.certFingerprint,
+          localIdentity: txIdentity,
+          onUpdate: (_) {},
+        );
+        await done.future.timeout(const Duration(seconds: 5));
+
+        expect(verifiedFlags, equals([false, true]));
+        expect(File(p.join(receiveDir.path, 'spoof.txt')).existsSync(), isFalse);
+        expect(File(p.join(receiveDir.path, 'auth_check.txt')).existsSync(), isTrue);
+      } finally {
+        receiver.stop();
+        await stopped.future.timeout(const Duration(seconds: 5));
+      }
+    });
+
+    test('connectTransferSocket refuses unpinned TLS without expected fingerprint or verifier', () async {
+      await expectLater(
+        connectTransferSocket(
+          host: '127.0.0.1',
+          port: 1,
+          useTls: true,
+          timeout: const Duration(seconds: 2),
+        ),
+        throwsA(isA<HandshakeException>()),
+      );
+    });
+
+    test('multi-stream receiver rejects duplicate overlapping chunks instead of completing partial file', () async {
+      final receiver = ReceiverController();
+      final listening = Completer<int>();
+      final stopped = Completer<void>();
+      final failedOrCancelled = Completer<TransferModel>();
+
+      unawaited(
+        receiver.startReceiver(
+          saveDirectory: receiveDir.path,
+          deviceName: 'RangeRx',
+          port: 0,
+          tlsContext: rxIdentity.createServerContext(),
+          localIdentity: rxIdentity,
+          onListening: (boundPort) {
+            if (!listening.isCompleted) listening.complete(boundPort);
+          },
+          freeBytesProvider: () async => 1024 * 1024 * 1024,
+          onUpdate: (m) {
+            if ((m.phase == TransferPhase.failed ||
+                    m.phase == TransferPhase.cancelled) &&
+                !failedOrCancelled.isCompleted) {
+              failedOrCancelled.complete(m);
+            }
+          },
+          onRequestAuth: (_, _, _, _) async => true,
+          onDone: () {
+            if (!stopped.isCompleted) stopped.complete();
+          },
+        ),
+      );
+
+      final port = await listening.future.timeout(const Duration(seconds: 5));
+      try {
+        const sid = 'dup-range-sid';
+        final ctrl = await connectTransferSocket(
+          host: '127.0.0.1',
+          port: port,
+          useTls: true,
+          timeout: const Duration(seconds: 5),
+          expectedPeerFingerprint: rxIdentity.certFingerprint,
+        );
+        ctrl.write(
+          '${jsonEncode({
+            'v': 2,
+            'sessionId': sid,
+            'streams': 2,
+            'fileName': 'dup.bin',
+            'fileSize': 1024,
+            'senderDeviceName': 'RangeTx',
+            'isFolder': false,
+            'files': [
+              {'path': 'dup.bin', 'size': 1024},
+            ],
+          })}\n',
+        );
+        await ctrl.flush();
+
+        final ready = await BufferedSocketReader(ctrl).readJsonHeader(
+          timeout: const Duration(seconds: 5),
+          maxHeaderBytes: 64 * 1024,
+        );
+        expect(ready?.header['s'], 'r');
+
+        // Send overlapping [0, 512) twice across two workers (sums to 1024, misses [512, 1024))
+        final chunk = Uint8List.fromList(List<int>.filled(512, 0x42));
+        Future<void> sendDupWorker(int idx) async {
+          final w = await connectTransferSocket(
+            host: '127.0.0.1',
+            port: port,
+            useTls: true,
+            timeout: const Duration(seconds: 5),
+            expectedPeerFingerprint: rxIdentity.certFingerprint,
+          );
+          w.write(
+            '${jsonEncode({'v': 2, 'role': 'data', 'sessionId': sid, 'workerIndex': idx})}\n',
+          );
+          w.add(buildV2FrameHeader(fileIndex: 0, fileOffset: 0, payloadLength: 512));
+          w.add(chunk);
+          w.add(buildV2EofFrame());
+          await w.flush();
+          await w.close();
+        }
+
+        await Future.wait([sendDupWorker(0), sendDupWorker(1)]);
+        await failedOrCancelled.future.timeout(const Duration(seconds: 5));
+        ctrl.destroy();
+
+        expect(File(p.join(receiveDir.path, 'dup.bin')).existsSync(), isFalse);
+        expect(
+          receiveDir.listSync().where((e) => e.path.endsWith('.daphq-partial')),
+          isEmpty,
+        );
+      } finally {
+        receiver.stop();
+        await stopped.future.timeout(const Duration(seconds: 5));
+      }
+    });
+
+    test('reverse-connect rejects wrong reverseToken and missing receiver proof over TLS', () async {
+      final sampleFile = File(p.join(sendDir.path, 'rev_sec.bin'));
+      await sampleFile.writeAsString('protected-reverse-payload');
+
+      final sender = SenderController();
+      final reverseListening = Completer<int>();
+      final sendDone = Completer<Object?>();
+
+      unawaited(
+        sender
+            .sendData(
+              paths: [sampleFile.path],
+              targetIp: '127.0.0.1',
+              port: 0,
+              targetDeviceName: 'WinRx',
+              senderDeviceName: 'AndroidTx',
+              useTls: true,
+              localIdentity: txIdentity,
+              expectedPeerFingerprint: rxIdentity.certFingerprint,
+              parallelStreams: 2,
+              listenForReverseReceiver: true,
+              reverseAuthToken: 'expected-secret-token',
+              onReverseListening: (boundPort) {
+                if (!reverseListening.isCompleted) reverseListening.complete(boundPort);
+              },
+              onUpdate: (_) {},
+            )
+            .then((_) {
+              if (!sendDone.isCompleted) sendDone.complete(null);
+            })
+            .catchError((Object err) {
+              if (!sendDone.isCompleted) sendDone.complete(err);
+            }),
+      );
+
+      final port = await reverseListening.future.timeout(const Duration(seconds: 5));
+
+      // 1. Rogue reverse_control with wrong reverseToken must be rejected/closed immediately
+      final badTokSock = await connectTransferSocket(
+        host: '127.0.0.1',
+        port: port,
+        useTls: true,
+        timeout: const Duration(seconds: 5),
+        expectedPeerFingerprint: txIdentity.certFingerprint,
+      );
+      badTokSock.write(
+        '${jsonEncode({
+          'v': 2,
+          'role': 'reverse_control',
+          'reverseToken': 'wrong-token',
+        })}\n',
+      );
+      await badTokSock.flush();
+      final rejectedRead = await BufferedSocketReader(badTokSock).readJsonHeader(
+        timeout: const Duration(seconds: 3),
+        maxHeaderBytes: 64 * 1024,
+      );
+      expect(rejectedRead, isNull);
+      badTokSock.destroy();
+
+      // 2. Reverse_control with valid token that sends READY without receiverProof must fail
+      final spoofReadySock = await connectTransferSocket(
+        host: '127.0.0.1',
+        port: port,
+        useTls: true,
+        timeout: const Duration(seconds: 5),
+        expectedPeerFingerprint: txIdentity.certFingerprint,
+      );
+      spoofReadySock.write(
+        '${jsonEncode({
+          'v': 2,
+          'role': 'reverse_control',
+          'reverseToken': 'expected-secret-token',
+        })}\n',
+      );
+      await spoofReadySock.flush();
+
+      final metaHeader = await BufferedSocketReader(spoofReadySock).readJsonHeader(
+        timeout: const Duration(seconds: 5),
+        maxHeaderBytes: 64 * 1024,
+      );
+      expect(metaHeader?.header['fileName'], 'rev_sec.bin');
+
+      spoofReadySock.write(
+        '${jsonEncode({
+          's': 'r',
+          'v': 2,
+          'streams': 2,
+          'receiverPeerId': rxIdentity.peerId,
+          'receiverFp': rxIdentity.certFingerprint,
+        })}\n',
+      );
+      await spoofReadySock.flush();
+
+      final err = await sendDone.future.timeout(const Duration(seconds: 5));
+      spoofReadySock.destroy();
+      expect(err, isA<TransferSendException>());
+    });
+
+    test('concurrent acceptReverseTransfer bails cleanly without clobbering active transfer or firing onDone', () async {
+      final payloadBytes = utf8.encode('primary-active-transfer-bytes');
+      final sampleFile = File(p.join(sendDir.path, 'active_first.txt'));
+      await sampleFile.writeAsBytes(payloadBytes);
+
+      final receiver = ReceiverController();
+      final listening = Completer<int>();
+      final stopped = Completer<void>();
+      final firstAuthEntered = Completer<void>();
+      final firstAuthDecision = Completer<bool>();
+      final firstDone = Completer<void>();
+
+      unawaited(
+        receiver.startReceiver(
+          saveDirectory: receiveDir.path,
+          deviceName: 'ConcurrentRx',
+          port: 0,
+          tlsContext: rxIdentity.createServerContext(),
+          localIdentity: rxIdentity,
+          onListening: (boundPort) {
+            if (!listening.isCompleted) listening.complete(boundPort);
+          },
+          freeBytesProvider: () async => 1024 * 1024 * 1024,
+          onUpdate: (m) {
+            if (m.phase == TransferPhase.done && !firstDone.isCompleted) {
+              firstDone.complete();
+            }
+          },
+          onRequestAuth: (_, _, _, _) async => false,
+          onRequestAuthV2: (_) async {
+            if (!firstAuthEntered.isCompleted) firstAuthEntered.complete();
+            return firstAuthDecision.future;
+          },
+          onDone: () {
+            if (!stopped.isCompleted) stopped.complete();
+          },
+        ),
+      );
+
+      final port = await listening.future.timeout(const Duration(seconds: 5));
+      try {
+        final sendFuture = SenderController().sendData(
+          paths: [sampleFile.path],
+          targetIp: '127.0.0.1',
+          port: port,
+          targetDeviceName: 'ConcurrentRx',
+          senderDeviceName: 'Tx1',
+          useTls: true,
+          expectedPeerFingerprint: rxIdentity.certFingerprint,
+          localIdentity: txIdentity,
+          onUpdate: (_) {},
+        );
+
+        await firstAuthEntered.future.timeout(const Duration(seconds: 5));
+
+        bool concurrentDoneFired = false;
+        await receiver.acceptReverseTransfer(
+          senderIp: '127.0.0.1',
+          port: 65001,
+          saveDirectory: receiveDir.path,
+          deviceName: 'ConcurrentRx',
+          useTls: true,
+          localIdentity: rxIdentity,
+          onUpdate: (_) {},
+          onRequestAuth: (_, _, _, _) async => true,
+          onDone: () {
+            concurrentDoneFired = true;
+          },
+        );
+        expect(concurrentDoneFired, isFalse);
+
+        firstAuthDecision.complete(true);
+        await sendFuture.timeout(const Duration(seconds: 5));
+        await firstDone.future.timeout(const Duration(seconds: 5));
+
+        final saved = File(p.join(receiveDir.path, 'active_first.txt'));
+        expect(saved.existsSync(), isTrue);
+        expect(await saved.readAsBytes(), equals(payloadBytes));
+        expect(concurrentDoneFired, isFalse);
+      } finally {
+        receiver.stop();
+        await stopped.future.timeout(const Duration(seconds: 5));
+      }
+    });
+
+    test('0-byte file in failed v2 batch is not created in saveDirectory before finalizeAndVerify', () async {
+      final receiver = ReceiverController();
+      final listening = Completer<int>();
+      final stopped = Completer<void>();
+      final failedOrCancelled = Completer<TransferModel>();
+
+      unawaited(
+        receiver.startReceiver(
+          saveDirectory: receiveDir.path,
+          deviceName: 'ZeroOrderRx',
+          port: 0,
+          tlsContext: rxIdentity.createServerContext(),
+          localIdentity: rxIdentity,
+          onListening: (boundPort) {
+            if (!listening.isCompleted) listening.complete(boundPort);
+          },
+          freeBytesProvider: () async => 1024 * 1024 * 1024,
+          onUpdate: (m) {
+            if ((m.phase == TransferPhase.failed ||
+                    m.phase == TransferPhase.cancelled) &&
+                !failedOrCancelled.isCompleted) {
+              failedOrCancelled.complete(m);
+            }
+          },
+          onRequestAuth: (_, _, _, _) async => true,
+          onDone: () {
+            if (!stopped.isCompleted) stopped.complete();
+          },
+        ),
+      );
+
+      final port = await listening.future.timeout(const Duration(seconds: 5));
+      try {
+        const sid = 'zero-order-abort-sid';
+        final ctrl = await connectTransferSocket(
+          host: '127.0.0.1',
+          port: port,
+          useTls: true,
+          timeout: const Duration(seconds: 5),
+          expectedPeerFingerprint: rxIdentity.certFingerprint,
+        );
+        ctrl.write(
+          '${jsonEncode({
+            'v': 2,
+            'sessionId': sid,
+            'streams': 2,
+            'fileName': 'zero_pack',
+            'fileSize': 1024,
+            'senderDeviceName': 'ZeroTx',
+            'isFolder': true,
+            'files': [
+              {'path': 'zero_first.txt', 'size': 0},
+              {'path': 'incomplete_second.bin', 'size': 1024},
+            ],
+          })}\n',
+        );
+        await ctrl.flush();
+
+        final ready = await BufferedSocketReader(ctrl).readJsonHeader(
+          timeout: const Duration(seconds: 5),
+          maxHeaderBytes: 64 * 1024,
+        );
+        expect(ready?.header['s'], 'r');
+
+        // Both workers send EOF without writing incomplete_second.bin
+        Future<void> sendEmptyWorker(int idx) async {
+          final w = await connectTransferSocket(
+            host: '127.0.0.1',
+            port: port,
+            useTls: true,
+            timeout: const Duration(seconds: 5),
+            expectedPeerFingerprint: rxIdentity.certFingerprint,
+          );
+          w.write(
+            '${jsonEncode({'v': 2, 'role': 'data', 'sessionId': sid, 'workerIndex': idx})}\n',
+          );
+          w.add(buildV2EofFrame());
+          await w.flush();
+          await w.close();
+        }
+
+        await Future.wait([sendEmptyWorker(0), sendEmptyWorker(1)]);
+        await failedOrCancelled.future.timeout(const Duration(seconds: 5));
+        ctrl.destroy();
+
+        expect(File(p.join(receiveDir.path, 'zero_first.txt')).existsSync(), isFalse);
+        expect(File(p.join(receiveDir.path, 'incomplete_second.bin')).existsSync(), isFalse);
+        expect(
+          receiveDir.listSync().where((e) => e.path.endsWith('.daphq-partial')),
+          isEmpty,
+        );
+      } finally {
+        receiver.stop();
+        await stopped.future.timeout(const Duration(seconds: 5));
+      }
     });
   });
 }
