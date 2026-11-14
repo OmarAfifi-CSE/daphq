@@ -61,9 +61,10 @@ class _HomePageState extends State<HomePage> {
                   children: [
                     Image.asset(
                       'assets/logo.png',
-                      width: 16,
-                      height: 16,
+                      width: 20,
+                      height: 20,
                       filterQuality: FilterQuality.high,
+                      excludeFromSemantics: true,
                     ),
                     const SizedBox(width: 8),
                     const Text(
