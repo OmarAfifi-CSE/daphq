@@ -9,7 +9,6 @@ DialogRoute<bool> createAuthDialogRoute({
   required String senderName,
   required int fileCount,
   required String formattedSize,
-  String? sasCode,
   bool isTls = false,
   bool isFingerprintMismatch = false,
   bool canTrustPeer = false,
@@ -24,7 +23,6 @@ DialogRoute<bool> createAuthDialogRoute({
       senderName: senderName,
       fileCount: fileCount,
       formattedSize: formattedSize,
-      sasCode: sasCode,
       isTls: isTls,
       isFingerprintMismatch: isFingerprintMismatch,
       canTrustPeer: canTrustPeer,
@@ -42,7 +40,6 @@ Future<bool> showAuthDialog({
   required String senderName,
   required int fileCount,
   required String formattedSize,
-  String? sasCode,
   bool isTls = false,
   bool isFingerprintMismatch = false,
   bool canTrustPeer = false,
@@ -55,7 +52,6 @@ Future<bool> showAuthDialog({
           senderName: senderName,
           fileCount: fileCount,
           formattedSize: formattedSize,
-          sasCode: sasCode,
           isTls: isTls,
           isFingerprintMismatch: isFingerprintMismatch,
           canTrustPeer: canTrustPeer,
@@ -70,7 +66,6 @@ class _AuthDialogContent extends StatefulWidget {
   final String senderName;
   final int fileCount;
   final String formattedSize;
-  final String? sasCode;
   final bool isTls;
   final bool isFingerprintMismatch;
   final bool canTrustPeer;
@@ -81,7 +76,6 @@ class _AuthDialogContent extends StatefulWidget {
     required this.senderName,
     required this.fileCount,
     required this.formattedSize,
-    this.sasCode,
     this.isTls = false,
     this.isFingerprintMismatch = false,
     this.canTrustPeer = false,
@@ -249,64 +243,11 @@ class _AuthDialogContentState extends State<_AuthDialogContent>
                           SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              "Security Warning: Device key changed since last trusted session. Verify PIN before accepting.",
+                              "Security Warning: Device key changed since last trusted session. Confirm the sender directly before accepting.",
                               style: TextStyle(
                                 color: AppColors.dangerLight,
                                 fontSize: 11.5,
                                 fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                  if (widget.sasCode != null) ...[
-                    const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.primary.withAlpha(22),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: AppColors.primaryLight.withAlpha(70),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(
-                            Icons.pin_rounded,
-                            color: AppColors.primaryLight,
-                            size: 16,
-                          ),
-                          const SizedBox(width: 8),
-                          const Flexible(
-                            child: Text(
-                              "Verify PIN: ",
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: AppColors.textSecondary,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          Flexible(
-                            child: Text(
-                              widget.sasCode!,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 3.0,
                               ),
                             ),
                           ),

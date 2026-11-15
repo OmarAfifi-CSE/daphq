@@ -524,6 +524,42 @@ struct DirectFabricPlugin::Impl : public std::enable_shared_from_this<Impl> {
     });
   }
 
+  static EncodableMap CapabilitiesToMap(const DaphqRadioCapabilities& caps) {
+    EncodableMap map;
+    map[EncodableValue("hasWifi")] = EncodableValue(caps.has_wifi != 0);
+    map[EncodableValue("hasBle")] = EncodableValue(caps.has_ble != 0);
+    map[EncodableValue("canHostDirect5g")] =
+        EncodableValue(caps.can_host_direct_5g != 0);
+    map[EncodableValue("wifiHardwarePresent")] =
+        EncodableValue(caps.wifi_hardware_present != 0);
+    map[EncodableValue("bluetoothHardwarePresent")] =
+        EncodableValue(caps.bluetooth_hardware_present != 0);
+    map[EncodableValue("wifiEnabled")] = EncodableValue(caps.wifi_enabled != 0);
+    map[EncodableValue("bluetoothEnabled")] =
+        EncodableValue(caps.bluetooth_enabled != 0);
+    map[EncodableValue("missingWifiPermission")] = EncodableValue(false);
+    map[EncodableValue("missingBlePermission")] = EncodableValue(false);
+    map[EncodableValue("locationServiceEnabled")] =
+        EncodableValue(caps.location_service_enabled != 0);
+    return map;
+  }
+
+  static void OnNativeRadioState(DaphqRadioCapabilities caps, void* user_data) {
+    auto* relay = static_cast<CallbackRelay*>(user_data);
+    if (!relay) return;
+
+    std::shared_ptr<Impl> s;
+    {
+      std::lock_guard<std::mutex> lock(relay->mu);
+      s = relay->impl.lock();
+    }
+    if (!s || s->destroyed.load()) return;
+
+    EncodableMap map = CapabilitiesToMap(caps);
+    map[EncodableValue("type")] = EncodableValue("radioState");
+    s->EmitEvent(map);
+  }
+
   static void OnNativeBleBeacon(
       const char* ble_address,
       const char* device_name,
@@ -626,7 +662,12 @@ DirectFabricPlugin::DirectFabricPlugin(
       &Impl::OnNativeBleBeacon,
       &Impl::OnNativeGattRequest,
       holder->relay.get());
-  impl_->native_holder = std::move(holder);
+  impl_->native_holder = holder;
+  impl_->SpawnWorker([s = impl_, holder]() {
+    if (!s->destroyed.load() && holder->handle) {
+      daphq_direct_set_radio_callback(holder->handle, &Impl::OnNativeRadioState);
+    }
+  });
 
   impl_->method_channel = std::make_unique<flutter::MethodChannel<EncodableValue>>(
       messenger,
@@ -686,11 +727,7 @@ DirectFabricPlugin::DirectFabricPlugin(
             if (s->destroyed.load()) return;
             const DaphqRadioCapabilities caps =
                 daphq_direct_get_capabilities(holder->handle);
-            EncodableMap out;
-            out[EncodableValue("hasWifi")] = EncodableValue(caps.has_wifi != 0);
-            out[EncodableValue("hasBle")] = EncodableValue(caps.has_ble != 0);
-            out[EncodableValue("canHostDirect5g")] =
-                EncodableValue(caps.can_host_direct_5g != 0);
+            EncodableMap out = Impl::CapabilitiesToMap(caps);
             s->CompleteReplySuccess(reply, EncodableValue(std::move(out)));
           });
           return;
@@ -732,11 +769,20 @@ DirectFabricPlugin::DirectFabricPlugin(
             if (const auto* str = std::get_if<std::string>(&fp_it->second)) fp = *str;
           }
 
+          int effective_port = 62004;
+          if (payload.size() == 22) {
+            const int decoded_port = (static_cast<int>(payload[18]) << 8) |
+                                     static_cast<int>(payload[19]);
+            if (decoded_port > 0 && decoded_port <= 65535) {
+              effective_port = decoded_port;
+            }
+          }
+
           EncodableMap info_map;
           info_map[EncodableValue("peerId")] = EncodableValue(peer_id);
           info_map[EncodableValue("name")] = EncodableValue(peer_name);
           info_map[EncodableValue("fp")] = EncodableValue(fp);
-          info_map[EncodableValue("port")] = EncodableValue(62004);
+          info_map[EncodableValue("port")] = EncodableValue(effective_port);
           info_map[EncodableValue("platform")] = EncodableValue("windows");
           const std::string info_json = EncodableMapToJson(info_map);
 
@@ -772,18 +818,27 @@ DirectFabricPlugin::DirectFabricPlugin(
 
         if (method == "startDirectHost") {
           bool prefer_5g = true;
+          std::string stable_tag;
           if (const auto* args = std::get_if<EncodableMap>(call.arguments())) {
             auto it = args->find(EncodableValue("prefer5Ghz"));
             if (it != args->end()) {
               if (const auto* b = std::get_if<bool>(&it->second)) prefer_5g = *b;
             }
+            auto tag_it = args->find(EncodableValue("stableTag"));
+            if (tag_it != args->end()) {
+              if (const auto* t = std::get_if<std::string>(&tag_it->second)) {
+                stable_tag = *t;
+              }
+            }
           }
           auto reply = s->TrackReply(std::move(result));
           if (!reply) return;
-          s->SpawnWorker([s, holder, reply, prefer_5g]() {
+          s->SpawnWorker([s, holder, reply, prefer_5g, stable_tag]() {
             if (s->destroyed.load()) return;
-            const DaphqDirectHostInfo info =
-                daphq_direct_start_host(holder->handle, prefer_5g ? 1 : 0);
+            const DaphqDirectHostInfo info = daphq_direct_start_host(
+                holder->handle,
+                prefer_5g ? 1 : 0,
+                stable_tag.empty() ? nullptr : stable_tag.c_str());
             if (!info.success) {
               s->CompleteReplySuccess(reply, EncodableValue());
               return;
@@ -836,6 +891,9 @@ DirectFabricPlugin::DirectFabricPlugin(
             EncodableMap out;
             out[EncodableValue("localIp")] = EncodableValue(std::string(conn.local_ip));
             out[EncodableValue("gatewayIp")] = EncodableValue(std::string(conn.gateway_ip));
+            if (conn.frequency_mhz > 0) {
+              out[EncodableValue("frequencyMhz")] = EncodableValue(conn.frequency_mhz);
+            }
             s->CompleteReplySuccess(reply, EncodableValue(std::move(out)));
           });
           return;
@@ -905,6 +963,56 @@ DirectFabricPlugin::DirectFabricPlugin(
           s->SpawnWorker([s, holder, reply]() {
             if (!s->destroyed.load()) {
               daphq_direct_stop_session(holder->handle);
+            }
+            s->CompleteReplySuccess(reply, EncodableValue());
+          });
+          return;
+        }
+
+        if (method == "getDirectHostClients") {
+          auto reply = s->TrackReply(std::move(result));
+          if (!reply) return;
+          s->SpawnWorker([s, holder, reply]() {
+            EncodableList list;
+            if (!s->destroyed.load()) {
+              char csv_buf[1024]{};
+              const int count = daphq_direct_get_host_client_ips(
+                  holder->handle, csv_buf, sizeof(csv_buf));
+              if (count > 0 && csv_buf[0] != '\0') {
+                std::string csv(csv_buf);
+                size_t start = 0;
+                while (start < csv.size()) {
+                  const size_t comma = csv.find(',', start);
+                  const std::string item = comma == std::string::npos
+                      ? csv.substr(start)
+                      : csv.substr(start, comma - start);
+                  if (!item.empty()) {
+                    list.push_back(EncodableValue(item));
+                  }
+                  if (comma == std::string::npos) break;
+                  start = comma + 1;
+                }
+              }
+            }
+            s->CompleteReplySuccess(reply, EncodableValue(std::move(list)));
+          });
+          return;
+        }
+
+        if (method == "setTransferPowerLock") {
+          bool enabled = false;
+          if (const auto* args = std::get_if<EncodableMap>(call.arguments())) {
+            auto it = args->find(EncodableValue("enabled"));
+            if (it != args->end()) {
+              if (const auto* b = std::get_if<bool>(&it->second)) enabled = *b;
+            }
+          }
+          auto reply = s->TrackReply(std::move(result));
+          if (!reply) return;
+          s->SpawnWorker([s, holder, reply, enabled]() {
+            if (!s->destroyed.load()) {
+              daphq_direct_set_transfer_power_lock(
+                  holder->handle, enabled ? 1 : 0);
             }
             s->CompleteReplySuccess(reply, EncodableValue());
           });

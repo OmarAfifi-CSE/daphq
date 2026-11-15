@@ -182,7 +182,7 @@ void main() {
     });
   });
 
-  group('BleBeaconCodec, PairingQrCodec & PeerRegistry', () {
+  group('BleBeaconCodec & PeerRegistry', () {
     test('BleBeaconCodec roundtrips 22-byte Manufacturer Payload and rejects malformed lengths', () {
       const original = BleBeaconPayload(
         caps: PeerCapabilities(
@@ -219,36 +219,6 @@ void main() {
       expect(BleBeaconCodec.decode(Uint8List(23)), isNull);
       final badVersion = Uint8List.fromList(bytes)..[0] = 99;
       expect(BleBeaconCodec.decode(badVersion), isNull);
-    });
-
-    test('PairingQrCodec roundtrips daphq://pair URI with SoftAP credentials & rejects invalid input', () {
-      final token = PairingToken(
-        peerId: 'a1b2c3d4e5f60708',
-        fingerprint: 'ab' * 32,
-        name: 'Omar Pixel 9',
-        platform: PeerPlatform.android,
-        lanIp: '192.168.49.1',
-        port: 62004,
-        ssid: 'DIRECT-DQ-8821',
-        psk: 'Tr0pic@lDirect99',
-      );
-
-      final uri = PairingQrCodec.encode(token);
-      expect(uri, startsWith('daphq://pair?'));
-
-      final parsed = PairingQrCodec.decode(uri);
-      expect(parsed, isNotNull);
-      expect(parsed!.peerId, token.peerId);
-      expect(parsed.fingerprint, token.fingerprint);
-      expect(parsed.name, token.name);
-      expect(parsed.platform, PeerPlatform.android);
-      expect(parsed.lanIp, '192.168.49.1');
-      expect(parsed.port, 62004);
-      expect(parsed.ssid, 'DIRECT-DQ-8821');
-      expect(parsed.psk, 'Tr0pic@lDirect99');
-
-      expect(PairingQrCodec.decode('https://example.com'), isNull);
-      expect(PairingQrCodec.decode('daphq://pair?peerId=bad'), isNull);
     });
 
     test('PeerRegistry deduplicates same peerId across LAN & BLE and expires transports independently', () {
@@ -348,11 +318,11 @@ void main() {
   });
 
   group('SmartLinkEvaluator & DirectNativeBridge', () {
-    test('chooses LAN TLS v2 4-stream silently in autoSmart when healthy LAN exists', () {
+    test('always prefers lanTriggeredDirectP2p first even when Bluetooth is OFF', () {
       const evaluator = SmartLinkEvaluator();
       const localCaps = LocalRadioCapabilities(
         hasWifi: true,
-        hasBle: true,
+        hasBle: false,
         canHostDirect5g: true,
         localPlatform: PeerPlatform.android,
       );
@@ -361,7 +331,7 @@ void main() {
         name: 'Studio Win',
         platform: PeerPlatform.windows,
         lanIp: '192.168.1.25',
-        bleAddress: '11:22:33:44:55:66',
+        bleAddress: null,
         caps: PeerCapabilities(
           tlsSupported: true,
           direct5gHostCapable: true,
@@ -373,18 +343,20 @@ void main() {
 
       final plan = evaluator.planTransfer(
         peer: peer,
-        preference: TransportPreference.autoSmart,
         localCaps: localCaps,
         localPeerId: 'bbbb111122223333',
       );
 
-      expect(plan.strategy, LinkExecutionStrategy.lanTlsDirect);
+      expect(plan.strategy, LinkExecutionStrategy.lanTriggeredDirectP2p);
       expect(plan.useTls, isTrue);
       expect(plan.parallelStreams, 4);
-      expect(plan.useReverseConnect, isFalse);
+      // Android hosts Direct group to avoid OS Wi-Fi picker popups while Windows
+      // connects as STA client and dials TCP outbound.
+      expect(plan.shouldLocalHostDirectGroup, isTrue);
+      expect(plan.useReverseConnect, isTrue);
     });
 
-    test('escalates to BLE Direct P2P with Android GO & Windows Reverse-Connect when router is absent', () {
+    test('escalates to BLE Direct P2P with Android GO host + Windows Reverse-Connect and falls back to Windows host if Android lacks Direct', () {
       const evaluator = SmartLinkEvaluator();
       const androidLocal = LocalRadioCapabilities(
         hasWifi: true,
@@ -409,7 +381,6 @@ void main() {
 
       final plan = evaluator.planTransfer(
         peer: winPeer,
-        preference: TransportPreference.autoSmart,
         localCaps: androidLocal,
         localPeerId: 'cccc111122223333',
       );
@@ -419,13 +390,64 @@ void main() {
       expect(plan.parallelStreams, 4);
       expect(plan.shouldLocalHostDirectGroup, isTrue);
       expect(plan.useReverseConnect, isTrue);
+
+      const clientOnlyAndroid = LocalRadioCapabilities(
+        hasWifi: true,
+        hasBle: true,
+        canHostDirect5g: false,
+        wifiHardwarePresent: true,
+        wifiEnabled: true,
+        localPlatform: PeerPlatform.android,
+      );
+      // When Android lacks 5 GHz host capability while Windows supports 5 GHz host,
+      // Windows hosts (and still yields to Android host when Windows is 2.4-only).
+      final clientOnlyPlan = evaluator.planTransfer(
+        peer: winPeer,
+        localCaps: clientOnlyAndroid,
+        localPeerId: 'cccc111122223333',
+      );
+      expect(clientOnlyPlan.shouldLocalHostDirectGroup, isFalse);
+      expect(clientOnlyPlan.useReverseConnect, isTrue);
+
+      final softApFallback = evaluator.planTransfer(
+        peer: winPeer.copyWith(
+          caps: const PeerCapabilities(
+            tlsSupported: true,
+            direct5gHostCapable: false,
+            directClientCapable: true,
+            multiStreamSupported: true,
+            platform: PeerPlatform.windows,
+          ),
+        ),
+        localCaps: clientOnlyAndroid,
+        localPeerId: 'cccc111122223333',
+      );
+      expect(softApFallback.shouldLocalHostDirectGroup, isTrue);
+      expect(softApFallback.useReverseConnect, isTrue);
+
+      final offlineWinPeer = winPeer.copyWith(
+        caps: const PeerCapabilities(
+          tlsSupported: true,
+          direct5gHostCapable: false,
+          directClientCapable: true,
+          multiStreamSupported: true,
+          platform: PeerPlatform.windows,
+        ),
+      );
+      final offlinePlan = evaluator.planTransfer(
+        peer: offlineWinPeer,
+        localCaps: androidLocal,
+        localPeerId: 'cccc111122223333',
+      );
+      expect(offlinePlan.shouldLocalHostDirectGroup, isTrue);
+      expect(offlinePlan.useReverseConnect, isTrue);
     });
 
-    test('honors directTurbo preference even when LAN IP is available', () {
+    test('prefers Android Direct host over Windows Mobile Hotspot and falls back to Windows host when Android lacks Direct', () {
       const evaluator = SmartLinkEvaluator();
       const winLocal = LocalRadioCapabilities(
         hasWifi: true,
-        hasBle: true,
+        hasBle: false,
         canHostDirect5g: true,
         localPlatform: PeerPlatform.windows,
       );
@@ -434,7 +456,7 @@ void main() {
         name: 'Galaxy S25',
         platform: PeerPlatform.android,
         lanIp: '192.168.1.99',
-        bleAddress: 'AA:BB:CC:DD:EE:11',
+        bleAddress: null,
         caps: PeerCapabilities(
           tlsSupported: true,
           direct5gHostCapable: true,
@@ -446,24 +468,137 @@ void main() {
 
       final plan = evaluator.planTransfer(
         peer: androidPeer,
-        preference: TransportPreference.directTurbo,
         localCaps: winLocal,
         localPeerId: '2222333344445555',
       );
 
-      expect(plan.strategy, LinkExecutionStrategy.bleTriggeredDirectP2p);
+      expect(plan.strategy, LinkExecutionStrategy.lanTriggeredDirectP2p);
       expect(plan.shouldLocalHostDirectGroup, isFalse);
       expect(plan.useReverseConnect, isFalse);
       expect(plan.parallelStreams, 4);
+
+      final noDirect5gAndroid = androidPeer.copyWith(
+        caps: const PeerCapabilities(
+          tlsSupported: true,
+          direct5gHostCapable: false,
+          directClientCapable: true,
+          multiStreamSupported: true,
+          platform: PeerPlatform.android,
+        ),
+      );
+      final fallbackHostPlan = evaluator.planTransfer(
+        peer: noDirect5gAndroid,
+        localCaps: winLocal,
+        localPeerId: '2222333344445555',
+      );
+      expect(fallbackHostPlan.shouldLocalHostDirectGroup, isTrue);
+      expect(fallbackHostPlan.useReverseConnect, isFalse);
+
+      final offlineWinPlan = evaluator.planTransfer(
+        peer: androidPeer,
+        localCaps: const LocalRadioCapabilities(
+          hasWifi: true,
+          hasBle: false,
+          canHostDirect5g: false,
+          localPlatform: PeerPlatform.windows,
+        ),
+        localPeerId: '2222333344445555',
+      );
+      expect(offlineWinPlan.shouldLocalHostDirectGroup, isFalse);
+      expect(offlineWinPlan.useReverseConnect, isFalse);
     });
 
-    test('falls back to QR manual pairing when peer has no LAN and local device lacks Wi-Fi or BLE', () {
+    test('uses lanTlsDirect with honest reason when Ethernet desktop lacks Wi-Fi hardware or permission', () {
       const evaluator = SmartLinkEvaluator();
-      const desktopNoBle = LocalRadioCapabilities(
+      const ethernetOnlyDesktop = LocalRadioCapabilities(
         hasWifi: false,
         hasBle: false,
         canHostDirect5g: false,
         localPlatform: PeerPlatform.windows,
+        wifiHardwarePresent: false,
+        wifiEnabled: false,
+      );
+      const androidPeer = UnifiedPeer(
+        peerId: '1111222233334444',
+        name: 'Pixel 9',
+        platform: PeerPlatform.android,
+        lanIp: '192.168.1.50',
+        caps: PeerCapabilities(
+          tlsSupported: true,
+          direct5gHostCapable: true,
+          directClientCapable: true,
+          multiStreamSupported: true,
+          platform: PeerPlatform.android,
+        ),
+      );
+
+      final desktopPlan = evaluator.planTransfer(
+        peer: androidPeer,
+        localCaps: ethernetOnlyDesktop,
+        localPeerId: 'aaaa111122223333',
+      );
+      expect(desktopPlan.strategy, LinkExecutionStrategy.lanTlsDirect);
+      expect(desktopPlan.reason, contains('No Wi-Fi adapter'));
+
+      const missingPermAndroid = LocalRadioCapabilities(
+        hasWifi: false,
+        hasBle: false,
+        canHostDirect5g: false,
+        localPlatform: PeerPlatform.android,
+        wifiHardwarePresent: true,
+        wifiEnabled: true,
+        missingWifiPermission: true,
+      );
+      final permPlan = evaluator.planTransfer(
+        peer: androidPeer,
+        localCaps: missingPermAndroid,
+        localPeerId: 'aaaa111122223333',
+      );
+      expect(permPlan.strategy, LinkExecutionStrategy.lanTlsDirect);
+      expect(permPlan.reason, contains('Nearby Wi-Fi'));
+    });
+
+    test('falls back to bleTriggeredDirectP2p when LAN probe is unhealthy and BLE is ready', () {
+      const evaluator = SmartLinkEvaluator();
+      const localCaps = LocalRadioCapabilities(
+        hasWifi: true,
+        hasBle: true,
+        canHostDirect5g: true,
+        localPlatform: PeerPlatform.android,
+      );
+      const peer = UnifiedPeer(
+        peerId: 'deadbeef00001111',
+        name: 'Laptop',
+        platform: PeerPlatform.windows,
+        lanIp: '192.168.1.120',
+        bleAddress: '00:11:22:33:44:55',
+        caps: PeerCapabilities(
+          tlsSupported: true,
+          direct5gHostCapable: true,
+          directClientCapable: true,
+          multiStreamSupported: true,
+          platform: PeerPlatform.windows,
+        ),
+      );
+
+      final plan = evaluator.planTransfer(
+        peer: peer,
+        localCaps: localCaps,
+        localPeerId: 'cafe000011112222',
+        lanProbeHealthy: false,
+      );
+      expect(plan.strategy, LinkExecutionStrategy.bleTriggeredDirectP2p);
+    });
+
+    test('returns unreachable with diagnostic reason when peer has no LAN and local lacks Wi-Fi/BLE', () {
+      const evaluator = SmartLinkEvaluator();
+      const desktopNoRadios = LocalRadioCapabilities(
+        hasWifi: false,
+        hasBle: false,
+        canHostDirect5g: false,
+        localPlatform: PeerPlatform.windows,
+        wifiHardwarePresent: true,
+        wifiEnabled: false,
       );
       const bleOnlyPeer = UnifiedPeer(
         peerId: 'deadbeef00001111',
@@ -481,15 +616,15 @@ void main() {
 
       final plan = evaluator.planTransfer(
         peer: bleOnlyPeer,
-        preference: TransportPreference.autoSmart,
-        localCaps: desktopNoBle,
+        localCaps: desktopNoRadios,
         localPeerId: 'cafe000011112222',
       );
 
-      expect(plan.strategy, LinkExecutionStrategy.manualQrFallback);
+      expect(plan.strategy, LinkExecutionStrategy.unreachable);
+      expect(plan.reason, contains('Turn on Wi-Fi'));
     });
 
-    test('DirectNativeBridge parses native BLE beacon & GATT request events safely', () {
+    test('DirectNativeBridge parses native BLE beacon, GATT request & radioState events safely', () {
       final beaconBytes = BleBeaconCodec.encode(
         const BleBeaconPayload(
           caps: PeerCapabilities(
@@ -536,6 +671,30 @@ void main() {
       final gatt = parsedGatt! as DirectGattLinkRequestEvent;
       expect(gatt.ssid, 'DIRECT-DQ-1234');
       expect(gatt.useReverseConnect, isTrue);
+
+      final parsedRadio = DirectNativeBridge.parseEvent(<String, dynamic>{
+        'type': 'radioState',
+        'hasWifi': false,
+        'hasBle': true,
+        'bleAdvertising': true,
+        'bleScanning': true,
+        'canHostDirect5g': false,
+        'wifiHardwarePresent': true,
+        'bluetoothHardwarePresent': true,
+        'wifiEnabled': true,
+        'bluetoothEnabled': true,
+        'missingWifiPermission': true,
+        'missingBlePermission': false,
+        'locationServiceEnabled': true,
+      });
+      expect(parsedRadio, isA<DirectRadioStateEvent>());
+      final radio = parsedRadio! as DirectRadioStateEvent;
+      final caps = radio.toCapabilities(PeerPlatform.android);
+      expect(caps.wifiHardwarePresent, isTrue);
+      expect(caps.wifiEnabled, isTrue);
+      expect(caps.missingWifiPermission, isTrue);
+      expect(caps.canUseDirectWifi, isFalse);
+      expect(caps.hasBle, isTrue);
     });
 
     test('PeerRegistry.touchLanHeartbeat extends LAN TTL across repeated heartbeats', () {
@@ -653,7 +812,7 @@ void main() {
       expect(gatt.useReverseConnect, isTrue);
     });
 
-    test('SmartLinkEvaluator aligns useReverseConnect with localHostsGo across Android and Windows', () {
+    test('SmartLinkEvaluator keeps Windows outbound TCP invariant across both host modes', () {
       const evaluator = SmartLinkEvaluator();
       final winPeer = UnifiedPeer(
         peerId: 'win-peer-1',
@@ -671,7 +830,6 @@ void main() {
       );
       final androidToWin = evaluator.planTransfer(
         peer: winPeer,
-        preference: TransportPreference.directTurbo,
         localCaps: const LocalRadioCapabilities(
           hasWifi: true,
           hasBle: true,
@@ -682,7 +840,35 @@ void main() {
       );
       expect(androidToWin.strategy, LinkExecutionStrategy.bleTriggeredDirectP2p);
       expect(androidToWin.shouldLocalHostDirectGroup, isTrue);
-      expect(androidToWin.useReverseConnect, androidToWin.shouldLocalHostDirectGroup);
+      expect(androidToWin.useReverseConnect, isTrue);
+
+      final legacyAndroidPeer = UnifiedPeer(
+        peerId: '0000-android-id',
+        name: 'LegacyPhone',
+        platform: PeerPlatform.android,
+        bleAddress: 'AA:BB:CC:DD:EE:02',
+        caps: const PeerCapabilities(
+          direct5gHostCapable: false,
+          directClientCapable: true,
+          tlsSupported: true,
+          multiStreamSupported: true,
+          platform: PeerPlatform.android,
+        ),
+        lastSeenBle: DateTime.now(),
+      );
+      final winHostToAndroid = evaluator.planTransfer(
+        peer: legacyAndroidPeer,
+        localCaps: const LocalRadioCapabilities(
+          hasWifi: true,
+          hasBle: true,
+          canHostDirect5g: true,
+          localPlatform: PeerPlatform.windows,
+        ),
+        localPeerId: '0000-win-id',
+      );
+      expect(winHostToAndroid.strategy, LinkExecutionStrategy.bleTriggeredDirectP2p);
+      expect(winHostToAndroid.shouldLocalHostDirectGroup, isTrue);
+      expect(winHostToAndroid.useReverseConnect, isFalse);
 
       final androidPeer = UnifiedPeer(
         peerId: '0000-android-id',
@@ -698,9 +884,8 @@ void main() {
         ),
         lastSeenBle: DateTime.now(),
       );
-      final winToAndroid = evaluator.planTransfer(
+      final winClientToAndroid = evaluator.planTransfer(
         peer: androidPeer,
-        preference: TransportPreference.directTurbo,
         localCaps: const LocalRadioCapabilities(
           hasWifi: true,
           hasBle: true,
@@ -709,9 +894,206 @@ void main() {
         ),
         localPeerId: '0000-win-id',
       );
-      expect(winToAndroid.strategy, LinkExecutionStrategy.bleTriggeredDirectP2p);
-      expect(winToAndroid.shouldLocalHostDirectGroup, isFalse);
-      expect(winToAndroid.useReverseConnect, isFalse);
+      expect(winClientToAndroid.strategy, LinkExecutionStrategy.bleTriggeredDirectP2p);
+      expect(winClientToAndroid.shouldLocalHostDirectGroup, isFalse);
+      expect(winClientToAndroid.useReverseConnect, isFalse);
+    });
+
+    test('deriveStableDirectSsidTag builds deterministic uppercase alnum tag and handles empty/short IDs', () {
+      expect(deriveStableDirectSsidTag('a1b2-c3d4e5f6'), 'A1B2C3');
+      expect(deriveStableDirectSsidTag('deadbeef99887766'), 'DEADBEEF'.substring(0, 6));
+      expect(deriveStableDirectSsidTag('ab_c1'), 'ABC1');
+      expect(deriveStableDirectSsidTag(null), isNull);
+      expect(deriveStableDirectSsidTag('---'), isNull);
+    });
+
+    test('directRouteLabelForFrequency reports true band honestly', () {
+      expect(directRouteLabelForFrequency(5180), 'Direct 5GHz Wi-Fi');
+      expect(directRouteLabelForFrequency(5745), 'Direct 5GHz Wi-Fi');
+      expect(directRouteLabelForFrequency(2437), 'Direct 2.4GHz Wi-Fi');
+      expect(directRouteLabelForFrequency(2412), 'Direct 2.4GHz Wi-Fi');
+      expect(directRouteLabelForFrequency(0), 'Direct Wi-Fi');
+      expect(directRouteLabelForFrequency(null), 'Direct Wi-Fi');
+    });
+  });
+
+  group('DiscoveryService resilient multi-port binding', () {
+    Future<int> reserveFreeUdpPort() async {
+      final probe = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+      final port = probe.port;
+      probe.close();
+      return port;
+    }
+
+    Future<void> sendUdpReliably(
+      RawDatagramSocket socket,
+      List<int> data,
+      InternetAddress address,
+      int port,
+    ) async {
+      for (int attempt = 0; attempt < 5; attempt++) {
+        if (socket.send(data, address, port) > 0) return;
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      fail('UDP send to $address:$port returned 0 bytes across 5 attempts');
+    }
+
+    test('binds non-excluded fallback port when 62005 throws OS error 10013 and receives peer packets', () async {
+      final fallbackPort = await reserveFreeUdpPort();
+      final service = DiscoveryService(
+        candidatePorts: [62005, fallbackPort],
+        hasLocalNetwork: () async => true,
+        enableConnectivityListener: false,
+        filterLocalIpPackets: false,
+        socketBinder: (host, port, {reuseAddress = true}) async {
+          if (port == 62005) {
+            throw const SocketException(
+              'Excluded by Windows NAT',
+              osError: OSError('WSAEACCES', 10013),
+            );
+          }
+          return RawDatagramSocket.bind(host, port, reuseAddress: reuseAddress);
+        },
+      );
+      addTearDown(service.dispose);
+
+      await service.startDiscovery(
+        'WinPC',
+        peerId: 'aaaa111122223333',
+      );
+
+      expect(service.status, ServiceStatus.discovering);
+      expect(service.boundDiscoveryPorts, [fallbackPort]);
+
+      final discovered = service.devicesStream
+          .firstWhere((list) => list.any((d) => d.peerId == 'bbbb111122223333'))
+          .timeout(const Duration(seconds: 3));
+
+      final sender = await RawDatagramSocket.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(sender.close);
+      // Same peerId loopback packet must still be ignored by peerId guard.
+      await sendUdpReliably(
+        sender,
+        utf8.encode(
+          jsonEncode({
+            'type': 'DAPHQ_DISCOVERY',
+            'name': 'WinPC',
+            'peerId': 'aaaa111122223333',
+            'port': 62004,
+            'status': 'ONLINE',
+          }),
+        ),
+        InternetAddress.loopbackIPv4,
+        fallbackPort,
+      );
+      final packet = utf8.encode(
+        jsonEncode({
+          'type': 'DAPHQ_DISCOVERY',
+          'name': 'PeerPhone',
+          'peerId': 'bbbb111122223333',
+          'port': 62004,
+          'status': 'ONLINE',
+        }),
+      );
+      await sendUdpReliably(sender, packet, InternetAddress.loopbackIPv4, fallbackPort);
+
+      final peers = await discovered;
+      expect(peers.single.name, 'PeerPhone');
+      expect(peers.single.peerId, 'bbbb111122223333');
+    });
+
+    test('binds primary and fallback ports simultaneously when both are free', () async {
+      final primaryPort = await reserveFreeUdpPort();
+      final fallbackPort = await reserveFreeUdpPort();
+      final service = DiscoveryService(
+        candidatePorts: [primaryPort, fallbackPort],
+        hasLocalNetwork: () async => true,
+        enableConnectivityListener: false,
+        filterLocalIpPackets: false,
+      );
+      addTearDown(service.dispose);
+
+      await service.startDiscovery(
+        'DualPortHost',
+        peerId: 'cccc111122223333',
+      );
+
+      expect(service.status, ServiceStatus.discovering);
+      expect(service.boundDiscoveryPorts, containsAll([primaryPort, fallbackPort]));
+
+      final sender = await RawDatagramSocket.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(sender.close);
+
+      final gotFromPrimary = service.devicesStream
+          .firstWhere((list) => list.any((d) => d.peerId == 'peer-on-primary'))
+          .timeout(const Duration(seconds: 3));
+      sender.send(
+        utf8.encode(
+          jsonEncode({
+            'type': 'DAPHQ_DISCOVERY',
+            'name': 'PrimaryPeer',
+            'peerId': 'peer-on-primary',
+            'port': 62004,
+            'status': 'ONLINE',
+          }),
+        ),
+        InternetAddress.loopbackIPv4,
+        primaryPort,
+      );
+      await gotFromPrimary;
+
+      final gotFromFallback = service.devicesStream
+          .firstWhere((list) => list.any((d) => d.peerId == 'peer-on-fallback'))
+          .timeout(const Duration(seconds: 3));
+      sender.send(
+        utf8.encode(
+          jsonEncode({
+            'type': 'DAPHQ_DISCOVERY',
+            'name': 'FallbackPeer',
+            'peerId': 'peer-on-fallback',
+            'port': 42604,
+            'status': 'ONLINE',
+          }),
+        ),
+        InternetAddress.loopbackIPv4,
+        fallbackPort,
+      );
+      final peers = await gotFromFallback;
+      expect(
+        peers.firstWhere((p) => p.peerId == 'peer-on-fallback').port,
+        42604,
+      );
+    });
+
+    test('enters ServiceStatus.failed only after all candidate ports throw 10013', () async {
+      final service = DiscoveryService(
+        candidatePorts: const [62005, 42605],
+        hasLocalNetwork: () async => true,
+        enableConnectivityListener: false,
+        conflictRetryDelay: const Duration(milliseconds: 20),
+        socketBinder: (host, port, {reuseAddress = true}) async {
+          throw const SocketException(
+            'Excluded by Windows NAT',
+            osError: OSError('WSAEACCES', 10013),
+          );
+        },
+      );
+      addTearDown(service.dispose);
+
+      final statuses = <ServiceStatus>[];
+      final sub = service.statusStream.listen(statuses.add);
+      addTearDown(sub.cancel);
+
+      final failedFuture = service.statusStream
+          .firstWhere((s) => s == ServiceStatus.failed)
+          .timeout(const Duration(seconds: 3));
+
+      await service.startDiscovery('BlockedHost', peerId: 'dddd111122223333');
+      await failedFuture;
+
+      expect(service.boundDiscoveryPorts, isEmpty);
+      expect(statuses, contains(ServiceStatus.recovering));
+      expect(statuses.last, ServiceStatus.failed);
     });
   });
 }

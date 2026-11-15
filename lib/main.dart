@@ -83,7 +83,6 @@ void main(List<String> args) async {
   );
 
   if (Platform.isAndroid) {
-    await requestAllPermissions();
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
         channelId: AppConstants.notificationChannelId,
@@ -137,42 +136,97 @@ void main(List<String> args) async {
   }
 }
 
+/// Coordinates Android startup permissions after the first Flutter frame so
+/// `runApp()` never blocks on splash screens and Android 16's All-Files Settings
+/// transition doesn't stall follow-up runtime Nearby/Bluetooth prompts.
+class StartupPermissionCoordinator {
+  StartupPermissionCoordinator._();
+
+  static Completer<void>? _activeRun;
+  static bool _completedOnce = false;
+
+  static Future<void> waitUntilFinished() async {
+    final active = _activeRun;
+    if (active != null && !active.isCompleted) {
+      await active.future;
+    }
+  }
+
+  static Future<void> requestOnceAfterFirstFrame() async {
+    if (!Platform.isAndroid) return;
+    if (_completedOnce) return;
+    if (_activeRun != null && !_activeRun!.isCompleted) {
+      await _activeRun!.future;
+      return;
+    }
+    final completer = Completer<void>();
+    _activeRun = completer;
+    try {
+      await requestAllPermissions();
+      _completedOnce = true;
+    } finally {
+      if (!completer.isCompleted) {
+        completer.complete();
+      }
+      if (identical(_activeRun, completer)) {
+        _activeRun = null;
+      }
+    }
+  }
+}
+
 Future<void> requestAllPermissions() async {
-  if (Platform.isAndroid) {
+  if (!Platform.isAndroid) return;
+  try {
     final deviceInfo = DeviceInfoPlugin();
     final androidInfo = await deviceInfo.androidInfo;
     final sdkInt = androidInfo.version.sdkInt;
 
-    if (sdkInt >= 30) {
-      await [Permission.notification].request();
-      if (await Permission.manageExternalStorage.isDenied) {
-        await Permission.manageExternalStorage.request();
+    // Ask fast in-app runtime dialogs BEFORE launching All-Files Settings.
+    // On Android 11-16, granting MANAGE_EXTERNAL_STORAGE can trigger a storage
+    // FUSE remount or background process restart; completing Nearby/Notifications
+    // beforehand prevents a multi-second blank pause when returning from Settings.
+    if (sdkInt >= 33) {
+      if (await Permission.notification.isDenied) {
+        await [Permission.notification].request();
       }
+      final nearbyGroup = <Permission>[
+        Permission.nearbyWifiDevices,
+        Permission.bluetoothScan,
+        Permission.bluetoothAdvertise,
+        Permission.bluetoothConnect,
+      ];
+      final toRequest = <Permission>[];
+      for (final perm in nearbyGroup) {
+        if (!await perm.isGranted) {
+          toRequest.add(perm);
+        }
+      }
+      if (toRequest.isNotEmpty) {
+        await toRequest.request();
+      }
+    } else if (sdkInt >= 31) {
+      if (await Permission.notification.isDenied) {
+        await [Permission.notification].request();
+      }
+      await [
+        Permission.bluetoothScan,
+        Permission.bluetoothAdvertise,
+        Permission.bluetoothConnect,
+        Permission.locationWhenInUse,
+      ].request();
     } else {
-      await [Permission.storage, Permission.notification].request();
+      await [
+        Permission.storage,
+        Permission.notification,
+        Permission.locationWhenInUse,
+      ].request();
     }
 
-    // Additive, non-blocking Direct Fabric permissions (BLE & Nearby Wi-Fi Direct).
-    try {
-      if (sdkInt >= 33) {
-        await [
-          Permission.nearbyWifiDevices,
-          Permission.bluetoothScan,
-          Permission.bluetoothAdvertise,
-          Permission.bluetoothConnect,
-        ].request();
-      } else if (sdkInt >= 31) {
-        await [
-          Permission.bluetoothScan,
-          Permission.bluetoothAdvertise,
-          Permission.bluetoothConnect,
-          Permission.locationWhenInUse,
-        ].request();
-      } else {
-        await [Permission.locationWhenInUse].request();
-      }
-    } catch (_) {}
-  }
+    if (sdkInt >= 30 && await Permission.manageExternalStorage.isDenied) {
+      await Permission.manageExternalStorage.request();
+    }
+  } catch (_) {}
 }
 
 class DaphqApp extends StatelessWidget {

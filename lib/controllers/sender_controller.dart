@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
@@ -30,6 +31,7 @@ class SenderController {
   final Set<Socket> _activeWorkerSockets = <Socket>{};
   ServerSocket? _reversePlainServer;
   SecureServerSocket? _reverseSecureServer;
+  ServerSocket? _reverseFastDataServer;
   Completer<({Socket socket, BufferedSocketReader reader})?>?
       _reverseControlCompleter;
   final Map<int, Completer<Socket>> _reverseDataWaiters =
@@ -57,7 +59,10 @@ class SenderController {
     int parallelStreams = 1,
     bool listenForReverseReceiver = false,
     String? reverseAuthToken,
+    Duration reverseConnectTimeout = const Duration(seconds: 30),
     void Function(int boundPort)? onReverseListening,
+    int? Function()? directFrequencyProvider,
+    void Function(int frequencyMhz)? onPeerReportedFrequency,
     Future<bool> Function(String actualFingerprint)? onVerifyPeerFingerprint,
   }) async {
     final int myTransferSeq = ++_activeTransferSeq;
@@ -70,6 +75,7 @@ class SenderController {
     BufferedSocketReader? controlReader;
     final List<BufferedSocketReader> auxiliaryReaders = <BufferedSocketReader>[];
     StreamSubscription<Socket>? reverseAcceptSub;
+    StreamSubscription<Socket>? reverseFastAcceptSub;
     final Stopwatch stopwatch = Stopwatch();
     int sentBytes = 0;
     double totalSizeBytes = 0;
@@ -297,13 +303,58 @@ class SenderController {
 
         onReverseListening?.call(boundPort);
         final ctrl = await reverseControlCompleter.future.timeout(
-          const Duration(seconds: 15),
+          reverseConnectTimeout,
         );
         if (ctrl == null) {
           throw "Transfer Cancelled";
         }
         controlSocket = ctrl.socket;
         controlReader = ctrl.reader;
+
+        if (isV2Requested && parallelStreams > 1) {
+          try {
+            final fastSrv = await ServerSocket.bind(
+              InternetAddress.anyIPv4,
+              0,
+              shared: true,
+            );
+            _reverseFastDataServer = fastSrv;
+            reverseFastAcceptSub = fastSrv.listen(
+              (Socket incoming) {
+                if (myTransferSeq != _activeTransferSeq || _isCancelled) {
+                  incoming.destroy();
+                  return;
+                }
+                _dispatchReverseIncomingSocket(
+                  incoming: incoming,
+                  expectedSessionId: sessionId,
+                  expectedReverseToken: reverseAuthToken,
+                  onControlConnected: (sock, rdr) {
+                    unawaited(rdr.cancel());
+                    sock.destroy();
+                  },
+                  onDataWorkerConnected: (workerIdx, sock, rdr) {
+                    if (myTransferSeq != _activeTransferSeq || _isCancelled) {
+                      unawaited(rdr.cancel());
+                      sock.destroy();
+                      return;
+                    }
+                    auxiliaryReaders.add(rdr);
+                    final waiter = _reverseDataWaiters.remove(workerIdx);
+                    if (waiter != null && !waiter.isCompleted) {
+                      waiter.complete(sock);
+                    } else {
+                      _reverseUnclaimedData.add(sock);
+                    }
+                  },
+                );
+              },
+              onError: (_) {},
+              cancelOnError: false,
+            );
+            metadata["dataPort"] = fastSrv.port;
+          } catch (_) {}
+        }
       } else {
         controlSocket = await connectTransferSocket(
           host: targetIp,
@@ -359,6 +410,11 @@ class SenderController {
         );
       }
 
+      final int? senderFreqMhz = directFrequencyProvider?.call();
+      if (senderFreqMhz != null && senderFreqMhz > 0) {
+        metadata["freqMhz"] = senderFreqMhz;
+      }
+
       final String header = "${jsonEncode(metadata)}\n";
       if (header.length > 32 * 1024 * 1024) {
         throw "Too many files selected (${fileList.length} files). "
@@ -386,23 +442,30 @@ class SenderController {
                   jsonDecode(line) as Map<String, dynamic>;
               if (response["status"] == "REJECTED") {
                 final reason = response["reason"];
+                final String targetLabel =
+                    _currentTargetDeviceName ?? 'Receiver';
                 final String errorMsg = reason == "OUT_OF_SPACE"
-                    ? "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}: Insufficient storage space."
+                    ? "Transfer rejected by $targetLabel: Insufficient storage space."
                     : reason == "HEADER_TOO_LARGE"
                     ? "Too many files — the transfer metadata is too large. Please select a subfolder instead."
-                    : "Transfer rejected by ${_currentTargetDeviceName ?? 'Receiver'}.";
+                    : reason == "CANCELLED"
+                    ? "Transfer cancelled by $targetLabel."
+                    : reason == "BUSY"
+                    ? "$targetLabel is busy with another transfer."
+                    : "Transfer rejected by $targetLabel.";
+                _isCancelled = true;
+                _wasRejectedByReceiver = true;
+                _cancelReason = errorMsg;
                 if (!readyCompleter.isCompleted) {
-                  _wasRejectedByReceiver = true;
                   readyCompleter.completeError(errorMsg);
-                } else {
-                  _isCancelled = true;
-                  _wasRejectedByReceiver = true;
-                  _cancelReason = errorMsg;
-                  if (!doneCompleter.isCompleted) {
-                    doneCompleter.completeError(errorMsg);
-                  }
-                  controlSocket?.destroy();
                 }
+                if (!doneCompleter.isCompleted) {
+                  doneCompleter.completeError(errorMsg);
+                }
+                _abortInflightTransport(
+                  errorMsg,
+                  controlSocket: controlSocket,
+                );
               } else if (response["s"] == "r") {
                 if (!readyCompleter.isCompleted) {
                   readyCompleter.complete(response);
@@ -414,39 +477,25 @@ class SenderController {
               }
             } catch (_) {}
           },
-          onError: (_) {
-            if (!readyCompleter.isCompleted) {
-              readyCompleter.completeError("Receiver disconnected.");
-            }
-            if (!doneCompleter.isCompleted) {
-              doneCompleter.completeError("Receiver disconnected.");
-            }
-          },
-          onDone: () {
-            if (!readyCompleter.isCompleted) {
-              readyCompleter.completeError("Receiver disconnected.");
-            }
-            if (!doneCompleter.isCompleted) {
-              doneCompleter.completeError("Receiver disconnected.");
-            }
-          },
+          onError: (_) => _handleControlChannelDisconnect(
+            readyCompleter: readyCompleter,
+            doneCompleter: doneCompleter,
+            controlSocket: controlSocket,
+          ),
+          onDone: () => _handleControlChannelDisconnect(
+            readyCompleter: readyCompleter,
+            doneCompleter: doneCompleter,
+            controlSocket: controlSocket,
+          ),
         ),
       );
 
-      final String? waitingSas =
-          (useTls && localIdentity != null && observedPeerFp != null && observedPeerFp!.length == 64)
-              ? localIdentity.computeSasWith(observedPeerFp!)
-              : null;
-
       onUpdate(
         TransferModel(
-          status: waitingSas != null
-              ? "Waiting for Receiver (Code: $waitingSas)..."
-              : "Waiting for Receiver to Accept...",
+          status: "Waiting for ${_currentTargetDeviceName ?? 'Receiver'} to accept...",
           fileName: originalName,
           totalSize: totalSizeBytes / 1024 / 1024,
           phase: TransferPhase.waitingAuth,
-          sasCode: waitingSas,
         ),
       );
 
@@ -466,6 +515,11 @@ class SenderController {
       final int negotiatedVersion = (readyResponse["v"] as num?)?.toInt() ?? 1;
       final int acceptedStreams =
           ((readyResponse["streams"] as num?)?.toInt() ?? 1).clamp(1, 4);
+      final int? readyDataPort = (readyResponse["dataPort"] as num?)?.toInt();
+      final int? readyFreqMhz = (readyResponse["freqMhz"] as num?)?.toInt();
+      if (readyFreqMhz != null && readyFreqMhz > 0) {
+        onPeerReportedFrequency?.call(readyFreqMhz);
+      }
 
       if (useTls && negotiatedVersion >= 2) {
         final String? readyReceiverFp =
@@ -557,22 +611,16 @@ class SenderController {
         ),
       );
 
-      DateTime lastUpdate = DateTime.now();
-      int bytesSinceUpdate = 0;
+      final speedTracker = TransferSpeedTracker();
 
       void reportBytesSent(int deltaBytes, String activeFileName) {
         sentBytes += deltaBytes;
-        bytesSinceUpdate += deltaBytes;
-        final now = DateTime.now();
-        final elapsedMs = now.difference(lastUpdate).inMilliseconds;
-        if (elapsedMs > AppConstants.speedUpdateIntervalMs) {
-          final double speed =
-              (bytesSinceUpdate / 1024 / 1024) / (elapsedMs / 1000.0);
+        speedTracker.recordBytes(deltaBytes, activeFileName, (speed, fileName) {
           onUpdate(
             TransferModel(
               speed: speed,
               transferred: sentBytes / 1024 / 1024,
-              fileName: activeFileName,
+              fileName: fileName,
               status: acceptedStreams > 1
                   ? "Turbo Pumping ($acceptedStreams streams)..."
                   : "Pumping Data...",
@@ -581,13 +629,14 @@ class SenderController {
               phase: TransferPhase.sending,
             ),
           );
-          bytesSinceUpdate = 0;
-          lastUpdate = now;
-        }
+        });
       }
 
       if (negotiatedVersion >= 2 && acceptedStreams > 1) {
-        final stealer = ChunkWorkStealer(fileList);
+        final int workerChunkSize = totalSizeBytes >= 32 * 1024 * 1024
+            ? 2 * 1024 * 1024
+            : 1024 * 1024;
+        final stealer = ChunkWorkStealer(fileList, chunkSize: workerChunkSize);
 
         Future<Socket> acquireWorkerSocket(int workerIdx) async {
           if (listenForReverseReceiver) {
@@ -601,14 +650,16 @@ class SenderController {
             );
           }
 
+          final bool useFastDataPort =
+              readyDataPort != null && readyDataPort > 0;
           final sock = await connectTransferSocket(
             host: targetIp,
-            port: port,
-            useTls: useTls,
+            port: useFastDataPort ? readyDataPort : port,
+            useTls: useFastDataPort ? false : useTls,
             timeout: const Duration(
               seconds: AppConstants.connectionTimeoutSeconds,
             ),
-            expectedPeerFingerprint: observedPeerFp,
+            expectedPeerFingerprint: useFastDataPort ? null : observedPeerFp,
           );
           sock.write(
             '${jsonEncode({"v": 2, "role": "data", "sessionId": sessionId, "workerIndex": workerIdx})}\n',
@@ -653,7 +704,31 @@ class SenderController {
               }
               _activeWorkerSockets.add(workerSocket);
               int? cachedFileIdx;
+              int? cachedRafCursor;
               int buffered = 0;
+              int stagedPayloadBytes = 0;
+              String lastFileName = '';
+              Future<void>? pendingFlush;
+              int pendingFlushPayloadBytes = 0;
+              String pendingFlushFileName = '';
+              Object? flushError;
+
+              Future<void> awaitPendingFlush() async {
+                final inflight = pendingFlush;
+                if (inflight == null) return;
+                pendingFlush = null;
+                await inflight;
+                if (flushError != null) {
+                  throw flushError!;
+                }
+                if (pendingFlushPayloadBytes > 0) {
+                  reportBytesSent(
+                    pendingFlushPayloadBytes,
+                    pendingFlushFileName,
+                  );
+                  pendingFlushPayloadBytes = 0;
+                }
+              }
 
               while (!isWorkerAborted()) {
                 final task = stealer.nextTask();
@@ -665,31 +740,61 @@ class SenderController {
                     mode: FileMode.read,
                   );
                   cachedFileIdx = task.fileIndex;
+                  cachedRafCursor = 0;
                 }
 
-                await cachedRaf!.setPosition(task.offset);
-                final payload = await cachedRaf.read(task.length);
-                if (payload.length != task.length) {
+                // Read header+payload into one contiguous frame buffer while
+                // any prior pipelined socket flush drains over TLS/TCP.
+                final frameLen = daphqFrameHeaderSize + task.length;
+                final frameBuf = Uint8List(frameLen);
+                if (cachedRafCursor != task.offset) {
+                  await cachedRaf!.setPosition(task.offset);
+                }
+                int totalRead = 0;
+                while (totalRead < task.length) {
+                  final readCount = await cachedRaf!.readInto(
+                    frameBuf,
+                    daphqFrameHeaderSize + totalRead,
+                    frameLen,
+                  );
+                  if (readCount <= 0) break;
+                  totalRead += readCount;
+                }
+                if (totalRead != task.length) {
                   throw "File '${p.basename(task.absPath)}' changed on disk during transfer.";
                 }
+                cachedRafCursor = task.offset + totalRead;
                 if (isWorkerAborted()) break;
 
-                workerSocket.add(
-                  buildV2FrameHeader(
-                    fileIndex: task.fileIndex,
-                    fileOffset: task.offset,
-                    payloadLength: payload.length,
-                  ),
+                await awaitPendingFlush();
+                if (isWorkerAborted()) break;
+
+                lastFileName = p.basename(task.absPath);
+                writeV2FrameHeaderTo(
+                  frameBuf,
+                  fileIndex: task.fileIndex,
+                  fileOffset: task.offset,
+                  payloadLength: task.length,
                 );
-                workerSocket.add(payload);
-                buffered += daphqFrameHeaderSize + payload.length;
+                workerSocket.add(frameBuf);
+                stagedPayloadBytes += task.length;
+                buffered += frameLen;
 
                 if (buffered >= AppConstants.socketFlushThresholdBytes) {
-                  await workerSocket.flush();
+                  pendingFlushPayloadBytes = stagedPayloadBytes;
+                  pendingFlushFileName = lastFileName;
+                  stagedPayloadBytes = 0;
                   buffered = 0;
+                  pendingFlush = workerSocket.flush().catchError((Object err) {
+                    flushError ??= err;
+                  });
                 }
+              }
 
-                reportBytesSent(payload.length, p.basename(task.absPath));
+              await awaitPendingFlush();
+              if (stagedPayloadBytes > 0 && !isWorkerAborted()) {
+                await workerSocket.flush();
+                reportBytesSent(stagedPayloadBytes, lastFileName);
               }
 
               if (isWorkerAborted()) {
@@ -704,10 +809,16 @@ class SenderController {
               await cachedRaf?.close();
               if (workerSocket != null) {
                 _activeWorkerSockets.remove(workerSocket);
-                try {
-                  await workerSocket.close();
-                } catch (_) {
+                if (isWorkerAborted()) {
                   workerSocket.destroy();
+                } else {
+                  try {
+                    await workerSocket.close().timeout(
+                      const Duration(seconds: 2),
+                    );
+                  } catch (_) {
+                    workerSocket.destroy();
+                  }
                 }
               }
             }
@@ -921,13 +1032,20 @@ class SenderController {
         await reverseAcceptSub?.cancel();
       } catch (_) {}
       try {
+        await reverseFastAcceptSub?.cancel();
+      } catch (_) {}
+      try {
         await _reverseSecureServer?.close();
       } catch (_) {}
       try {
         await _reversePlainServer?.close();
       } catch (_) {}
+      try {
+        await _reverseFastDataServer?.close();
+      } catch (_) {}
       _reverseSecureServer = null;
       _reversePlainServer = null;
+      _reverseFastDataServer = null;
 
       try {
         await controlReader?.cancel();
@@ -952,6 +1070,75 @@ class SenderController {
         _isCancelled = false;
       }
     }
+  }
+
+  /// Handles abrupt control socket errors/closures prior to terminal `DONE`
+  /// completion so in-flight workers and reverse waiters abort immediately.
+  void _handleControlChannelDisconnect({
+    required Completer<Map<String, dynamic>> readyCompleter,
+    required Completer<void> doneCompleter,
+    Socket? controlSocket,
+  }) {
+    if (readyCompleter.isCompleted && doneCompleter.isCompleted) {
+      return;
+    }
+    if (readyCompleter.isCompleted && !doneCompleter.isCompleted) {
+      _isCancelled = true;
+      _cancelReason ??=
+          "Transfer cancelled by ${_currentTargetDeviceName ?? 'the other device'}";
+    }
+    _abortInflightTransport(
+      "Receiver disconnected.",
+      controlSocket: controlSocket,
+    );
+    if (!readyCompleter.isCompleted) {
+      readyCompleter.completeError("Receiver disconnected.");
+    }
+    if (!doneCompleter.isCompleted) {
+      doneCompleter.completeError("Receiver disconnected.");
+    }
+  }
+
+  /// Tears down any pending reverse-connect waiters, unclaimed sockets,
+  /// worker data sockets, and control socket immediately so the sender exits
+  /// without waiting for socket timeouts when the receiver rejects or cancels.
+  void _abortInflightTransport(Object error, {Socket? controlSocket}) {
+    if (_reverseControlCompleter != null &&
+        !_reverseControlCompleter!.isCompleted) {
+      _reverseControlCompleter!.completeError(error);
+    }
+    _reverseControlCompleter = null;
+    for (final waiter in _reverseDataWaiters.values) {
+      if (!waiter.isCompleted) {
+        waiter.completeError(error);
+      }
+    }
+    _reverseDataWaiters.clear();
+    for (final sock in _reverseUnclaimedData.toList()) {
+      try {
+        sock.destroy();
+      } catch (_) {}
+    }
+    _reverseUnclaimedData.clear();
+    for (final ws in _activeWorkerSockets.toList()) {
+      try {
+        ws.destroy();
+      } catch (_) {}
+    }
+    _activeWorkerSockets.clear();
+    try {
+      controlSocket?.destroy();
+    } catch (_) {}
+    try {
+      _activeSocket?.destroy();
+    } catch (_) {}
+    _activeSocket = null;
+    unawaited(_reverseSecureServer?.close());
+    unawaited(_reversePlainServer?.close());
+    unawaited(_reverseFastDataServer?.close());
+    _reverseSecureServer = null;
+    _reversePlainServer = null;
+    _reverseFastDataServer = null;
   }
 
   void _dispatchReverseIncomingSocket({
@@ -1031,6 +1218,22 @@ class SenderController {
         e.message.toLowerCase().contains('connection reset by peer');
   }
 
+  /// Fails a pending reverse-connect listener setup without marking the
+  /// transfer as user-cancelled, so pre-bytes Direct fallback to Router LAN
+  /// remains intact.
+  void failReverseSetup(Object error, [StackTrace? stackTrace]) {
+    if (_reverseControlCompleter != null &&
+        !_reverseControlCompleter!.isCompleted) {
+      _reverseControlCompleter!.completeError(error, stackTrace);
+    }
+    for (final waiter in _reverseDataWaiters.values) {
+      if (!waiter.isCompleted) {
+        waiter.completeError(error, stackTrace);
+      }
+    }
+    _reverseDataWaiters.clear();
+  }
+
   /// Cancels an active send operation.
   void cancel({String? reason}) {
     _isCancelled = true;
@@ -1054,6 +1257,7 @@ class SenderController {
     _reverseUnclaimedData.clear();
     _reversePlainServer?.close();
     _reverseSecureServer?.close();
+    _reverseFastDataServer?.close();
     _activeSocket?.destroy();
     _activeSocket = null;
     for (final ws in _activeWorkerSockets.toList()) {

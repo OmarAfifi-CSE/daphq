@@ -15,8 +15,8 @@ class TransferModel {
   /// When set, the UI replaces the speed display with a file-count indicator.
   int? analyzeCount;
 
-  /// Short 4-digit SAS verification code when awaiting TLS handshake approval.
-  String? sasCode;
+  /// Human-readable active transport route (e.g. `Direct 5GHz Wi-Fi` or `Router LAN`).
+  String? routeLabel;
 
   TransferModel({
     this.speed = 0.0,
@@ -29,7 +29,7 @@ class TransferModel {
     this.progress = 0.0,
     this.phase = TransferPhase.idle,
     this.analyzeCount,
-    this.sasCode,
+    this.routeLabel,
   });
 }
 

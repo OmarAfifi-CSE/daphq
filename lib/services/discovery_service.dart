@@ -8,8 +8,50 @@ import '../core/app_constants.dart';
 
 enum ServiceStatus { idle, discovering, recovering, failed, noConnection }
 
+typedef UdpSocketBinder = Future<RawDatagramSocket> Function(
+  dynamic host,
+  int port, {
+  bool reuseAddress,
+});
+
 class DiscoveryService {
-  RawDatagramSocket? _socket;
+  DiscoveryService({
+    UdpSocketBinder? socketBinder,
+    List<int>? candidatePorts,
+    Future<bool> Function()? hasLocalNetwork,
+    bool enableConnectivityListener = true,
+    bool filterLocalIpPackets = true,
+    Duration? conflictRetryDelay,
+  })  : _socketBinder = socketBinder ?? _defaultSocketBinder,
+        _candidatePorts = List<int>.unmodifiable(
+          (candidatePorts == null || candidatePorts.isEmpty)
+              ? AppConstants.discoveryPorts
+              : candidatePorts,
+        ),
+        _hasLocalNetworkOverride = hasLocalNetwork,
+        _enableConnectivityListener = enableConnectivityListener,
+        _filterLocalIpPackets = filterLocalIpPackets,
+        _conflictRetryDelay = conflictRetryDelay;
+
+  static Future<RawDatagramSocket> _defaultSocketBinder(
+    dynamic host,
+    int port, {
+    bool reuseAddress = true,
+  }) {
+    return RawDatagramSocket.bind(host, port, reuseAddress: reuseAddress);
+  }
+
+  final List<RawDatagramSocket> _sockets = <RawDatagramSocket>[];
+  final UdpSocketBinder _socketBinder;
+  final List<int> _candidatePorts;
+  final Future<bool> Function()? _hasLocalNetworkOverride;
+  final bool _enableConnectivityListener;
+  final bool _filterLocalIpPackets;
+  final Duration? _conflictRetryDelay;
+
+  /// Ports currently bound by this discovery instance.
+  List<int> get boundDiscoveryPorts =>
+      List<int>.unmodifiable(_sockets.map((s) => s.port));
 
   final StreamController<List<DiscoveryModel>> _devicesController =
       StreamController<List<DiscoveryModel>>.broadcast();
@@ -40,10 +82,19 @@ class DiscoveryService {
   int _listenPort = AppConstants.transferPort;
   bool isDiscoverable = true;
   bool _running = false;
+  bool _broadcastPaused = false;
   bool _isReopening = false;
   bool _watchdogActive = false;
   int _retryCount = 0;
   int _currentBackoffSeconds = 3;
+
+  bool get isBroadcastPaused => _broadcastPaused;
+
+  /// Suppresses periodic and triggered online UDP presence broadcasts while
+  /// an active high-speed transfer is running to minimize airtime contention.
+  void setBroadcastPaused(bool paused) {
+    _broadcastPaused = paused;
+  }
 
   Stream<List<DiscoveryModel>> get devicesStream => _devicesController.stream;
   Stream<DiscoveryModel> get heartbeatStream => _heartbeatController.stream;
@@ -125,7 +176,7 @@ class DiscoveryService {
     _broadcastTimer = Timer.periodic(
       const Duration(seconds: AppConstants.discoveryIntervalSeconds),
       (_) {
-        if (_running && isDiscoverable) {
+        if (_running && isDiscoverable && !_broadcastPaused) {
           _broadcastPresence(deviceName, isOnline: true);
         }
       },
@@ -136,13 +187,18 @@ class DiscoveryService {
       (_) => _cleanupDevices(),
     );
 
-    _connectivitySubscription = Connectivity().onConnectivityChanged.listen(
-      (_) => _onConnectivityChanged(deviceName),
-    );
+    if (_enableConnectivityListener) {
+      try {
+        _connectivitySubscription = Connectivity().onConnectivityChanged.listen(
+          (_) => _onConnectivityChanged(deviceName),
+        );
+      } catch (_) {}
+    }
   }
 
   void triggerBroadcast({bool isOnline = true}) {
     isDiscoverable = isOnline;
+    if (_broadcastPaused && isOnline) return;
     if (_lastDeviceName != null) {
       _broadcastPresence(_lastDeviceName!, isOnline: isOnline);
     }
@@ -284,6 +340,8 @@ class DiscoveryService {
   }
 
   Future<bool> _hasLocalNetwork() async {
+    final override = _hasLocalNetworkOverride;
+    if (override != null) return override();
     try {
       final interfaces = await NetworkInterface.list(
         includeLoopback: false,
@@ -296,10 +354,51 @@ class DiscoveryService {
   }
 
   void _safeCloseSocket() {
-    try {
-      _socket?.close();
-    } catch (_) {}
-    _socket = null;
+    for (final sock in List<RawDatagramSocket>.of(_sockets)) {
+      try {
+        sock.close();
+      } catch (_) {}
+    }
+    _sockets.clear();
+  }
+
+  void _attachSocketListeners(RawDatagramSocket sock, String deviceName) {
+    sock.listen(
+      (RawSocketEvent event) {
+        if (event == RawSocketEvent.read) {
+          while (_running) {
+            final dg = sock.receive();
+            if (dg == null) break;
+            _handlePacket(dg);
+          }
+        }
+      },
+      onError: (error) {
+        if (!_running) return;
+        if (Platform.isAndroid && error.toString().contains('errno = 101')) {
+          return;
+        }
+        try {
+          sock.close();
+        } catch (_) {}
+        _sockets.remove(sock);
+        if (_sockets.isNotEmpty) {
+          // Keep discovery alive as long as at least one port remains bound.
+          return;
+        }
+        if (Platform.isWindows && error.toString().contains('errno = 1232')) {
+          _isReopening = false;
+          _scheduleReopen(
+            deviceName,
+            delay: const Duration(milliseconds: 500),
+          );
+          return;
+        }
+        _updateStatus(ServiceStatus.recovering);
+        _scheduleReopen(deviceName, delay: const Duration(seconds: 4));
+      },
+      cancelOnError: false,
+    );
   }
 
   Future<void> _openSocket(String deviceName) async {
@@ -307,59 +406,60 @@ class DiscoveryService {
     _isReopening = true;
 
     _safeCloseSocket();
-    await Future.delayed(const Duration(milliseconds: 300));
+    await Future.delayed(const Duration(milliseconds: 50));
 
     if (!_running) {
       _isReopening = false;
       return;
     }
 
+    Object? lastError;
     try {
-      _socket = await RawDatagramSocket.bind(
-        InternetAddress.anyIPv4,
-        AppConstants.discoveryPort,
-        reuseAddress: true,
-      );
-      _socket!.broadcastEnabled = true;
-      _socket!.multicastLoopback = false;
-
-      await _updateLocalIps();
-
-      if (!Platform.isAndroid) {
+      bool boundFallback = false;
+      for (int i = 0; i < _candidatePorts.length; i++) {
+        // Bind primary legacy port (index 0) plus at most one non-excluded fallback
+        // port so peers across both legacy (62005) and fallback (<49152) hear us.
+        if (i > 0 && boundFallback) break;
+        final candidatePort = _candidatePorts[i];
         try {
-          _socket!.joinMulticast(InternetAddress("224.0.0.1"));
-        } catch (_) {}
-      }
-
-      _socket!.listen(
-        (RawSocketEvent event) {
-          if (event == RawSocketEvent.read) {
-            final dg = _socket?.receive();
-            if (dg != null) {
-              _handlePacket(dg);
-            }
-          }
-        },
-        onError: (error) {
-          if (!_running) return;
-          if (Platform.isAndroid && error.toString().contains('errno = 101')) {
-            return;
-          }
-          if (Platform.isWindows && error.toString().contains('errno = 1232')) {
+          final sock = await _socketBinder(
+            InternetAddress.anyIPv4,
+            candidatePort,
+            reuseAddress: true,
+          );
+          if (!_running) {
+            try {
+              sock.close();
+            } catch (_) {}
             _safeCloseSocket();
             _isReopening = false;
-            _scheduleReopen(
-              deviceName,
-              delay: const Duration(milliseconds: 500),
-            );
             return;
           }
-          _updateStatus(ServiceStatus.recovering);
-          _safeCloseSocket();
-          _scheduleReopen(deviceName, delay: const Duration(seconds: 4));
-        },
-        cancelOnError: false,
-      );
+          sock.broadcastEnabled = true;
+          sock.multicastLoopback = false;
+          if (!Platform.isAndroid) {
+            try {
+              sock.joinMulticast(InternetAddress("224.0.0.1"));
+            } catch (_) {}
+          }
+          _sockets.add(sock);
+          _attachSocketListeners(sock, deviceName);
+          if (i > 0) boundFallback = true;
+        } catch (e) {
+          lastError = e;
+        }
+      }
+
+      if (_sockets.isEmpty) {
+        throw lastError ?? const SocketException('No discovery port available');
+      }
+
+      await _updateLocalIps();
+      if (!_running) {
+        _safeCloseSocket();
+        _isReopening = false;
+        return;
+      }
 
       _isReopening = false;
       _retryCount = 0;
@@ -374,7 +474,7 @@ class DiscoveryService {
       _isReopening = false;
 
       Duration delay;
-      if (Platform.isWindows && code == 10013) {
+      if (code == 10013) {
         _retryCount++;
         if (_retryCount > 1) {
           _updateStatus(ServiceStatus.failed);
@@ -384,10 +484,10 @@ class DiscoveryService {
           return;
         }
         _updateStatus(ServiceStatus.recovering);
-        delay = Duration(seconds: _currentBackoffSeconds);
+        delay = _conflictRetryDelay ?? Duration(seconds: _currentBackoffSeconds);
         _currentBackoffSeconds = (_currentBackoffSeconds * 2).clamp(3, 30);
       } else {
-        delay = const Duration(seconds: 3);
+        delay = _conflictRetryDelay ?? const Duration(seconds: 3);
         _updateStatus(ServiceStatus.recovering);
       }
       _scheduleReopen(deviceName, delay: delay);
@@ -395,7 +495,10 @@ class DiscoveryService {
       _safeCloseSocket();
       _isReopening = false;
       _updateStatus(ServiceStatus.recovering);
-      _scheduleReopen(deviceName, delay: const Duration(seconds: 3));
+      _scheduleReopen(
+        deviceName,
+        delay: _conflictRetryDelay ?? const Duration(seconds: 3),
+      );
     }
   }
 
@@ -409,7 +512,7 @@ class DiscoveryService {
 
   void _handlePacket(Datagram dg) {
     if (!_running) return;
-    if (_localIps.contains(dg.address.address)) return;
+    if (_filterLocalIpPackets && _localIps.contains(dg.address.address)) return;
     _processPacket(dg);
   }
 
@@ -417,6 +520,12 @@ class DiscoveryService {
     try {
       final json = jsonDecode(utf8.decode(dg.data)) as Map<String, dynamic>;
       if (json['type'] != 'DAPHQ_DISCOVERY') return;
+      final incomingPeerId = json['peerId'] as String?;
+      if (incomingPeerId != null &&
+          _localPeerId != null &&
+          incomingPeerId == _localPeerId) {
+        return;
+      }
 
       final ip = dg.address.address;
 
@@ -447,11 +556,32 @@ class DiscoveryService {
     } catch (_) {}
   }
 
+  Future<void> _sendDatagram(
+    RawDatagramSocket socket,
+    List<int> bytes,
+    InternetAddress address,
+    int port,
+  ) async {
+    for (int attempt = 0; attempt < 4; attempt++) {
+      if (!_running) return;
+      try {
+        final int sent = socket.send(bytes, address, port);
+        if (sent > 0) return;
+      } catch (_) {
+        return;
+      }
+      // On Windows IOCP, RawDatagramSocket.send() returns 0 while a previous
+      // overlapped WSASendTo is still draining; yield briefly before retrying.
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+    }
+  }
+
   Future<void> _broadcastPresence(
     String deviceName, {
     bool isOnline = true,
   }) async {
-    if (_socket == null) return;
+    if (_sockets.isEmpty || !_running) return;
+    final primarySocket = _sockets.first;
 
     try {
       final bytes = utf8.encode(
@@ -471,6 +601,7 @@ class DiscoveryService {
         includeLoopback: false,
         type: InternetAddressType.IPv4,
       );
+      if (!_running || _sockets.isEmpty) return;
 
       for (final interface in interfaces) {
         if (isVirtualInterfaceName(interface.name)) {
@@ -478,6 +609,9 @@ class DiscoveryService {
         }
 
         for (final addr in interface.addresses) {
+          if (!isUsableAddress(addr)) {
+            continue;
+          }
           final parts = addr.address.split('.');
           if (parts.length != 4) {
             continue;
@@ -485,50 +619,59 @@ class DiscoveryService {
 
           final subnetBroadcast = '${parts[0]}.${parts[1]}.${parts[2]}.255';
 
-          try {
-            _socket?.send(
+          for (final targetPort in _candidatePorts) {
+            if (!_running || _sockets.isEmpty) return;
+            await _sendDatagram(
+              primarySocket,
               bytes,
               InternetAddress(subnetBroadcast),
-              AppConstants.discoveryPort,
+              targetPort,
             );
-          } catch (_) {}
 
-          if (!Platform.isAndroid) {
-            try {
-              _socket?.send(
+            if (!Platform.isAndroid) {
+              await _sendDatagram(
+                primarySocket,
                 bytes,
                 InternetAddress('255.255.255.255'),
-                AppConstants.discoveryPort,
+                targetPort,
               );
-            } catch (_) {}
-            try {
-              _socket?.send(
+              await _sendDatagram(
+                primarySocket,
                 bytes,
                 InternetAddress('224.0.0.1'),
-                AppConstants.discoveryPort,
+                targetPort,
               );
-            } catch (_) {}
+            }
           }
 
+          if (!_running) return;
           try {
             final tmp = await RawDatagramSocket.bind(
               addr,
               0,
             ).timeout(const Duration(milliseconds: 500));
-            tmp.broadcastEnabled = true;
-            tmp.send(
-              bytes,
-              InternetAddress(subnetBroadcast),
-              AppConstants.discoveryPort,
-            );
-            if (!Platform.isAndroid) {
-              tmp.send(
-                bytes,
-                InternetAddress('255.255.255.255'),
-                AppConstants.discoveryPort,
-              );
+            try {
+              tmp.broadcastEnabled = true;
+              for (final targetPort in _candidatePorts) {
+                if (!_running) break;
+                await _sendDatagram(
+                  tmp,
+                  bytes,
+                  InternetAddress(subnetBroadcast),
+                  targetPort,
+                );
+                if (!Platform.isAndroid) {
+                  await _sendDatagram(
+                    tmp,
+                    bytes,
+                    InternetAddress('255.255.255.255'),
+                    targetPort,
+                  );
+                }
+              }
+            } finally {
+              tmp.close();
             }
-            tmp.close();
           } catch (_) {}
         }
       }
@@ -552,7 +695,7 @@ class DiscoveryService {
 
     await _updateLocalIps();
     if (!_running) return;
-    if (_socket != null && _status == ServiceStatus.discovering) {
+    if (_sockets.isNotEmpty && _status == ServiceStatus.discovering) {
       if (!await _hasLocalNetwork()) {
         _updateStatus(ServiceStatus.noConnection);
         _safeCloseSocket();
@@ -584,17 +727,20 @@ class DiscoveryService {
         return;
       }
 
-      try {
-        final test = await RawDatagramSocket.bind(
-          InternetAddress.anyIPv4,
-          AppConstants.discoveryPort,
-          reuseAddress: true,
-        );
-        test.close();
-        timer.cancel();
-        _watchdogActive = false;
-        forceReopen();
-      } catch (_) {}
+      for (final candidatePort in _candidatePorts) {
+        try {
+          final test = await _socketBinder(
+            InternetAddress.anyIPv4,
+            candidatePort,
+            reuseAddress: true,
+          );
+          test.close();
+          timer.cancel();
+          _watchdogActive = false;
+          forceReopen();
+          return;
+        } catch (_) {}
+      }
     });
   }
 }

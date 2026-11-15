@@ -3,20 +3,20 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:device_info_plus/device_info_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 import '../../../cubits/transfer_cubit.dart';
 import '../../../cubits/transfer_state.dart';
 import '../../../core/app_colors.dart';
 import '../../../core/app_constants.dart';
 import '../../../core/responsive_utils.dart';
-import '../../../fabric/peer_models.dart';
+import '../../../fabric/smart_link_evaluator.dart';
 import 'daphq_card.dart';
-import 'animated_press_button.dart';
 import 'custom_snackbar.dart';
 import 'orbital_radar.dart';
-import 'qr_pairing_dialog.dart';
 import 'trusted_devices_dialog.dart';
-import '../sender/device_transfer_menu.dart';
 
 class UnifiedDashboard extends StatefulWidget {
   final bool isDesktop;
@@ -28,7 +28,6 @@ class UnifiedDashboard extends StatefulWidget {
 }
 
 class _UnifiedDashboardState extends State<UnifiedDashboard> {
-  late final TextEditingController _ipController;
   bool _isPickingFolder = false;
 
   String get _pickerLoadingText {
@@ -42,21 +41,75 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
     return "Opening Folder Picker...";
   }
 
-  @override
-  void initState() {
-    super.initState();
-    _ipController = TextEditingController(
-      text: context.read<TransferCubit>().state.targetIp,
-    );
-    _ipController.addListener(() {
-      context.read<TransferCubit>().setTargetIp(_ipController.text);
-    });
-  }
-
-  @override
-  void dispose() {
-    _ipController.dispose();
-    super.dispose();
+  Future<void> _handleReadinessAction(LocalRadioCapabilities? caps) async {
+    final cubit = context.read<TransferCubit>();
+    if (caps == null) {
+      await cubit.refreshCapabilities();
+      return;
+    }
+    if (!caps.wifiHardwarePresent) {
+      if (mounted) {
+        CustomSnackBar.show(
+          context,
+          message:
+              'No Wi-Fi adapter detected. Transfers use your Ethernet LAN directly.',
+        );
+      }
+      return;
+    }
+    if (caps.missingWifiPermission && Platform.isAndroid) {
+      try {
+        final sdkInt = (await DeviceInfoPlugin().androidInfo).version.sdkInt;
+        final Permission perm = sdkInt >= 33
+            ? Permission.nearbyWifiDevices
+            : Permission.locationWhenInUse;
+        var status = await perm.status;
+        if (!status.isGranted) {
+          status = await perm.request();
+        }
+        if (status.isPermanentlyDenied) {
+          await openAppSettings();
+        }
+      } catch (_) {}
+      await cubit.refreshCapabilities();
+      return;
+    }
+    if (!caps.wifiEnabled) {
+      if (Platform.isWindows) {
+        try {
+          await launchUrl(Uri.parse('ms-settings:network-wifi'));
+        } catch (_) {}
+      } else if (mounted) {
+        CustomSnackBar.show(
+          context,
+          message:
+              'Turn on Wi-Fi in Quick Settings to enable Direct 5GHz speed.',
+        );
+      }
+      await cubit.refreshCapabilities();
+      return;
+    }
+    if (!caps.locationServiceEnabled) {
+      if (Platform.isWindows) {
+        try {
+          await launchUrl(
+            Uri.parse('ms-settings:privacy-location'),
+            mode: LaunchMode.externalApplication,
+          );
+        } catch (_) {}
+      }
+      if (mounted) {
+        CustomSnackBar.show(
+          context,
+          message: Platform.isWindows
+              ? 'Enable Windows Location services (Settings > Privacy & security > Location) so Direct Wi-Fi discovery can scan.'
+              : 'Turn on Location (GPS) so Direct 5GHz Wi-Fi discovery can start.',
+        );
+      }
+      await cubit.refreshCapabilities();
+      return;
+    }
+    await cubit.refreshCapabilities();
   }
 
   @override
@@ -65,146 +118,10 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
     final double scale = isDesktop ? context.desktopScale : 1.0;
     final cubit = context.read<TransferCubit>();
 
-    return BlocListener<TransferCubit, TransferState>(
-      listenWhen: (previous, current) => previous.targetIp != current.targetIp,
-      listener: (context, state) {
-        if (_ipController.text != state.targetIp) {
-          _ipController.value = TextEditingValue(
-            text: state.targetIp,
-            selection: TextSelection.collapsed(offset: state.targetIp.length),
-          );
-        }
-      },
-      child: BlocBuilder<TransferCubit, TransferState>(
-        builder: (context, state) {
-          return AnimatedCrossFade(
-          duration: const Duration(milliseconds: 250),
-          firstCurve: Curves.linear,
-          secondCurve: Curves.linear,
-          sizeCurve: Curves.linear,
-          alignment: Alignment.topCenter,
-          crossFadeState: state.isAdvancedMode
-              ? CrossFadeState.showFirst
-              : CrossFadeState.showSecond,
-          firstChild: DaphqCard(
-            key: const ValueKey('advanced_mode_card'),
-            isDesktop: isDesktop,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      "Manual IP Transfer",
-                      style: TextStyle(
-                        color: AppColors.textPrimary,
-                        fontSize: 15.rx(isDesktop, desktopScale: scale),
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    IconButton(
-                      icon: Icon(
-                        Icons.close_rounded,
-                        color: AppColors.textMuted,
-                        size: 20.rx(isDesktop, desktopScale: scale),
-                      ),
-                      onPressed: () => cubit.toggleAdvancedMode(),
-                    ),
-                  ],
-                ),
-                Divider(color: Colors.white.withAlpha(8), height: 16),
-                SizedBox(height: 8.rh(isDesktop, desktopScale: scale)),
-                TextField(
-                  controller: _ipController,
-                  cursorColor: AppColors.primary,
-                  style: TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 13.0.rx(isDesktop, desktopScale: scale),
-                  ),
-                  decoration: InputDecoration(
-                    labelText: AppConstants.receiverIpLabel,
-                    labelStyle: TextStyle(
-                      color: AppColors.textMuted,
-                      fontSize: 12.0.rx(isDesktop, desktopScale: scale),
-                    ),
-                    helperText: AppConstants.receiverIpHelper,
-                    helperStyle: TextStyle(
-                      color: AppColors.textMuted.withAlpha(120),
-                      fontSize: 10.0.rx(isDesktop, desktopScale: scale),
-                    ),
-                    filled: true,
-                    fillColor: Colors.black.withAlpha(40),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(
-                        10.rr(isDesktop, desktopScale: scale),
-                      ),
-                      borderSide: BorderSide.none,
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(
-                        10.rr(isDesktop, desktopScale: scale),
-                      ),
-                      borderSide: BorderSide(
-                        color: AppColors.primary.withAlpha(80),
-                        width: 1.0,
-                      ),
-                    ),
-                    contentPadding: EdgeInsets.all(
-                      12.rr(isDesktop, desktopScale: scale),
-                    ),
-                  ),
-                  enabled: !state.isTransferring,
-                ),
-                SizedBox(height: 14.rh(isDesktop, desktopScale: scale)),
-                AnimatedPressButton(
-                  isDesktop: isDesktop,
-                  onPressed: () {
-                    final ip = _ipController.text.trim();
-                    if (ip.isEmpty) {
-                      CustomSnackBar.show(
-                        context,
-                        message: AppConstants.enterTargetIp,
-                      );
-                      return;
-                    }
-                    DeviceTransferMenu.show(
-                      context,
-                      ip,
-                      "Manual Receiver",
-                      isDesktop,
-                    );
-                  },
-                  gradientColors: const [
-                    AppColors.primary,
-                    AppColors.primaryLight,
-                  ],
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.open_in_new_rounded,
-                        color: Colors.white,
-                        size: 16.rx(isDesktop, desktopScale: scale),
-                      ),
-                      SizedBox(width: 6.rw(isDesktop, desktopScale: scale)),
-                      Text(
-                        "Select Content & Send",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 13.rx(isDesktop, desktopScale: scale),
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          secondChild: Column(
-            key: const ValueKey('simple_mode_radar'),
+    return BlocBuilder<TransferCubit, TransferState>(
+      builder: (context, state) {
+        return Column(
+          key: const ValueKey('simple_mode_radar'),
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -434,7 +351,7 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                       SizedBox(width: 8.rw(isDesktop, desktopScale: scale)),
                       Expanded(
                         child: Text(
-                          "${state.selectedPaths.length} items selected",
+                          "${state.selectedPaths.length} ${state.selectedPaths.length == 1 ? 'item' : 'items'} selected",
                           style: TextStyle(
                             color: AppColors.textPrimary,
                             fontSize: 12.rx(isDesktop, desktopScale: scale),
@@ -464,19 +381,17 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                 ),
               ],
 
-              // 1.5 FABRIC MODE & SECURITY CONTROLS
+              // 1.5 FABRIC READINESS & SECURITY CONTROLS
               SizedBox(height: 12.rh(isDesktop, desktopScale: scale)),
               _FabricControlStrip(
                 isDesktop: isDesktop,
                 scale: scale,
-                preference: state.transportPreference,
+                capabilities: state.localRadioCapabilities,
                 trustedCount: state.trustedDevices.length,
                 isDirectLinkConnecting: state.isDirectLinkConnecting,
                 directLinkStatus: state.directLinkStatus,
-                onSelectPreference: (pref) =>
-                    cubit.setTransportPreference(pref),
-                onOpenQrPairing: () =>
-                    QrPairingDialog.show(context, isDesktop: isDesktop),
+                onTapReadiness: () =>
+                    _handleReadinessAction(state.localRadioCapabilities),
                 onOpenTrustedDevices: () =>
                     TrustedDevicesDialog.show(context, isDesktop: isDesktop),
               ),
@@ -491,14 +406,11 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                 child: _ScanStatusBar(
                   isReceiving: state.isReceiving,
                   isDesktop: isDesktop,
-                  onManualIpTap: () => cubit.toggleAdvancedMode(),
                 ),
               ),
             ],
-          ),
-        );
-        },
-      ),
+          );
+      },
     );
   }
 
@@ -612,12 +524,10 @@ class _AnimatedStatusDotState extends State<_AnimatedStatusDot>
 class _ScanStatusBar extends StatefulWidget {
   final bool isReceiving;
   final bool isDesktop;
-  final VoidCallback onManualIpTap;
 
   const _ScanStatusBar({
     required this.isReceiving,
     required this.isDesktop,
-    required this.onManualIpTap,
   });
 
   @override
@@ -704,178 +614,53 @@ class _ScanStatusBarState extends State<_ScanStatusBar>
               child: child,
             );
           },
-          child: !isDesktop
-              ? Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Container(
-                          width: 6.rx(isDesktop, desktopScale: scale),
-                          height: 6.rx(isDesktop, desktopScale: scale),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: widget.isReceiving
-                                ? AppColors.primary
-                                : AppColors.textMuted,
-                            boxShadow: widget.isReceiving
-                                ? [
-                                    BoxShadow(
-                                      color: AppColors.primary.withAlpha(100),
-                                      blurRadius: 4.rr(
-                                        isDesktop,
-                                        desktopScale: scale,
-                                      ),
-                                      spreadRadius: 1.rr(
-                                        isDesktop,
-                                        desktopScale: scale,
-                                      ),
-                                    ),
-                                  ]
-                                : null,
-                          ),
-                        ),
-                        SizedBox(width: 8.rw(isDesktop, desktopScale: scale)),
-                        Flexible(
-                          child: Text(
-                            widget.isReceiving
-                                ? "SCANNING FOR PEERS"
-                                : "RADAR OFFLINE",
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: AppColors.textMuted,
-                              fontSize: 10.rx(isDesktop, desktopScale: scale),
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 1.2,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 6.rx(isDesktop, desktopScale: scale),
+                height: 6.rx(isDesktop, desktopScale: scale),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: widget.isReceiving
+                      ? AppColors.primary
+                      : AppColors.textMuted,
+                  boxShadow: widget.isReceiving
+                      ? [
+                          BoxShadow(
+                            color: AppColors.primary.withAlpha(100),
+                            blurRadius: 4.rr(
+                              isDesktop,
+                              desktopScale: scale,
+                            ),
+                            spreadRadius: 1.rr(
+                              isDesktop,
+                              desktopScale: scale,
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                    SizedBox(height: 8.rh(isDesktop, desktopScale: scale)),
-                    Container(
-                      width: 80.rw(isDesktop, desktopScale: scale),
-                      height: 1,
-                      color: Colors.white.withAlpha(15),
-                    ),
-                    SizedBox(height: 8.rh(isDesktop, desktopScale: scale)),
-                    InkWell(
-                      onTap: widget.onManualIpTap,
-                      borderRadius: BorderRadius.circular(
-                        4.rr(isDesktop, desktopScale: scale),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.settings_ethernet_rounded,
-                            size: 13.rx(isDesktop, desktopScale: scale),
-                            color: AppColors.primary,
-                          ),
-                          SizedBox(width: 4.rw(isDesktop, desktopScale: scale)),
-                          Text(
-                            "MANUAL IP",
-                            style: TextStyle(
-                              color: AppColors.primary,
-                              fontSize: 10.rx(isDesktop, desktopScale: scale),
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 1.0,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                )
-              : Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 6.rx(isDesktop, desktopScale: scale),
-                      height: 6.rx(isDesktop, desktopScale: scale),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: widget.isReceiving
-                            ? AppColors.primary
-                            : AppColors.textMuted,
-                        boxShadow: widget.isReceiving
-                            ? [
-                                BoxShadow(
-                                  color: AppColors.primary.withAlpha(100),
-                                  blurRadius: 4.rr(
-                                    isDesktop,
-                                    desktopScale: scale,
-                                  ),
-                                  spreadRadius: 1.rr(
-                                    isDesktop,
-                                    desktopScale: scale,
-                                  ),
-                                ),
-                              ]
-                            : null,
-                      ),
-                    ),
-                    SizedBox(width: 8.rw(isDesktop, desktopScale: scale)),
-                    Flexible(
-                      child: Text(
-                        widget.isReceiving
-                            ? "SCANNING FOR PEERS"
-                            : "RADAR OFFLINE",
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: AppColors.textMuted,
-                          fontSize: 10.rx(isDesktop, desktopScale: scale),
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 1.2,
-                        ),
-                      ),
-                    ),
-                    SizedBox(width: 12.rw(isDesktop, desktopScale: scale)),
-                    Container(
-                      width: 1,
-                      height: 12.rh(isDesktop, desktopScale: scale),
-                      color: Colors.white.withAlpha(10),
-                    ),
-                    SizedBox(width: 12.rw(isDesktop, desktopScale: scale)),
-                    Flexible(
-                      child: InkWell(
-                        onTap: widget.onManualIpTap,
-                        borderRadius: BorderRadius.circular(
-                          4.rr(isDesktop, desktopScale: scale),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.settings_ethernet_rounded,
-                              size: 13.rx(isDesktop, desktopScale: scale),
-                              color: AppColors.primary,
-                            ),
-                            SizedBox(width: 4.rw(isDesktop, desktopScale: scale)),
-                            Flexible(
-                              child: Text(
-                                "MANUAL IP",
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: AppColors.primary,
-                                  fontSize: 10.rx(isDesktop, desktopScale: scale),
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 1.0,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
+                        ]
+                      : null,
                 ),
+              ),
+              SizedBox(width: 8.rw(isDesktop, desktopScale: scale)),
+              Flexible(
+                child: Text(
+                  widget.isReceiving
+                      ? "SCANNING FOR PEERS"
+                      : "RADAR OFFLINE",
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: AppColors.textMuted,
+                    fontSize: 10.rx(isDesktop, desktopScale: scale),
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -885,28 +670,64 @@ class _ScanStatusBarState extends State<_ScanStatusBar>
 class _FabricControlStrip extends StatelessWidget {
   final bool isDesktop;
   final double scale;
-  final TransportPreference preference;
+  final LocalRadioCapabilities? capabilities;
   final int trustedCount;
   final bool isDirectLinkConnecting;
   final String? directLinkStatus;
-  final ValueChanged<TransportPreference> onSelectPreference;
-  final VoidCallback onOpenQrPairing;
+  final VoidCallback onTapReadiness;
   final VoidCallback onOpenTrustedDevices;
 
   const _FabricControlStrip({
     required this.isDesktop,
     required this.scale,
-    required this.preference,
+    required this.capabilities,
     required this.trustedCount,
     required this.isDirectLinkConnecting,
     required this.directLinkStatus,
-    required this.onSelectPreference,
-    required this.onOpenQrPairing,
+    required this.onTapReadiness,
     required this.onOpenTrustedDevices,
   });
 
+  ({IconData icon, String label, String tooltip, Color accent, bool highlighted})?
+  _resolveActionableWarning(LocalRadioCapabilities? caps) {
+    if (caps == null || !caps.wifiHardwarePresent) {
+      return null;
+    }
+    const Color warningAmber = Color(0xFFF59E0B);
+    if (caps.missingWifiPermission) {
+      return (
+        icon: Icons.security_rounded,
+        label: 'Grant Wi-Fi Permission',
+        tooltip:
+            'Tap to grant Nearby Wi-Fi permission for direct Wi-Fi transfers.',
+        accent: warningAmber,
+        highlighted: true,
+      );
+    }
+    if (!caps.wifiEnabled) {
+      return (
+        icon: Icons.wifi_off_rounded,
+        label: 'Turn On Wi-Fi',
+        tooltip: 'Wi-Fi is OFF. Turn Wi-Fi on for maximum direct speed.',
+        accent: warningAmber,
+        highlighted: true,
+      );
+    }
+    if (!caps.locationServiceEnabled) {
+      return (
+        icon: Icons.location_off_rounded,
+        label: 'Turn On Location',
+        tooltip: 'Location service is required for direct Wi-Fi discovery.',
+        accent: warningAmber,
+        highlighted: true,
+      );
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final warning = _resolveActionableWarning(capabilities);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -968,20 +789,19 @@ class _FabricControlStrip extends StatelessWidget {
           alignment: WrapAlignment.center,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            _TransportModeBar(
-              isDesktop: isDesktop,
-              scale: scale,
-              selected: preference,
-              onChanged: onSelectPreference,
-            ),
-            _FabricActionChip(
-              isDesktop: isDesktop,
-              scale: scale,
-              icon: Icons.qr_code_2_rounded,
-              label: 'QR Pair',
-              accentColor: AppColors.primaryLight,
-              onTap: onOpenQrPairing,
-            ),
+            if (warning != null)
+              Tooltip(
+                message: warning.tooltip,
+                child: _FabricActionChip(
+                  isDesktop: isDesktop,
+                  scale: scale,
+                  icon: warning.icon,
+                  label: warning.label,
+                  accentColor: warning.accent,
+                  highlighted: warning.highlighted,
+                  onTap: onTapReadiness,
+                ),
+              ),
             _FabricActionChip(
               isDesktop: isDesktop,
               scale: scale,
@@ -995,122 +815,6 @@ class _FabricControlStrip extends StatelessWidget {
           ],
         ),
       ],
-    );
-  }
-}
-
-class _TransportModeBar extends StatelessWidget {
-  final bool isDesktop;
-  final double scale;
-  final TransportPreference selected;
-  final ValueChanged<TransportPreference> onChanged;
-
-  const _TransportModeBar({
-    required this.isDesktop,
-    required this.scale,
-    required this.selected,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.all(3.rx(isDesktop, desktopScale: scale)),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceElevated.withAlpha(220),
-        borderRadius: BorderRadius.circular(
-          12.rr(isDesktop, desktopScale: scale),
-        ),
-        border: Border.all(color: Colors.white.withAlpha(14)),
-      ),
-      child: Wrap(
-        alignment: WrapAlignment.center,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 2.rw(isDesktop, desktopScale: scale),
-        runSpacing: 2.rh(isDesktop, desktopScale: scale),
-        children: [
-          _buildOption(
-            preference: TransportPreference.autoSmart,
-            icon: Icons.auto_awesome_rounded,
-            label: 'Smart Auto',
-            tooltip: 'Auto-select fastest route (LAN TLS or Direct 5GHz)',
-            accentColor: AppColors.primaryLight,
-          ),
-          _buildOption(
-            preference: TransportPreference.directTurbo,
-            icon: Icons.flash_on_rounded,
-            label: '5GHz Turbo',
-            tooltip: 'Direct 5GHz Wi-Fi P2P / Hotspot without router limits',
-            accentColor: AppColors.success,
-          ),
-          _buildOption(
-            preference: TransportPreference.lanOnly,
-            icon: Icons.wifi_rounded,
-            label: 'LAN',
-            tooltip: 'Router Wi-Fi LAN only',
-            accentColor: AppColors.primaryLight,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildOption({
-    required TransportPreference preference,
-    required IconData icon,
-    required String label,
-    required String tooltip,
-    required Color accentColor,
-  }) {
-    final bool active = selected == preference;
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: () => onChanged(preference),
-        borderRadius: BorderRadius.circular(
-          9.rr(isDesktop, desktopScale: scale),
-        ),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOutCubic,
-          padding: EdgeInsets.symmetric(
-            horizontal: 8.rw(isDesktop, desktopScale: scale),
-            vertical: 5.rh(isDesktop, desktopScale: scale),
-          ),
-          decoration: BoxDecoration(
-            color: active ? accentColor.withAlpha(36) : Colors.transparent,
-            borderRadius: BorderRadius.circular(
-              9.rr(isDesktop, desktopScale: scale),
-            ),
-            border: Border.all(
-              color: active ? accentColor.withAlpha(110) : Colors.transparent,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                size: 12.rx(isDesktop, desktopScale: scale),
-                color: active ? accentColor : AppColors.textMuted,
-              ),
-              SizedBox(width: 4.rw(isDesktop, desktopScale: scale)),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: active ? AppColors.textPrimary : AppColors.textMuted,
-                    fontSize: 10.5.rx(isDesktop, desktopScale: scale),
-                    fontWeight: active ? FontWeight.w700 : FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

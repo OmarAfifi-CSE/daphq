@@ -1,7 +1,4 @@
 .vscode
-.agents
-.aidesigner
-apk_windows_outputs
 build_and_export.ps1
 # Miscellaneous
 *.class

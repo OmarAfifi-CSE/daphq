@@ -4,22 +4,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qr_flutter/qr_flutter.dart';
 
 import 'package:daphq/core/app_colors.dart';
 import 'package:daphq/cubits/transfer_cubit.dart';
 import 'package:daphq/cubits/transfer_state.dart';
 import 'package:daphq/fabric/peer_models.dart';
+import 'package:daphq/fabric/smart_link_evaluator.dart';
 import 'package:daphq/models/discovery_model.dart';
 import 'package:daphq/models/transfer_model.dart';
 import 'package:daphq/security/trusted_devices_service.dart';
 import 'package:daphq/services/history_service.dart';
-import 'package:daphq/views/widgets/common/custom_snackbar.dart';
 import 'package:daphq/views/widgets/common/daphq_card.dart';
 import 'package:daphq/views/widgets/common/history_dialog.dart';
 import 'package:daphq/views/widgets/common/info_dialog.dart';
 import 'package:daphq/views/widgets/common/orbital_radar.dart';
-import 'package:daphq/views/widgets/common/qr_pairing_dialog.dart';
 import 'package:daphq/views/widgets/common/transfer_progress_view.dart';
 import 'package:daphq/views/widgets/common/trusted_devices_dialog.dart';
 import 'package:daphq/views/widgets/common/unified_dashboard.dart';
@@ -30,10 +28,8 @@ class _FakeTransferCubit extends Cubit<TransferState> implements TransferCubit {
   bool dismissed = false;
   bool cancelledSending = false;
   bool cancelledReceiving = false;
-  TransportPreference? lastPreference;
+  int refreshCapabilitiesCalls = 0;
   final List<String> revokedPeerIds = [];
-  String? mockPairingUri =
-      'daphq://pair?v=2&id=0123456789abcdef&fp=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef&n=TestPeer&os=android&p=62004';
   bool? lastAuthAccept;
   bool lastAuthTrust = false;
 
@@ -57,9 +53,8 @@ class _FakeTransferCubit extends Cubit<TransferState> implements TransferCubit {
   }
 
   @override
-  Future<void> setTransportPreference(TransportPreference preference) async {
-    lastPreference = preference;
-    emit(state.copyWith(transportPreference: preference));
+  Future<void> refreshCapabilities({bool restartBleIfNeeded = true}) async {
+    refreshCapabilitiesCalls++;
   }
 
   @override
@@ -73,33 +68,6 @@ class _FakeTransferCubit extends Cubit<TransferState> implements TransferCubit {
       ),
     );
   }
-
-  @override
-  Future<PairingToken?> trustPeerFromQr(String rawUri) async {
-    final token = PairingQrCodec.decode(rawUri);
-    if (token != null) {
-      emit(
-        state.copyWith(
-          trustedDevices: [
-            ...state.trustedDevices,
-            TrustedDevice(
-              peerId: token.peerId,
-              certFingerprint: token.fingerprint,
-              displayName: token.name,
-              platform: token.platform.name,
-              trustedAt: 1,
-              lastSeen: 1,
-            ),
-          ],
-        ),
-      );
-    }
-    return token;
-  }
-
-  @override
-  Future<String?> buildLocalPairingUri({String? lanIpOverride}) async =>
-      mockPairingUri;
 
   @override
   Future<void> resolveAuth(bool accept, {bool trustPeer = false}) async {
@@ -356,11 +324,102 @@ void main() {
         expect(tester.takeException(), isNull);
       },
     );
+
+    testWidgets(
+      'TransferProgressView shows routeLabel and suppresses router warning on Direct 5GHz Wi-Fi',
+      (tester) async {
+        await tester.binding.setSurfaceSize(const Size(360, 690));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
+        final cubit = _FakeTransferCubit(
+          TransferState(
+            showProgressView: true,
+            isTransferring: true,
+            model: TransferModel(
+              phase: TransferPhase.sending,
+              status: 'Sending via Direct 5GHz...',
+              routeLabel: 'Direct 5GHz Wi-Fi',
+              progress: 0.2,
+              totalSize: 100.0,
+              transferred: 20.0,
+              speed: 0.5,
+            ),
+          ),
+        );
+        addTearDown(cubit.close);
+
+        await tester.pumpWidget(
+          _wrapWithApp(
+            cubit: cubit,
+            child: const TransferProgressView(isDesktop: false),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+
+        expect(find.text('Direct 5GHz Wi-Fi'), findsOneWidget);
+
+        // Pump 7 slow updates while on Direct 5GHz Wi-Fi — router tip stays hidden.
+        for (int i = 1; i <= 7; i++) {
+          cubit.pushState(
+            TransferState(
+              showProgressView: true,
+              isTransferring: true,
+              model: TransferModel(
+                phase: TransferPhase.sending,
+                status: 'Sending via Direct 5GHz...',
+                routeLabel: 'Direct 5GHz Wi-Fi',
+                progress: 0.2 + i * 0.01,
+                totalSize: 100.0,
+                transferred: 20.0 + i,
+                speed: 0.5,
+              ),
+            ),
+          );
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+
+        expect(
+          find.text('Slow speed? Get 10x faster speed now!'),
+          findsNothing,
+        );
+        expect(tester.takeException(), isNull);
+
+        // Switch to Router LAN fallback with slow speed — tip banner appears.
+        for (int i = 1; i <= 7; i++) {
+          cubit.pushState(
+            TransferState(
+              showProgressView: true,
+              isTransferring: true,
+              model: TransferModel(
+                phase: TransferPhase.sending,
+                status: 'Sending via Router LAN...',
+                routeLabel: 'Router LAN • Direct 5GHz fallback',
+                progress: 0.3 + i * 0.01,
+                totalSize: 100.0,
+                transferred: 30.0 + i,
+                speed: 0.5,
+              ),
+            ),
+          );
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+
+        expect(
+          find.text('Router LAN • Direct 5GHz fallback'),
+          findsOneWidget,
+        );
+        expect(
+          find.text('Slow speed? Get 10x faster speed now!'),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
   });
 
   group('Zero-Router Fabric & Security UI', () {
     testWidgets(
-      'AuthDialog shows TLS badge, SAS PIN, Trust toggle on normal prompt, and warns on MITM mismatch',
+      'AuthDialog shows TLS badge and Trust toggle without SAS PIN, and warns on MITM mismatch',
       (tester) async {
         await tester.binding.setSurfaceSize(const Size(360, 690));
         addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -386,7 +445,6 @@ void main() {
                         senderName: 'Pixel 9 Pro',
                         fileCount: 2,
                         formattedSize: '12.4 MB',
-                        sasCode: '4829',
                         isTls: true,
                         canTrustPeer: true,
                         onTrustChanged: (val) => trustSelected = val,
@@ -402,7 +460,6 @@ void main() {
                         senderName: 'Unknown Host',
                         fileCount: 1,
                         formattedSize: '1.0 MB',
-                        sasCode: '9910',
                         isTls: true,
                         isFingerprintMismatch: true,
                         canTrustPeer: true,
@@ -417,13 +474,14 @@ void main() {
         );
         await tester.pump();
 
-        // 1. Normal TLS prompt with SAS PIN + Trust checkbox (mobile 360x690)
+        // 1. Normal TLS prompt without SAS PIN + Trust checkbox (mobile 360x690)
         await tester.tap(find.text('Open Normal Auth'));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
 
         expect(find.text('TLS 1.3 Encrypted'), findsOneWidget);
-        expect(find.text('4829'), findsOneWidget);
+        expect(find.byIcon(Icons.pin_rounded), findsNothing);
+        expect(find.text('Verify PIN: '), findsNothing);
         expect(
           find.text('Trust this device for future auto-accept'),
           findsOneWidget,
@@ -458,76 +516,6 @@ void main() {
           find.text('Trust this device for future auto-accept'),
           findsNothing,
         );
-        expect(tester.takeException(), isNull);
-      },
-    );
-
-    testWidgets(
-      'QrPairingDialog renders QrImageView, validates invalid tokens, and pairs valid token',
-      (tester) async {
-        await tester.binding.setSurfaceSize(const Size(1280, 800));
-        addTearDown(() async {
-          CustomSnackBar.hide();
-          await tester.binding.setSurfaceSize(null);
-        });
-
-        final cubit = _FakeTransferCubit(TransferState(model: TransferModel()));
-        addTearDown(cubit.close);
-
-        await tester.pumpWidget(
-          _wrapWithApp(
-            cubit: cubit,
-            child: Builder(
-              builder: (context) => ElevatedButton(
-                onPressed: () =>
-                    QrPairingDialog.show(context, isDesktop: true),
-                child: const Text('Open QR'),
-              ),
-            ),
-          ),
-        );
-        await tester.pump();
-
-        await tester.tap(find.text('Open QR'));
-        await tester.pumpAndSettle();
-
-        expect(find.byType(QrImageView), findsOneWidget);
-        expect(tester.takeException(), isNull);
-
-        // Empty submission feedback
-        await tester.ensureVisible(find.text('Pair & Trust Device'));
-        await tester.tap(find.text('Pair & Trust Device'));
-        await tester.pump();
-        expect(
-          find.text('Paste a valid daphq://pair token first.'),
-          findsOneWidget,
-        );
-
-        // Invalid token feedback
-        await tester.enterText(find.byType(TextField), 'not-a-valid-uri');
-        await tester.ensureVisible(find.text('Pair & Trust Device'));
-        await tester.tap(find.text('Pair & Trust Device'));
-        await tester.pump();
-        expect(find.text('Invalid pairing token format.'), findsOneWidget);
-
-        // Valid token pairing
-        final validUri = PairingQrCodec.encode(
-          const PairingToken(
-            peerId: 'fedcba9876543210',
-            fingerprint:
-                'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
-            name: 'Galaxy S25',
-            platform: PeerPlatform.android,
-          ),
-        );
-        await tester.enterText(find.byType(TextField), validUri);
-        await tester.ensureVisible(find.text('Pair & Trust Device'));
-        await tester.tap(find.text('Pair & Trust Device'));
-        await tester.pump();
-        await tester.pump(const Duration(seconds: 5));
-
-        expect(cubit.state.trustedDevices, hasLength(1));
-        expect(cubit.state.trustedDevices.first.displayName, 'Galaxy S25');
         expect(tester.takeException(), isNull);
       },
     );
@@ -627,13 +615,23 @@ void main() {
     );
 
     testWidgets(
-      'UnifiedDashboard renders Fabric controls, switches TransportPreference, and fits mobile & desktop viewports',
+      'UnifiedDashboard removes mode toggles, QR Pair, MANUAL IP, and passive Direct 5GHz badge, keeping Trusted and Radio Readiness without overflow',
       (tester) async {
         final cubit = _FakeTransferCubit(
           TransferState(
             model: TransferModel(),
             isReceiving: true,
             deviceName: 'Test-PC',
+            localRadioCapabilities: const LocalRadioCapabilities(
+              hasWifi: true,
+              hasBle: false,
+              canHostDirect5g: true,
+              localPlatform: PeerPlatform.windows,
+              wifiHardwarePresent: true,
+              bluetoothHardwarePresent: false,
+              wifiEnabled: true,
+              bluetoothEnabled: false,
+            ),
           ),
         );
         addTearDown(cubit.close);
@@ -650,18 +648,109 @@ void main() {
         );
         await tester.pump(const Duration(milliseconds: 50));
 
-        expect(find.text('Smart Auto'), findsOneWidget);
-        expect(find.text('5GHz Turbo'), findsOneWidget);
-        expect(find.text('LAN'), findsOneWidget);
-        expect(find.text('QR Pair'), findsOneWidget);
+        // Legacy mode toggle, QR Pair, MANUAL IP, and passive Direct 5GHz badge are hidden.
+        expect(find.text('Smart Auto'), findsNothing);
+        expect(find.text('5GHz Turbo'), findsNothing);
+        expect(find.text('LAN'), findsNothing);
+        expect(find.text('QR Pair'), findsNothing);
+        expect(find.text('MANUAL IP'), findsNothing);
+        expect(find.byKey(const ValueKey('advanced_mode_card')), findsNothing);
+        expect(find.text('Direct 5GHz Ready'), findsNothing);
+        expect(find.text('Direct 5GHz Auto'), findsNothing);
         expect(find.text('Trusted (0)'), findsOneWidget);
         expect(tester.takeException(), isNull);
 
-        await tester.tap(find.text('5GHz Turbo'));
+        // Ethernet-only desktop (no Wi-Fi hardware — no false Wi-Fi/BT alarm or Direct pill).
+        cubit.pushState(
+          cubit.state.copyWith(
+            localRadioCapabilities: const LocalRadioCapabilities(
+              hasWifi: false,
+              hasBle: false,
+              canHostDirect5g: false,
+              localPlatform: PeerPlatform.windows,
+              wifiHardwarePresent: false,
+              bluetoothHardwarePresent: false,
+              wifiEnabled: false,
+              bluetoothEnabled: false,
+            ),
+          ),
+        );
         await tester.pump(const Duration(milliseconds: 50));
-        expect(cubit.lastPreference, TransportPreference.directTurbo);
+        expect(find.text('Ethernet PC • LAN Ready'), findsNothing);
+        expect(find.text('Direct 5GHz Ready'), findsNothing);
 
-        // Desktop viewport (1280x800)
+        // Wi-Fi OFF prompt.
+        cubit.pushState(
+          cubit.state.copyWith(
+            localRadioCapabilities: const LocalRadioCapabilities(
+              hasWifi: false,
+              hasBle: false,
+              canHostDirect5g: false,
+              localPlatform: PeerPlatform.windows,
+              wifiHardwarePresent: true,
+              bluetoothHardwarePresent: true,
+              wifiEnabled: false,
+              bluetoothEnabled: false,
+            ),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+        expect(find.text('Turn On Wi-Fi'), findsOneWidget);
+
+        // Missing Android Nearby Wi-Fi permission prompt.
+        cubit.pushState(
+          cubit.state.copyWith(
+            localRadioCapabilities: const LocalRadioCapabilities(
+              hasWifi: false,
+              hasBle: true,
+              canHostDirect5g: false,
+              localPlatform: PeerPlatform.android,
+              wifiHardwarePresent: true,
+              bluetoothHardwarePresent: true,
+              wifiEnabled: true,
+              bluetoothEnabled: true,
+              missingWifiPermission: true,
+            ),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+        expect(find.text('Grant Wi-Fi Permission'), findsOneWidget);
+
+        // Android <=12 OS Location OFF prompt.
+        cubit.pushState(
+          cubit.state.copyWith(
+            localRadioCapabilities: const LocalRadioCapabilities(
+              hasWifi: false,
+              hasBle: true,
+              canHostDirect5g: false,
+              localPlatform: PeerPlatform.android,
+              wifiHardwarePresent: true,
+              bluetoothHardwarePresent: true,
+              wifiEnabled: true,
+              bluetoothEnabled: true,
+              missingWifiPermission: false,
+              locationServiceEnabled: false,
+            ),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+        expect(find.text('Turn On Location'), findsOneWidget);
+
+        // Desktop viewport (1280x800) with radios ready: only Trusted chip remains.
+        cubit.pushState(
+          cubit.state.copyWith(
+            localRadioCapabilities: const LocalRadioCapabilities(
+              hasWifi: true,
+              hasBle: true,
+              canHostDirect5g: true,
+              localPlatform: PeerPlatform.windows,
+              wifiHardwarePresent: true,
+              bluetoothHardwarePresent: true,
+              wifiEnabled: true,
+              bluetoothEnabled: true,
+            ),
+          ),
+        );
         await tester.binding.setSurfaceSize(const Size(1280, 800));
         await tester.pumpWidget(
           _wrapWithApp(
@@ -670,6 +759,8 @@ void main() {
           ),
         );
         await tester.pump(const Duration(milliseconds: 50));
+        expect(find.text('Direct 5GHz Ready'), findsNothing);
+        expect(find.text('Trusted (0)'), findsOneWidget);
         expect(tester.takeException(), isNull);
       },
     );

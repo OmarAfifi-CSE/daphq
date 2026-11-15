@@ -93,7 +93,7 @@ class _DirectTransferTipDialogState extends State<DirectTransferTipDialog> {
                 ),
                 SizedBox(height: 8),
                 Text(
-                  "When both devices are on the same Wi-Fi router, local wireless transfer is heavily throttled by the router's hardware driver limitations. Connecting via a direct hotspot completely bypasses the router for up to 10x faster speeds!",
+                  "When a device lacks Wi-Fi Direct hardware (such as an Ethernet-only PC) or can't join the direct 5GHz link, transfers fall back to your router—which often throttles local speeds. Creating a manual hotspot bypasses the router for up to 10x faster speeds!",
                   style: TextStyle(
                     color: AppColors.textSecondary,
                     fontSize: 12.5,

@@ -247,40 +247,6 @@ class PeerRegistry {
     return updated;
   }
 
-  UnifiedPeer upsertQrToken(PairingToken token, {DateTime? now}) {
-    final timestamp = now ?? DateTime.now();
-    final key = token.peerId.trim().toLowerCase();
-    final existing = _peers[key];
-
-    final updated = UnifiedPeer(
-      peerId: key,
-      name: token.name,
-      platform: token.platform != PeerPlatform.unknown
-          ? token.platform
-          : (existing?.platform ?? PeerPlatform.unknown),
-      lanIp: token.lanIp ?? existing?.lanIp,
-      port: token.port,
-      certFingerprint: token.fingerprint,
-      fingerprintPrefix: token.fingerprint.length >= 16
-          ? token.fingerprint.substring(0, 16)
-          : existing?.fingerprintPrefix,
-      bleAddress: existing?.bleAddress,
-      rssi: existing?.rssi,
-      caps: (existing?.caps ?? const PeerCapabilities()).copyWith(
-        tlsSupported: true,
-        multiStreamSupported: true,
-        platform: token.platform,
-      ),
-      isTrusted: _trustedPeerIds.contains(key),
-      lastSeenLan: token.lanIp != null ? timestamp : existing?.lastSeenLan,
-      lastSeenBle: existing?.lastSeenBle,
-    );
-
-    _peers[key] = updated;
-    _emit();
-    return updated;
-  }
-
   /// Refreshes LAN heartbeat timestamp for an existing peer without emitting redundant UI events,
   /// or inserts the peer if not yet registered.
   void touchLanHeartbeat(DiscoveryModel discovery, {DateTime? now}) {

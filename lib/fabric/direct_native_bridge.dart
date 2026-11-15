@@ -88,6 +88,13 @@ class DirectRadioStateEvent extends DirectFabricEvent {
   final bool bleAdvertising;
   final bool bleScanning;
   final bool canHostDirect5g;
+  final bool wifiHardwarePresent;
+  final bool bluetoothHardwarePresent;
+  final bool wifiEnabled;
+  final bool bluetoothEnabled;
+  final bool missingWifiPermission;
+  final bool missingBlePermission;
+  final bool locationServiceEnabled;
 
   const DirectRadioStateEvent({
     required this.hasWifi,
@@ -95,7 +102,33 @@ class DirectRadioStateEvent extends DirectFabricEvent {
     required this.bleAdvertising,
     required this.bleScanning,
     required this.canHostDirect5g,
-  });
+    bool? wifiHardwarePresent,
+    bool? bluetoothHardwarePresent,
+    bool? wifiEnabled,
+    bool? bluetoothEnabled,
+    this.missingWifiPermission = false,
+    this.missingBlePermission = false,
+    this.locationServiceEnabled = true,
+  })  : wifiHardwarePresent = wifiHardwarePresent ?? hasWifi,
+        bluetoothHardwarePresent = bluetoothHardwarePresent ?? hasBle,
+        wifiEnabled = wifiEnabled ?? hasWifi,
+        bluetoothEnabled = bluetoothEnabled ?? hasBle;
+
+  LocalRadioCapabilities toCapabilities(PeerPlatform platform) {
+    return LocalRadioCapabilities(
+      hasWifi: hasWifi,
+      hasBle: hasBle,
+      canHostDirect5g: canHostDirect5g,
+      localPlatform: platform,
+      wifiHardwarePresent: wifiHardwarePresent,
+      bluetoothHardwarePresent: bluetoothHardwarePresent,
+      wifiEnabled: wifiEnabled,
+      bluetoothEnabled: bluetoothEnabled,
+      missingWifiPermission: missingWifiPermission,
+      missingBlePermission: missingBlePermission,
+      locationServiceEnabled: locationServiceEnabled,
+    );
+  }
 }
 
 @immutable
@@ -117,10 +150,12 @@ class DirectHostInfo {
 class DirectClientConnection {
   final String localIp;
   final String gatewayIp;
+  final int? frequencyMhz;
 
   const DirectClientConnection({
     required this.localIp,
     required this.gatewayIp,
+    this.frequencyMhz,
   });
 }
 
@@ -216,12 +251,23 @@ class DirectNativeBridge {
         );
 
       case 'radioState':
+        final hasWifi = map['hasWifi'] == true;
+        final hasBle = map['hasBle'] == true;
         return DirectRadioStateEvent(
-          hasWifi: map['hasWifi'] == true,
-          hasBle: map['hasBle'] == true,
+          hasWifi: hasWifi,
+          hasBle: hasBle,
           bleAdvertising: map['bleAdvertising'] == true,
           bleScanning: map['bleScanning'] == true,
           canHostDirect5g: map['canHostDirect5g'] == true,
+          wifiHardwarePresent: map['wifiHardwarePresent'] as bool? ?? hasWifi,
+          bluetoothHardwarePresent:
+              map['bluetoothHardwarePresent'] as bool? ?? hasBle,
+          wifiEnabled: map['wifiEnabled'] as bool? ?? hasWifi,
+          bluetoothEnabled: map['bluetoothEnabled'] as bool? ?? hasBle,
+          missingWifiPermission: map['missingWifiPermission'] == true,
+          missingBlePermission: map['missingBlePermission'] == true,
+          locationServiceEnabled:
+              map['locationServiceEnabled'] as bool? ?? true,
         );
 
       default:
@@ -237,11 +283,21 @@ class DirectNativeBridge {
       if (raw == null) {
         return LocalRadioCapabilities.fallbackForPlatform(currentPlatform());
       }
+      final hasWifi = raw['hasWifi'] == true;
+      final hasBle = raw['hasBle'] == true;
       return LocalRadioCapabilities(
-        hasWifi: raw['hasWifi'] == true,
-        hasBle: raw['hasBle'] == true,
+        hasWifi: hasWifi,
+        hasBle: hasBle,
         canHostDirect5g: raw['canHostDirect5g'] == true,
         localPlatform: currentPlatform(),
+        wifiHardwarePresent: raw['wifiHardwarePresent'] as bool? ?? hasWifi,
+        bluetoothHardwarePresent:
+            raw['bluetoothHardwarePresent'] as bool? ?? hasBle,
+        wifiEnabled: raw['wifiEnabled'] as bool? ?? hasWifi,
+        bluetoothEnabled: raw['bluetoothEnabled'] as bool? ?? hasBle,
+        missingWifiPermission: raw['missingWifiPermission'] == true,
+        missingBlePermission: raw['missingBlePermission'] == true,
+        locationServiceEnabled: raw['locationServiceEnabled'] as bool? ?? true,
       );
     } on MissingPluginException {
       return LocalRadioCapabilities.fallbackForPlatform(currentPlatform());
@@ -281,11 +337,19 @@ class DirectNativeBridge {
     } catch (_) {}
   }
 
-  Future<DirectHostInfo?> startDirectHost({bool prefer5Ghz = true}) async {
+  Future<DirectHostInfo?> startDirectHost({
+    bool prefer5Ghz = true,
+    String? stableTag,
+    bool allow24GhzFallback = true,
+  }) async {
     try {
       final raw = await _methodChannel.invokeMapMethod<String, dynamic>(
         'startDirectHost',
-        <String, dynamic>{'prefer5Ghz': prefer5Ghz},
+        <String, dynamic>{
+          'prefer5Ghz': prefer5Ghz,
+          'stableTag': ?stableTag,
+          'allow24GhzFallback': allow24GhzFallback,
+        },
       );
       if (raw == null || raw['ssid'] == null || raw['psk'] == null) {
         return null;
@@ -294,7 +358,7 @@ class DirectNativeBridge {
         ssid: raw['ssid'] as String,
         psk: raw['psk'] as String,
         hostIp: raw['hostIp'] as String? ?? '192.168.49.1',
-        frequencyMhz: (raw['frequencyMhz'] as num?)?.toInt() ?? 5180,
+        frequencyMhz: (raw['frequencyMhz'] as num?)?.toInt() ?? 0,
       );
     } catch (_) {
       return null;
@@ -320,12 +384,29 @@ class DirectNativeBridge {
       if (raw == null || raw['gatewayIp'] == null) {
         return null;
       }
+      final freqNum = raw['frequencyMhz'] as num?;
       return DirectClientConnection(
         localIp: raw['localIp'] as String? ?? '',
         gatewayIp: raw['gatewayIp'] as String,
+        frequencyMhz: freqNum != null && freqNum > 0 ? freqNum.toInt() : null,
       );
     } catch (_) {
       return null;
+    }
+  }
+
+  Future<List<String>> getDirectHostClients() async {
+    try {
+      final raw = await _methodChannel.invokeListMethod<String>(
+        'getDirectHostClients',
+      );
+      if (raw == null) return const <String>[];
+      return raw
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList(growable: false);
+    } catch (_) {
+      return const <String>[];
     }
   }
 
@@ -352,4 +433,31 @@ class DirectNativeBridge {
       await _methodChannel.invokeMethod<void>('stopDirectSession');
     } catch (_) {}
   }
+
+  /// Acquires or releases high-performance Wi-Fi + partial wake locks around active transfers.
+  Future<void> setTransferPowerLock(bool enabled) async {
+    try {
+      await _methodChannel.invokeMethod<void>(
+        'setTransferPowerLock',
+        <String, dynamic>{'enabled': enabled},
+      );
+    } catch (_) {}
+  }
+}
+
+/// Derives a stable uppercase alphanumeric tag (4-6 chars) from a persistent peer ID
+/// so Direct sessions reuse a deterministic SSID suffix instead of triggering AV/OS churn.
+String? deriveStableDirectSsidTag(String? peerId) {
+  if (peerId == null) return null;
+  final clean = peerId.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase();
+  if (clean.length < 4) return null;
+  return clean.length > 6 ? clean.substring(0, 6) : clean;
+}
+
+/// Maps an actual measured Wi-Fi channel frequency (MHz) to an honest UI route label.
+String directRouteLabelForFrequency(int? frequencyMhz) {
+  if (frequencyMhz == null || frequencyMhz <= 0) {
+    return 'Direct Wi-Fi';
+  }
+  return frequencyMhz >= 4900 ? 'Direct 5GHz Wi-Fi' : 'Direct 2.4GHz Wi-Fi';
 }

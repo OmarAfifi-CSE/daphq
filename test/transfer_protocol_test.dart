@@ -681,6 +681,63 @@ void main() {
       }
     });
 
+    test('Sender propagates directFrequencyProvider freqMhz to Receiver via v2 metadata header', () async {
+      final sampleFile = File(p.join(sendDir.path, 'freq_sync.bin'));
+      await sampleFile.writeAsBytes(utf8.encode('freq-sync-check'));
+
+      final reportedFreqs = <int>[];
+      final receiver = ReceiverController();
+      final listening = Completer<int>();
+      final stopped = Completer<void>();
+      final done = Completer<void>();
+
+      unawaited(
+        receiver.startReceiver(
+          saveDirectory: receiveDir.path,
+          deviceName: 'FreqRx',
+          port: 0,
+          tlsContext: rxIdentity.createServerContext(),
+          localIdentity: rxIdentity,
+          onListening: (boundPort) {
+            if (!listening.isCompleted) listening.complete(boundPort);
+          },
+          onPeerReportedFrequency: reportedFreqs.add,
+          freeBytesProvider: () async => 1024 * 1024 * 1024,
+          onUpdate: (m) {
+            if (m.phase == TransferPhase.done && !done.isCompleted) {
+              done.complete();
+            }
+          },
+          onRequestAuth: (_, _, _, _) async => true,
+          onDone: () {
+            if (!stopped.isCompleted) stopped.complete();
+          },
+        ),
+      );
+
+      final port = await listening.future.timeout(const Duration(seconds: 5));
+      try {
+        final sender = SenderController();
+        await sender.sendData(
+          paths: [sampleFile.path],
+          targetIp: '127.0.0.1',
+          port: port,
+          targetDeviceName: 'FreqRx',
+          senderDeviceName: 'FreqTx',
+          useTls: true,
+          expectedPeerFingerprint: rxIdentity.certFingerprint,
+          localIdentity: txIdentity,
+          directFrequencyProvider: () => 5200,
+          onUpdate: (_) {},
+        );
+        await done.future.timeout(const Duration(seconds: 5));
+        expect(reportedFreqs, contains(5200));
+      } finally {
+        receiver.stop();
+        await stopped.future.timeout(const Duration(seconds: 5));
+      }
+    });
+
     test('reverse-connect TLS 4-stream mode transfers cleanly with outbound receiver sockets', () async {
       final largeData = Uint8List.fromList(
         List<int>.generate(900 * 1024, (i) => (i * 17) & 0xFF),
@@ -735,6 +792,60 @@ void main() {
       final recvFile = File(p.join(receiveDir.path, 'reverse.bin'));
       expect(recvFile.existsSync(), isTrue);
       expect(await recvFile.readAsBytes(), equals(largeData));
+    });
+
+    test('acceptReverseTransfer propagates directFrequencyProvider freqMhz to onPeerReportedFrequency', () async {
+      final file = File(p.join(sendDir.path, 'reverse_freq.bin'));
+      await file.writeAsBytes(utf8.encode('reverse-freq-sync'));
+
+      final sender = SenderController();
+      final reverseListening = Completer<int>();
+      final rxDone = Completer<void>();
+      final reportedFreqs = <int>[];
+
+      final sendFuture = sender.sendData(
+        paths: [file.path],
+        targetIp: '127.0.0.1',
+        port: 0,
+        targetDeviceName: 'WinRx',
+        senderDeviceName: 'AndroidTx',
+        useTls: true,
+        localIdentity: txIdentity,
+        expectedPeerFingerprint: rxIdentity.certFingerprint,
+        parallelStreams: 4,
+        listenForReverseReceiver: true,
+        directFrequencyProvider: () => 5200,
+        onReverseListening: (boundPort) {
+          if (!reverseListening.isCompleted) reverseListening.complete(boundPort);
+        },
+        onUpdate: (_) {},
+      );
+
+      final listenPort = await reverseListening.future.timeout(const Duration(seconds: 5));
+
+      final receiver = ReceiverController();
+      await receiver.acceptReverseTransfer(
+        senderIp: '127.0.0.1',
+        port: listenPort,
+        saveDirectory: receiveDir.path,
+        deviceName: 'WinRx',
+        useTls: true,
+        expectedSenderFingerprint: txIdentity.certFingerprint,
+        localIdentity: rxIdentity,
+        onPeerReportedFrequency: reportedFreqs.add,
+        freeBytesProvider: () async => 1024 * 1024 * 1024,
+        onUpdate: (m) {
+          if (m.phase == TransferPhase.done && !rxDone.isCompleted) {
+            rxDone.complete();
+          }
+        },
+        onRequestAuth: (_, _, _, _) async => true,
+      );
+
+      await sendFuture.timeout(const Duration(seconds: 8));
+      await rxDone.future.timeout(const Duration(seconds: 5));
+
+      expect(reportedFreqs, contains(5200));
     });
 
     test('verifies ECDSA sender proof over TLS and flags spoofed peer metadata as unverified', () async {
@@ -1220,6 +1331,586 @@ void main() {
         receiver.stop();
         await stopped.future.timeout(const Duration(seconds: 5));
       }
+    });
+
+    test(
+      'direct_control over LAN TLS verifies ECDSA proof, returns Direct host credentials, and rejects spoofed requests',
+      () async {
+        final rxIdentity = await DeviceIdentityService(
+          directoryProvider: () async => Directory(p.join(tempRoot.path, 'dc_rx')),
+        ).loadOrCreate();
+        final txIdentity = await DeviceIdentityService(
+          directoryProvider: () async => Directory(p.join(tempRoot.path, 'dc_tx')),
+        ).loadOrCreate();
+        final receiver = ReceiverController();
+        final listening = Completer<int>();
+        final stopped = Completer<void>();
+        DirectControlRequest? observedReq;
+
+        unawaited(
+          receiver.startReceiver(
+            saveDirectory: receiveDir.path,
+            deviceName: 'DirectControlRx',
+            port: 0,
+            tlsContext: rxIdentity.createServerContext(),
+            localIdentity: rxIdentity,
+            onListening: (p0) {
+              if (!listening.isCompleted) listening.complete(p0);
+            },
+            freeBytesProvider: () async => 1024 * 1024 * 1024,
+            onUpdate: (_) {},
+            onRequestAuth: (_, _, _, _) async => true,
+            onDirectControlRequest: (req) async {
+              observedReq = req;
+              return <String, dynamic>{
+                'ok': true,
+                'ssid': 'DIRECT-DQ-9911',
+                'psk': 'SecretPass9911',
+                'hostIp': '192.168.49.1',
+                'port': 62004,
+                'frequencyMhz': 5180,
+                'reverseConnect': false,
+              };
+            },
+            onDone: () {
+              if (!stopped.isCompleted) stopped.complete();
+            },
+          ),
+        );
+
+        final port = await listening.future.timeout(const Duration(seconds: 5));
+        try {
+          // 1. Valid signed request succeeds without ending receiver loop
+          final resp = await sendDirectControl(
+            host: '127.0.0.1',
+            port: port,
+            localIdentity: txIdentity,
+            localDeviceName: 'WinLaptop',
+            localPort: 62004,
+            action: 'startHostAndWait',
+            expectedPeerFingerprint: rxIdentity.certFingerprint,
+          );
+          expect(resp['ok'], isTrue);
+          expect(resp['ssid'], 'DIRECT-DQ-9911');
+          expect(resp['hostIp'], '192.168.49.1');
+          expect(observedReq?.isIdentityVerified, isTrue);
+          expect(observedReq?.senderPeerId, txIdentity.peerId);
+          expect(observedReq?.action, 'startHostAndWait');
+
+          // 2. Spoofed / invalid ECDSA signature is strictly rejected
+          final rogueSock = await connectTransferSocket(
+            host: '127.0.0.1',
+            port: port,
+            useTls: true,
+            timeout: const Duration(seconds: 5),
+            expectedPeerFingerprint: rxIdentity.certFingerprint,
+          );
+          rogueSock.write(
+            '${jsonEncode({
+              'v': 2,
+              'role': 'direct_control',
+              'requestId': 'forged-req-1',
+              'action': 'joinHost',
+              'peerId': txIdentity.peerId,
+              'peerName': 'EvilSpoof',
+              'senderFp': txIdentity.certFingerprint,
+              'senderCertPem': txIdentity.certificatePem,
+              'senderProof': 'invalid-base64-sig',
+              'ssid': 'EVIL-AP',
+              'psk': '12345678',
+              'hostIp': '10.0.0.9',
+            })}\n',
+          );
+          await rogueSock.flush();
+          final rogueResp = await BufferedSocketReader(rogueSock).readJsonHeader(
+            maxHeaderBytes: 64 * 1024,
+            timeout: const Duration(seconds: 5),
+          );
+          rogueSock.destroy();
+          expect(rogueResp?.header['ok'], isFalse);
+          expect(rogueResp?.header['error'], 'unverifiedSender');
+        } finally {
+          receiver.stop();
+          await stopped.future.timeout(const Duration(seconds: 5));
+        }
+      },
+    );
+
+    test('TransferSpeedTracker smooths instantaneous spikes with EMA and aligns chunk size to 512 KB', () {
+      expect(daphqChunkSizeBytes, 512 * 1024);
+
+      final emitted = <double>[];
+      var fakeNow = DateTime(2026, 11, 14, 12, 0, 0);
+      final tracker = TransferSpeedTracker(
+        nowProvider: () => fakeNow,
+        intervalMs: 500,
+        alpha: 0.35,
+      );
+
+      // Sub-interval writes do not emit noisy samples.
+      fakeNow = fakeNow.add(const Duration(milliseconds: 100));
+      tracker.recordBytes(10 * 1024 * 1024, 'a.bin', (spd, _) => emitted.add(spd));
+      expect(emitted, isEmpty);
+
+      // Sample 1 after 600ms (~20 MB total over 600ms = ~33.33 MB/s baseline).
+      fakeNow = fakeNow.add(const Duration(milliseconds: 500));
+      tracker.recordBytes(10 * 1024 * 1024, 'a.bin', (spd, _) => emitted.add(spd));
+      expect(emitted, hasLength(1));
+      final first = emitted.first;
+      expect(first, closeTo(33.33, 0.2));
+
+      // Sample 2 suffers a stall (0 bytes extra, 550ms elapsed with only small 1 MB tail).
+      fakeNow = fakeNow.add(const Duration(milliseconds: 550));
+      tracker.recordBytes(1 * 1024 * 1024, 'a.bin', (spd, _) => emitted.add(spd));
+      expect(emitted, hasLength(2));
+      // Instant speed was ~1.81 MB/s, EMA should cushion (> 20 MB/s, not crash to 1.8).
+      expect(emitted[1], greaterThan(20.0));
+      expect(emitted[1], lessThan(first));
+    });
+
+    test('V2OrderedChunkCoalescer coalesces out-of-order chunks and resolves delayed head chunks', () {
+      const kChunk = 512 * 1024;
+      Uint8List makeChunk(int offset, int fillByte) =>
+          Uint8List(kChunk)..fillRange(0, kChunk, fillByte);
+
+      final coalescer = V2OrderedChunkCoalescer();
+      coalescer.enqueue(kChunk, makeChunk(kChunk, 0x22));
+      coalescer.enqueue(kChunk * 2, makeChunk(kChunk * 2, 0x33));
+      coalescer.enqueue(kChunk * 3, makeChunk(kChunk * 3, 0x44));
+      expect(coalescer.pendingBytes, kChunk * 3);
+
+      // Without fallback, holds briefly for head offset 0 so contiguous runs merge.
+      expect(
+        coalescer.takeNextBatch(maxBatchBytes: 2 * 1024 * 1024),
+        isNull,
+      );
+
+      // Once offset 0 arrives, all 4 chunks coalesce into one 2 MB batch.
+      coalescer.enqueue(0, makeChunk(0, 0x11));
+      final batch = coalescer.takeNextBatch(maxBatchBytes: 2 * 1024 * 1024);
+      expect(batch, isNotNull);
+      expect(batch!.offset, 0);
+      expect(batch.bytes.length, 4 * kChunk);
+      expect(batch.bytes[0], 0x11);
+      expect(batch.bytes[kChunk], 0x22);
+      expect(batch.bytes[kChunk * 2], 0x33);
+      expect(batch.bytes[kChunk * 3], 0x44);
+      expect(coalescer.pendingBytes, 0);
+      expect(coalescer.nextInOrderOffset, 4 * kChunk);
+
+      // Out-of-order high-water fallback test: flush hole-adjacent tail, then bridge head.
+      final skewed = V2OrderedChunkCoalescer();
+      skewed.enqueue(kChunk, makeChunk(kChunk, 0xAA));
+      skewed.enqueue(kChunk * 2, makeChunk(kChunk * 2, 0xBB));
+      final tailBatch = skewed.takeNextBatch(allowOutOfOrderFallback: true);
+      expect(tailBatch?.offset, kChunk);
+      expect(tailBatch?.bytes.length, 2 * kChunk);
+      expect(skewed.nextInOrderOffset, 0);
+
+      skewed.enqueue(0, makeChunk(0, 0x01));
+      skewed.enqueue(kChunk * 3, makeChunk(kChunk * 3, 0xCC));
+      final headBatch = skewed.takeNextBatch();
+      expect(headBatch?.offset, 0);
+      expect(headBatch?.bytes.length, kChunk);
+      expect(skewed.nextInOrderOffset, kChunk * 3);
+
+      final tail2 = skewed.takeNextBatch();
+      expect(tail2?.offset, kChunk * 3);
+      expect(skewed.nextInOrderOffset, kChunk * 4);
+    });
+
+    test('4-stream 512 KB pipelined TLS transfer delivers >3.2 MB file byte-identically', () async {
+      const size = 3 * 1024 * 1024 + 256 * 1024;
+      final sourceBytes = Uint8List(size);
+      for (int i = 0; i < size; i++) {
+        sourceBytes[i] = (i * 7 + (i >> 9)) & 0xFF;
+      }
+      final srcFile = File(p.join(sendDir.path, 'large_pipeline.bin'));
+      await srcFile.writeAsBytes(sourceBytes);
+
+      final receiver = ReceiverController();
+      final listening = Completer<int>();
+      final stopped = Completer<void>();
+      final done = Completer<void>();
+      final updates = <TransferModel>[];
+
+      unawaited(
+        receiver.startReceiver(
+          saveDirectory: receiveDir.path,
+          deviceName: 'PipeRx',
+          port: 0,
+          tlsContext: rxIdentity.createServerContext(),
+          localIdentity: rxIdentity,
+          onListening: (boundPort) {
+            if (!listening.isCompleted) listening.complete(boundPort);
+          },
+          freeBytesProvider: () async => 1024 * 1024 * 1024,
+          onUpdate: (m) {
+            updates.add(m);
+            if (m.phase == TransferPhase.done && !done.isCompleted) {
+              done.complete();
+            }
+          },
+          onRequestAuth: (_, _, _, _) async => false,
+          onRequestAuthV2: (req) async => req.isIdentityVerified,
+          onDone: () {
+            if (!stopped.isCompleted) stopped.complete();
+          },
+        ),
+      );
+
+      final port = await listening.future.timeout(const Duration(seconds: 5));
+      try {
+        await SenderController().sendData(
+          paths: [srcFile.path],
+          targetIp: '127.0.0.1',
+          port: port,
+          targetDeviceName: 'PipeRx',
+          senderDeviceName: 'PipeTx',
+          useTls: true,
+          expectedPeerFingerprint: rxIdentity.certFingerprint,
+          localIdentity: txIdentity,
+          onUpdate: (_) {},
+        );
+        await done.future.timeout(const Duration(seconds: 15));
+      } finally {
+        receiver.stop();
+        await stopped.future.timeout(const Duration(seconds: 5));
+      }
+
+      final receivedFile = File(p.join(receiveDir.path, 'large_pipeline.bin'));
+      expect(await receivedFile.exists(), isTrue);
+      expect(await receivedFile.readAsBytes(), equals(sourceBytes));
+      final partials = receiveDir
+          .listSync()
+          .where((e) => e.path.endsWith('.daphq-partial'))
+          .toList();
+      expect(partials, isEmpty);
+    });
+
+    test(
+      'reverse-connect TLS auth rejection stops 4-stream sender immediately with TransferPhase.cancelled',
+      () async {
+        final payload = Uint8List.fromList(List<int>.generate(128 * 1024, (i) => i & 0xFF));
+        final file = File(p.join(sendDir.path, 'reject_me.bin'));
+        await file.writeAsBytes(payload);
+
+        final sender = SenderController();
+        final reverseListening = Completer<int>();
+        final updates = <TransferModel>[];
+
+        final sendFuture = sender.sendData(
+          paths: [file.path],
+          targetIp: '127.0.0.1',
+          port: 0,
+          targetDeviceName: 'WinRx',
+          senderDeviceName: 'AndroidTx',
+          useTls: true,
+          localIdentity: txIdentity,
+          expectedPeerFingerprint: rxIdentity.certFingerprint,
+          parallelStreams: 4,
+          listenForReverseReceiver: true,
+          onReverseListening: (boundPort) {
+            if (!reverseListening.isCompleted) {
+              reverseListening.complete(boundPort);
+            }
+          },
+          onUpdate: updates.add,
+        );
+
+        final listenPort = await reverseListening.future.timeout(const Duration(seconds: 5));
+        final sendExpectation = expectLater(
+          sendFuture.timeout(const Duration(seconds: 3)),
+          throwsA(
+            isA<TransferSendException>()
+                .having((e) => e.phase, 'phase', TransferPhase.cancelled)
+                .having((e) => e.message.toLowerCase(), 'message', contains('rejected')),
+          ),
+        );
+        final receiver = ReceiverController();
+
+        await receiver.acceptReverseTransfer(
+          senderIp: '127.0.0.1',
+          port: listenPort,
+          saveDirectory: receiveDir.path,
+          deviceName: 'WinRx',
+          useTls: true,
+          expectedSenderFingerprint: txIdentity.certFingerprint,
+          localIdentity: rxIdentity,
+          freeBytesProvider: () async => 1024 * 1024 * 1024,
+          onUpdate: (_) {},
+          onRequestAuth: (_, _, _, _) async => false,
+          onRequestAuthV2: (_) async => false,
+        );
+
+        await sendExpectation;
+        expect(updates.last.phase, TransferPhase.cancelled);
+        expect(File(p.join(receiveDir.path, 'reject_me.bin')).existsSync(), isFalse);
+      },
+    );
+
+    test(
+      'mid-transfer cancelActiveTransfer stops 4-stream TLS reverse sender immediately',
+      () async {
+        const size = 4 * 1024 * 1024;
+        final payload = Uint8List.fromList(
+          List<int>.generate(size, (i) => (i * 13) & 0xFF),
+        );
+        final file = File(p.join(sendDir.path, 'cancel_mid_stream.bin'));
+        await file.writeAsBytes(payload);
+
+        final sender = SenderController();
+        final reverseListening = Completer<int>();
+        final startedReceiving = Completer<void>();
+        final senderUpdates = <TransferModel>[];
+
+        final sendFuture = sender.sendData(
+          paths: [file.path],
+          targetIp: '127.0.0.1',
+          port: 0,
+          targetDeviceName: 'WinRx',
+          senderDeviceName: 'AndroidTx',
+          useTls: true,
+          localIdentity: txIdentity,
+          expectedPeerFingerprint: rxIdentity.certFingerprint,
+          parallelStreams: 4,
+          listenForReverseReceiver: true,
+          onReverseListening: (boundPort) {
+            if (!reverseListening.isCompleted) {
+              reverseListening.complete(boundPort);
+            }
+          },
+          onUpdate: senderUpdates.add,
+        );
+
+        final listenPort = await reverseListening.future.timeout(const Duration(seconds: 5));
+        final receiver = ReceiverController();
+
+        final acceptFuture = receiver.acceptReverseTransfer(
+          senderIp: '127.0.0.1',
+          port: listenPort,
+          saveDirectory: receiveDir.path,
+          deviceName: 'WinRx',
+          useTls: true,
+          expectedSenderFingerprint: txIdentity.certFingerprint,
+          localIdentity: rxIdentity,
+          freeBytesProvider: () async => 1024 * 1024 * 1024,
+          onUpdate: (m) {
+            if (m.phase == TransferPhase.receiving && !startedReceiving.isCompleted) {
+              startedReceiving.complete();
+            }
+          },
+          onRequestAuth: (_, _, _, _) async => true,
+          onRequestAuthV2: (_) async => true,
+        );
+
+        await startedReceiving.future.timeout(const Duration(seconds: 5));
+        receiver.cancelActiveTransfer(reason: 'Cancelled by Receiver');
+
+        await expectLater(
+          sendFuture.timeout(const Duration(seconds: 3)),
+          throwsA(
+            isA<TransferSendException>().having(
+              (e) => e.phase,
+              'phase',
+              TransferPhase.cancelled,
+            ),
+          ),
+        );
+        await acceptFuture.timeout(const Duration(seconds: 3));
+        expect(senderUpdates.last.phase, TransferPhase.cancelled);
+        expect(
+          File(p.join(receiveDir.path, 'cancel_mid_stream.bin')).existsSync(),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'reverse READY handshake echoes directFrequencyMhz and forward mid-stream cancel stops sender',
+      () async {
+        const size = 3 * 1024 * 1024;
+        final payload = Uint8List.fromList(
+          List<int>.generate(size, (i) => (i * 19) & 0xFF),
+        );
+        final okFile = File(p.join(sendDir.path, 'freq_echo.bin'));
+        await okFile.writeAsBytes(payload.sublist(0, 65536));
+
+        final sender = SenderController();
+        final reverseListening = Completer<int>();
+        final reportedFreqs = <int>[];
+
+        final sendFuture = sender.sendData(
+          paths: [okFile.path],
+          targetIp: '127.0.0.1',
+          port: 0,
+          targetDeviceName: 'WinRxFreq',
+          senderDeviceName: 'AndroidTxFreq',
+          useTls: true,
+          localIdentity: txIdentity,
+          expectedPeerFingerprint: rxIdentity.certFingerprint,
+          parallelStreams: 4,
+          listenForReverseReceiver: true,
+          onReverseListening: (boundPort) {
+            if (!reverseListening.isCompleted) {
+              reverseListening.complete(boundPort);
+            }
+          },
+          onPeerReportedFrequency: reportedFreqs.add,
+          onUpdate: (_) {},
+        );
+
+        final listenPort = await reverseListening.future.timeout(const Duration(seconds: 5));
+        final receiver = ReceiverController();
+        await receiver.acceptReverseTransfer(
+          senderIp: '127.0.0.1',
+          port: listenPort,
+          saveDirectory: receiveDir.path,
+          deviceName: 'WinRxFreq',
+          useTls: true,
+          expectedSenderFingerprint: txIdentity.certFingerprint,
+          localIdentity: rxIdentity,
+          directFrequencyMhz: 5745,
+          freeBytesProvider: () async => 1024 * 1024 * 1024,
+          onUpdate: (_) {},
+          onRequestAuth: (_, _, _, _) async => true,
+          onRequestAuthV2: (_) async => true,
+        );
+        await sendFuture.timeout(const Duration(seconds: 5));
+        expect(reportedFreqs, contains(5745));
+
+        // Now verify forward 4-stream TLS mid-transfer cancelActiveTransfer stops sender immediately.
+        final largeFile = File(p.join(sendDir.path, 'forward_cancel_mid.bin'));
+        await largeFile.writeAsBytes(payload);
+        final fwdReceiver = ReceiverController();
+        final listening = Completer<int>();
+        final receivingStarted = Completer<void>();
+        final stopped = Completer<void>();
+
+        unawaited(
+          fwdReceiver.startReceiver(
+            saveDirectory: receiveDir.path,
+            deviceName: 'AndroidRx',
+            port: 0,
+            tlsContext: rxIdentity.createServerContext(),
+            localIdentity: rxIdentity,
+            onListening: (p) {
+              if (!listening.isCompleted) listening.complete(p);
+            },
+            freeBytesProvider: () async => 1024 * 1024 * 1024,
+            onUpdate: (m) {
+              if (m.phase == TransferPhase.receiving && !receivingStarted.isCompleted) {
+                receivingStarted.complete();
+              }
+            },
+            onRequestAuth: (_, _, _, _) async => true,
+            onRequestAuthV2: (_) async => true,
+            onDone: () {
+              if (!stopped.isCompleted) stopped.complete();
+            },
+          ),
+        );
+
+        final fwdPort = await listening.future.timeout(const Duration(seconds: 5));
+        try {
+          final fwdSender = SenderController();
+          final fwdSendFuture = fwdSender.sendData(
+            paths: [largeFile.path],
+            targetIp: '127.0.0.1',
+            port: fwdPort,
+            targetDeviceName: 'AndroidRx',
+            senderDeviceName: 'WinTx',
+            useTls: true,
+            expectedPeerFingerprint: rxIdentity.certFingerprint,
+            localIdentity: txIdentity,
+            parallelStreams: 4,
+            onUpdate: (_) {},
+          );
+          await receivingStarted.future.timeout(const Duration(seconds: 5));
+          final fwdExpectation = expectLater(
+            fwdSendFuture.timeout(const Duration(seconds: 3)),
+            throwsA(
+              isA<TransferSendException>().having(
+                (e) => e.phase,
+                'phase',
+                TransferPhase.cancelled,
+              ),
+            ),
+          );
+          fwdReceiver.cancelActiveTransfer(reason: 'Cancelled by Receiver');
+          await fwdExpectation;
+          await fwdReceiver.waitForPendingRejection().timeout(const Duration(seconds: 2));
+        } finally {
+          fwdReceiver.stop();
+          await stopped.future.timeout(const Duration(seconds: 5));
+        }
+      },
+    );
+  });
+
+  group('bindTransferServer resilient fallback', () {
+    Future<int> reserveFreeTcpPort() async {
+      final probe = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
+      final port = probe.port;
+      await probe.close();
+      return port;
+    }
+
+    test('falls back immediately to alternate TCP port when primary throws OS error 10013', () async {
+      final fallbackPort = await reserveFreeTcpPort();
+      final attempts = <int>[];
+
+      final bound = await bindTransferServer(
+        port: 62004,
+        fallbackPorts: [fallbackPort],
+        retryDelay: const Duration(milliseconds: 10),
+        maxAttempts: 2,
+        isCancelled: () => false,
+        onAttempt: (attempt, _) => attempts.add(attempt),
+        plainBinder: (addr, port, {bool shared = true}) async {
+          if (port == 62004) {
+            throw const SocketException(
+              'Excluded by Windows NAT',
+              osError: OSError('WSAEACCES', 10013),
+            );
+          }
+          return ServerSocket.bind(addr, port, shared: shared);
+        },
+      );
+
+      expect(bound.plain, isNotNull);
+      addTearDown(() => bound.plain!.close());
+      expect(bound.plain!.port, fallbackPort);
+      expect(attempts, [1]);
+
+      final client = await Socket.connect('127.0.0.1', fallbackPort);
+      await client.close();
+    });
+
+    test('falls back immediately to alternate TCP port when primary throws OS error 10048', () async {
+      final fallbackPort = await reserveFreeTcpPort();
+
+      final bound = await bindTransferServer(
+        port: 62004,
+        fallbackPorts: [fallbackPort],
+        retryDelay: const Duration(milliseconds: 10),
+        maxAttempts: 2,
+        isCancelled: () => false,
+        onAttempt: (_, _) {},
+        plainBinder: (addr, port, {bool shared = true}) async {
+          if (port == 62004) {
+            throw const SocketException(
+              'Address already in use',
+              osError: OSError('WSAEADDRINUSE', 10048),
+            );
+          }
+          return ServerSocket.bind(addr, port, shared: shared);
+        },
+      );
+
+      expect(bound.plain, isNotNull);
+      addTearDown(() => bound.plain!.close());
+      expect(bound.plain!.port, fallbackPort);
     });
   });
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
@@ -5,6 +6,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:window_manager/window_manager.dart';
 import '../core/app_colors.dart';
 import '../core/responsive_utils.dart';
+import '../main.dart';
 import '../services/update_service.dart';
 import '../core/app_constants.dart';
 import 'widgets/common/info_dialog.dart';
@@ -27,20 +29,53 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   DialogRoute<bool>? _authDialogRoute;
   AuthRequest? _activeAuthRequest;
+  DateTime? _lastWindowsResumeRefresh;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       UpdateService.checkForUpdates(context);
+      if (Platform.isWindows) {
+        _lastWindowsResumeRefresh = DateTime.now();
+      }
+      final cubit = context.read<TransferCubit>();
+      cubit.refreshCapabilities();
+      if (Platform.isAndroid) {
+        unawaited(
+          StartupPermissionCoordinator.requestOnceAfterFirstFrame().then((_) {
+            if (mounted) {
+              cubit.refreshCapabilities();
+            }
+          }),
+        );
+      }
     });
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      if (Platform.isWindows) {
+        final now = DateTime.now();
+        final prev = _lastWindowsResumeRefresh;
+        if (prev != null && now.difference(prev) < const Duration(seconds: 5)) {
+          return;
+        }
+        _lastWindowsResumeRefresh = now;
+      }
+      context.read<TransferCubit>().refreshCapabilities();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _authDialogRoute = null;
     _activeAuthRequest = null;
     super.dispose();
@@ -549,7 +584,6 @@ class _HomePageState extends State<HomePage> {
               senderName: req.senderName,
               fileCount: req.fileCount,
               formattedSize: req.formattedSize,
-              sasCode: req.sasCode,
               isTls: req.isTls,
               isFingerprintMismatch: req.isFingerprintMismatch,
               canTrustPeer:

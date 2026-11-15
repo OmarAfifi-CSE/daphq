@@ -21,11 +21,19 @@ class _V2FileTarget {
   final int targetSize;
   final void Function(String path) onPartialCreated;
   final void Function(String path) onPartialFinalized;
+  final void Function(int bytes)? onBytesWritten;
+  final bool Function()? shouldFallbackOutOfOrder;
+  final void Function(Object error)? onWriteError;
 
   int bytesReceived = 0;
   final List<({int start, int end})> _writtenRanges = <({int start, int end})>[];
+  final V2OrderedChunkCoalescer _coalescer = V2OrderedChunkCoalescer();
   RandomAccessFile? _raf;
-  Future<void> _writeChain = Future<void>.value();
+  int? _lastWriteCursor;
+  bool _isPumping = false;
+  bool _hasNewInput = false;
+  Completer<void>? _pumpCompleter;
+  Object? _writeError;
   bool _dirEnsured = false;
   bool _finalized = false;
   bool _aborted = false;
@@ -37,7 +45,16 @@ class _V2FileTarget {
     required this.targetSize,
     required this.onPartialCreated,
     required this.onPartialFinalized,
+    this.onBytesWritten,
+    this.shouldFallbackOutOfOrder,
+    this.onWriteError,
   });
+
+  bool get _isAllBytesRecorded =>
+      bytesReceived == targetSize &&
+      _writtenRanges.length == 1 &&
+      _writtenRanges.first.start == 0 &&
+      _writtenRanges.first.end == targetSize;
 
   void _recordRangeAndMerge(int start, int length) {
     final int end = start + length;
@@ -68,57 +85,130 @@ class _V2FileTarget {
     bytesReceived += length;
   }
 
-  Future<void> enqueueChunk(int offset, Uint8List data) {
-    if (_aborted || _finalized) {
-      return Future<void>.value();
+  void validateAndRecordChunk(int offset, int length) {
+    if (_aborted || _finalized || length == 0) return;
+    if (_writeError != null) {
+      throw _writeError!;
     }
-    if (data.isEmpty) {
-      return Future<void>.value();
-    }
-    if (offset < 0 || offset + data.length > targetSize) {
+    if (offset < 0 || offset + length > targetSize) {
       throw const FormatException('Chunk out of file bounds');
     }
-    _recordRangeAndMerge(offset, data.length);
+    _recordRangeAndMerge(offset, length);
     if (bytesReceived > targetSize) {
       throw const FormatException('Received bytes exceed declared file size');
     }
-    final bool isComplete = bytesReceived == targetSize &&
-        _writtenRanges.length == 1 &&
-        _writtenRanges.first.start == 0 &&
-        _writtenRanges.first.end == targetSize;
-
-    _writeChain = _writeChain.then((_) async {
-      if (_aborted || _finalized) return;
-      if (!_dirEnsured) {
-        await Directory(p.dirname(targetPath)).create(recursive: true);
-        _dirEnsured = true;
-      }
-      if (_raf == null) {
-        onPartialCreated(partialPath);
-        _raf = await File(partialPath).open(mode: FileMode.write);
-      }
-      await _raf!.setPosition(offset);
-      await _raf!.writeFrom(data);
-
-      if (isComplete) {
-        await _raf!.flush();
-        await _raf!.close();
-        _raf = null;
-        await File(partialPath).rename(targetPath);
-        _finalized = true;
-        onPartialFinalized(partialPath);
-      }
-    });
-
-    return _writeChain;
   }
 
-  Future<void> awaitPendingWrites() => _writeChain;
+  void enqueueValidatedChunk(int offset, Uint8List data) {
+    if (_aborted || _finalized || data.isEmpty) return;
+    if (_writeError != null) {
+      throw _writeError!;
+    }
+    _coalescer.enqueue(offset, data);
+    _hasNewInput = true;
+    _scheduleWritePump();
+  }
+
+  void _scheduleWritePump() {
+    if (_isPumping || _aborted || _finalized) return;
+    _isPumping = true;
+    final completer = Completer<void>();
+    _pumpCompleter = completer;
+    unawaited(_drainWrites(completer));
+  }
+
+  Future<void> _drainWrites(Completer<void> completer) async {
+    try {
+      while (!_aborted && !_finalized) {
+        _hasNewInput = false;
+        final bool allArrived = _isAllBytesRecorded;
+        final batch = _coalescer.takeNextPartsList(
+          allowOutOfOrderFallback:
+              allArrived || (shouldFallbackOutOfOrder?.call() ?? false),
+        );
+        if (batch == null) {
+          if (allArrived && _coalescer.isEmpty) {
+            if (_raf != null) {
+              await _raf!.flush();
+              await _raf!.close();
+              _raf = null;
+              await File(partialPath).rename(targetPath);
+              _finalized = true;
+              onPartialFinalized(partialPath);
+            }
+            break;
+          }
+          break;
+        }
+
+        if (!_dirEnsured) {
+          await Directory(p.dirname(targetPath)).create(recursive: true);
+          _dirEnsured = true;
+        }
+        if (_raf == null) {
+          onPartialCreated(partialPath);
+          _raf = await File(partialPath).open(mode: FileMode.write);
+          _lastWriteCursor = 0;
+        }
+        if (_lastWriteCursor != batch.offset) {
+          await _raf!.setPosition(batch.offset);
+        }
+        for (final part in batch.parts) {
+          await _raf!.writeFrom(part);
+        }
+        _lastWriteCursor = batch.offset + batch.totalBytes;
+        onBytesWritten?.call(batch.totalBytes);
+      }
+    } catch (e) {
+      _writeError ??= e;
+      onWriteError?.call(e);
+    } finally {
+      _isPumping = false;
+      if (!completer.isCompleted) {
+        completer.complete();
+      }
+      if (_hasNewInput &&
+          !_aborted &&
+          !_finalized &&
+          _writeError == null &&
+          !_coalescer.isEmpty) {
+        _scheduleWritePump();
+      }
+    }
+  }
+
+  Future<void> awaitPendingWrites() async {
+    while (true) {
+      final pending = _pumpCompleter;
+      if (pending != null) {
+        await pending.future;
+      }
+      if (_writeError != null) {
+        throw _writeError!;
+      }
+      if (!_isPumping && _coalescer.isEmpty) {
+        break;
+      }
+      if (!_isPumping && !_coalescer.isEmpty && !_aborted && !_finalized) {
+        _scheduleWritePump();
+      } else {
+        break;
+      }
+    }
+    if (_writeError != null) {
+      throw _writeError!;
+    }
+  }
 
   Future<void> abortAndCleanup() async {
     _aborted = true;
+    final bufferedBytes = _coalescer.pendingBytes;
+    _coalescer.clear();
+    if (bufferedBytes > 0) {
+      onBytesWritten?.call(bufferedBytes);
+    }
     try {
-      await _writeChain;
+      await _pumpCompleter?.future;
     } catch (_) {}
     try {
       await _raf?.close();
@@ -135,6 +225,9 @@ class _V2FileTarget {
 }
 
 class _V2ReceiveSession {
+  static const int maxPendingWriteBytes = 32 * 1024 * 1024;
+  static const int outOfOrderFallbackBytes = 2 * 1024 * 1024;
+
   final String sessionId;
   final int expectedStreams;
   final List<_V2FileTarget> fileTargets;
@@ -145,12 +238,19 @@ class _V2ReceiveSession {
 
   final Completer<void> _allWorkersDone = Completer<void>();
   final List<Socket> _workerSockets = <Socket>[];
+  final List<Completer<void>> _budgetWaiters = <Completer<void>>[];
+  ServerSocket? fastDataServer;
+  StreamSubscription<Socket>? fastDataSub;
+  int _pendingWriteBytes = 0;
   int _completedWorkers = 0;
   int _connectedWorkers = 0;
   int receivedBytes = 0;
   bool aborted = false;
   bool completedCleanly = false;
   Object? _firstWorkerError;
+
+  bool get shouldFallbackOutOfOrder =>
+      _pendingWriteBytes >= outOfOrderFallbackBytes;
 
   _V2ReceiveSession({
     required this.sessionId,
@@ -160,7 +260,57 @@ class _V2ReceiveSession {
     required this.chunkTimeout,
     required this.isCancelled,
     required this.onProgress,
-  });
+  }) {
+    // Keep _allWorkersDone observed so abort() never leaks an uncaught Zone error
+    // if triggered before awaitWorkers() or during catch-block cleanup.
+    _allWorkersDone.future.catchError((_) {});
+  }
+
+  Future<void> _reserveWriteBudget(int deltaBytes) async {
+    while (!aborted &&
+        _firstWorkerError == null &&
+        _pendingWriteBytes >= maxPendingWriteBytes) {
+      final waiter = Completer<void>();
+      _budgetWaiters.add(waiter);
+      await waiter.future;
+    }
+    if (aborted || _firstWorkerError != null) return;
+    _pendingWriteBytes += deltaBytes;
+  }
+
+  void releaseWriteBudget(int deltaBytes) {
+    _pendingWriteBytes = (_pendingWriteBytes - deltaBytes).clamp(0, 1 << 30);
+    if (_pendingWriteBytes < maxPendingWriteBytes && _budgetWaiters.isNotEmpty) {
+      for (final waiter in _budgetWaiters.toList()) {
+        if (!waiter.isCompleted) waiter.complete();
+      }
+      _budgetWaiters.clear();
+    }
+  }
+
+  void notifyWriteError(Object error) {
+    _firstWorkerError ??= error;
+    for (final waiter in _budgetWaiters.toList()) {
+      if (!waiter.isCompleted) waiter.complete();
+    }
+    _budgetWaiters.clear();
+    if (!_allWorkersDone.isCompleted) {
+      _allWorkersDone.completeError(error);
+    }
+  }
+
+  Future<void> closeFastDataServer() async {
+    final sub = fastDataSub;
+    fastDataSub = null;
+    final srv = fastDataServer;
+    fastDataServer = null;
+    try {
+      await sub?.cancel();
+    } catch (_) {}
+    try {
+      await srv?.close();
+    } catch (_) {}
+  }
 
   Future<void> runWorkerConnection({
     required Socket socket,
@@ -178,21 +328,34 @@ class _V2ReceiveSession {
         reader: reader,
         chunkTimeout: chunkTimeout,
         isCancelled: () => aborted || isCancelled(),
-        onChunk: (int fileIndex, int offset, Uint8List payload) async {
+        onChunk: (int fileIndex, int offset, Uint8List payload) {
           if (fileIndex < 0 || fileIndex >= fileTargets.length) {
             throw const FormatException('Invalid fileIndex in frame');
           }
           final target = fileTargets[fileIndex];
+          target.validateAndRecordChunk(offset, payload.length);
           receivedBytes += payload.length;
-          await target.enqueueChunk(offset, payload);
-          onProgress(payload.length, p.basename(target.targetPath));
+          if (!aborted &&
+              _firstWorkerError == null &&
+              _pendingWriteBytes < maxPendingWriteBytes) {
+            _pendingWriteBytes += payload.length;
+            target.enqueueValidatedChunk(offset, payload);
+            onProgress(payload.length, p.basename(target.targetPath));
+            return null;
+          }
+          return () async {
+            await _reserveWriteBudget(payload.length);
+            if (aborted || _firstWorkerError != null) {
+              if (_firstWorkerError != null) throw _firstWorkerError!;
+              return;
+            }
+            target.enqueueValidatedChunk(offset, payload);
+            onProgress(payload.length, p.basename(target.targetPath));
+          }();
         },
       );
     } catch (e) {
-      _firstWorkerError ??= e;
-      if (!_allWorkersDone.isCompleted) {
-        _allWorkersDone.completeError(e);
-      }
+      notifyWriteError(e);
     } finally {
       await reader.cancel();
       try {
@@ -228,6 +391,7 @@ class _V2ReceiveSession {
       await _allWorkersDone.future;
     } finally {
       connectWatchdog?.cancel();
+      await closeFastDataServer();
     }
   }
 
@@ -247,6 +411,11 @@ class _V2ReceiveSession {
 
   Future<void> abort() async {
     aborted = true;
+    await closeFastDataServer();
+    for (final waiter in _budgetWaiters.toList()) {
+      if (!waiter.isCompleted) waiter.complete();
+    }
+    _budgetWaiters.clear();
     for (final ws in _workerSockets.toList()) {
       try {
         ws.destroy();
@@ -273,6 +442,10 @@ class ReceiverController {
   ServerSocket? _plainServer;
   SecureServerSocket? _secureServer;
   Socket? _activeClient;
+  Socket? _closingRejectionSocket;
+  Future<void> _pendingRejectionFuture = Future<void>.value();
+
+  Future<void> waitForPendingRejection() => _pendingRejectionFuture;
   BufferedSocketReader? _activeClientReader;
   IOSink? _activeSink;
   String? _activePartialPath;
@@ -309,6 +482,10 @@ class ReceiverController {
     SecurityContext? tlsContext,
     DeviceIdentity? localIdentity,
     Future<bool> Function(TransferAuthRequest request)? onRequestAuthV2,
+    Future<Map<String, dynamic>> Function(DirectControlRequest request)?
+        onDirectControlRequest,
+    int? Function()? directFrequencyProvider,
+    void Function(int frequencyMhz)? onPeerReportedFrequency,
     int maxParallelStreams = 4,
   }) async {
     _isCancelled = false;
@@ -326,6 +503,9 @@ class ReceiverController {
       try {
         bound = await bindTransferServer(
           port: port,
+          fallbackPorts: port == AppConstants.transferPort
+              ? AppConstants.transferFallbackPorts
+              : const <int>[],
           retryDelay: const Duration(seconds: 1),
           maxAttempts: 5,
           isCancelled: () => _isCancelled,
@@ -374,10 +554,13 @@ class ReceiverController {
             onUpdate: onUpdate,
             onRequestAuth: onRequestAuth,
             onRequestAuthV2: onRequestAuthV2,
+            onDirectControlRequest: onDirectControlRequest,
             onAuthDismissed: onAuthDismissed,
             freeBytesProvider: freeBytesProvider,
             localIdentity: localIdentity,
             isTlsConnection: tlsContext != null,
+            directFrequencyProvider: directFrequencyProvider,
+            onPeerReportedFrequency: onPeerReportedFrequency,
             maxParallelStreams: maxParallelStreams,
           ),
         );
@@ -426,6 +609,8 @@ class ReceiverController {
     String? reverseAuthToken,
     DeviceIdentity? localIdentity,
     Future<int?> Function()? freeBytesProvider,
+    int? directFrequencyMhz,
+    void Function(int frequencyMhz)? onPeerReportedFrequency,
     int maxParallelStreams = 4,
     void Function()? onDone,
   }) async {
@@ -504,7 +689,7 @@ class ReceiverController {
       if (_hasActiveTransfer || _activeClient != null || _activeSink != null) {
         bailedBecauseBusy = true;
         await reader.cancel();
-        controlSocket.destroy();
+        await _sendRejectionAndClose(controlSocket, reason: "BUSY");
         return;
       }
 
@@ -529,6 +714,9 @@ class ReceiverController {
         freeBytesProvider: freeBytesProvider,
         localIdentity: localIdentity,
         isTlsConnection: useTls,
+        directFrequencyProvider:
+            directFrequencyMhz != null ? () => directFrequencyMhz : null,
+        onPeerReportedFrequency: onPeerReportedFrequency,
         maxParallelStreams: maxParallelStreams,
         reverseConnectTarget: (
           ip: senderIp,
@@ -565,10 +753,14 @@ class ReceiverController {
     required Function(TransferModel) onUpdate,
     required Future<bool> Function(String, String, int, double) onRequestAuth,
     required Future<bool> Function(TransferAuthRequest)? onRequestAuthV2,
+    required Future<Map<String, dynamic>> Function(DirectControlRequest)?
+        onDirectControlRequest,
     required void Function()? onAuthDismissed,
     required Future<int?> Function()? freeBytesProvider,
     required DeviceIdentity? localIdentity,
     required bool isTlsConnection,
+    int? Function()? directFrequencyProvider,
+    void Function(int frequencyMhz)? onPeerReportedFrequency,
     required int maxParallelStreams,
   }) async {
     try {
@@ -606,6 +798,18 @@ class ReceiverController {
         return;
       }
 
+      if (header["role"] == "direct_control") {
+        await _handleDirectControlSocket(
+          client: client,
+          reader: reader,
+          header: header,
+          localIdentity: localIdentity,
+          isTlsConnection: isTlsConnection,
+          onDirectControlRequest: onDirectControlRequest,
+        );
+        return;
+      }
+
       if (_hasActiveTransfer || _activeClient != null || _activeSink != null) {
         try {
           client.write(
@@ -639,6 +843,8 @@ class ReceiverController {
         freeBytesProvider: freeBytesProvider,
         localIdentity: localIdentity,
         isTlsConnection: isTlsConnection,
+        directFrequencyProvider: directFrequencyProvider,
+        onPeerReportedFrequency: onPeerReportedFrequency,
         maxParallelStreams: maxParallelStreams,
       );
     } on FormatException catch (e) {
@@ -665,6 +871,124 @@ class ReceiverController {
     }
   }
 
+  static bool _verifySignedPeerProof({
+    required String sessionOrRequestId,
+    required String? senderPeerId,
+    required String? senderFp,
+    required String? senderCertPem,
+    required String? senderProof,
+    required String? serverFpForProof,
+  }) {
+    if (sessionOrRequestId.isEmpty ||
+        senderPeerId == null ||
+        senderPeerId.isEmpty ||
+        senderFp == null ||
+        senderFp.length != 64 ||
+        senderCertPem == null ||
+        senderProof == null ||
+        serverFpForProof == null ||
+        serverFpForProof.isEmpty) {
+      return false;
+    }
+    final String msg = DeviceIdentityService.buildAuthProofMessage(
+      sessionId: sessionOrRequestId,
+      senderPeerId: senderPeerId,
+      senderFingerprint: senderFp,
+      serverFingerprint: serverFpForProof,
+    );
+    return DeviceIdentityService.verifyAuthProof(
+      senderCertPem: senderCertPem,
+      expectedFingerprint: senderFp,
+      message: msg,
+      signatureB64: senderProof,
+    );
+  }
+
+  Future<void> _handleDirectControlSocket({
+    required Socket client,
+    required BufferedSocketReader reader,
+    required Map<String, dynamic> header,
+    required DeviceIdentity? localIdentity,
+    required bool isTlsConnection,
+    required Future<Map<String, dynamic>> Function(DirectControlRequest)?
+        onDirectControlRequest,
+  }) async {
+    Future<void> writeJsonAndClose(Map<String, dynamic> body) async {
+      try {
+        client.write('${jsonEncode(body)}\n');
+        await client.flush();
+      } catch (_) {}
+      try {
+        await reader.cancel();
+      } catch (_) {}
+      client.destroy();
+    }
+
+    final String requestId = (header['requestId'] as String?) ?? '';
+    final String action = (header['action'] as String?) ?? '';
+    final String? senderPeerId =
+        (header['peerId'] as String?)?.trim().toLowerCase();
+    final String? senderFp =
+        (header['senderFp'] as String?)?.trim().toLowerCase();
+    final String? senderCertPem = header['senderCertPem'] as String?;
+    final String? senderProof = header['senderProof'] as String?;
+    final String senderDeviceName =
+        ((header['peerName'] as String?)?.trim().isNotEmpty ?? false)
+            ? (header['peerName'] as String).trim()
+            : 'Unknown Device';
+
+    final bool verified = isTlsConnection &&
+        localIdentity != null &&
+        _verifySignedPeerProof(
+          sessionOrRequestId: requestId,
+          senderPeerId: senderPeerId,
+          senderFp: senderFp,
+          senderCertPem: senderCertPem,
+          senderProof: senderProof,
+          serverFpForProof: localIdentity.certFingerprint.trim().toLowerCase(),
+        );
+
+    if (!verified || requestId.isEmpty || action.isEmpty) {
+      await writeJsonAndClose({'ok': false, 'error': 'unverifiedSender'});
+      return;
+    }
+
+    if (onDirectControlRequest == null) {
+      await writeJsonAndClose({'ok': false, 'error': 'unsupported'});
+      return;
+    }
+
+    if ((_hasActiveTransfer || _activeClient != null || _activeSink != null) &&
+        action != 'teardown') {
+      await writeJsonAndClose({'ok': false, 'error': 'busy'});
+      return;
+    }
+
+    final req = DirectControlRequest(
+      requestId: requestId,
+      senderIp: client.remoteAddress.address,
+      senderPeerId: senderPeerId!,
+      senderDeviceName: senderDeviceName,
+      senderFingerprint: senderFp,
+      action: action,
+      ssid: header['ssid'] as String?,
+      psk: header['psk'] as String?,
+      hostIp: header['hostIp'] as String?,
+      port: (header['port'] as num?)?.toInt() ?? 62004,
+      useReverseConnect: header['reverseConnect'] == true,
+      frequencyMhz: (header['frequencyMhz'] as num?)?.toInt(),
+      reverseToken: header['reverseToken'] as String?,
+      isIdentityVerified: true,
+    );
+
+    try {
+      final response = await onDirectControlRequest(req);
+      await writeJsonAndClose(response);
+    } catch (e) {
+      await writeJsonAndClose({'ok': false, 'error': e.toString()});
+    }
+  }
+
   Future<void> _handleTransferSession({
     required Socket client,
     required BufferedSocketReader reader,
@@ -680,6 +1004,8 @@ class ReceiverController {
     required Future<int?> Function()? freeBytesProvider,
     required DeviceIdentity? localIdentity,
     required bool isTlsConnection,
+    int? Function()? directFrequencyProvider,
+    void Function(int frequencyMhz)? onPeerReportedFrequency,
     required int maxParallelStreams,
     ({
       String ip,
@@ -701,6 +1027,10 @@ class ReceiverController {
       final List<Future<void>> closeFutures = [];
 
       lastReceivedMetadata = metadata;
+      final int? metaFreqMhz = (metadata["freqMhz"] as num?)?.toInt();
+      if (metaFreqMhz != null && metaFreqMhz > 0) {
+        onPeerReportedFrequency?.call(metaFreqMhz);
+      }
       originalName = metadata["fileName"]?.toString();
       _currentSenderDeviceName =
           metadata["senderDeviceName"]?.toString() ?? "the other device";
@@ -738,9 +1068,6 @@ class ReceiverController {
           (metadata["senderFp"] as String?)?.trim().toLowerCase();
       final String? senderCertPem = metadata["senderCertPem"] as String?;
       final String? senderProof = metadata["senderProof"] as String?;
-      final String? sasCode = (localIdentity != null && senderFp != null)
-          ? localIdentity.computeSasWith(senderFp)
-          : null;
 
       bool isIdentityVerified = false;
       if (isTlsConnection && senderFp != null && senderFp.length == 64) {
@@ -757,27 +1084,14 @@ class ReceiverController {
                 reverseConnectTarget.expectedFingerprint?.trim().toLowerCase())
             : localIdentity?.certFingerprint.trim().toLowerCase();
 
-        bool proofOk = false;
-        if (senderPeerId != null &&
-            senderPeerId.isNotEmpty &&
-            senderCertPem != null &&
-            senderProof != null &&
-            serverFpForProof != null &&
-            serverFpForProof.isNotEmpty) {
-          final String sessionId = (metadata["sessionId"] as String?) ?? '';
-          final String msg = DeviceIdentityService.buildAuthProofMessage(
-            sessionId: sessionId,
-            senderPeerId: senderPeerId,
-            senderFingerprint: senderFp,
-            serverFingerprint: serverFpForProof,
-          );
-          proofOk = DeviceIdentityService.verifyAuthProof(
-            senderCertPem: senderCertPem,
-            expectedFingerprint: senderFp,
-            message: msg,
-            signatureB64: senderProof,
-          );
-        }
+        final bool proofOk = _verifySignedPeerProof(
+          sessionOrRequestId: (metadata["sessionId"] as String?) ?? '',
+          senderPeerId: senderPeerId,
+          senderFp: senderFp,
+          senderCertPem: senderCertPem,
+          senderProof: senderProof,
+          serverFpForProof: serverFpForProof,
+        );
 
         if (reverseConnectTarget != null) {
           final bool matchesReverseTls =
@@ -799,7 +1113,6 @@ class ReceiverController {
                     totalSizeMB: totalSizeMB,
                     senderPeerId: senderPeerId,
                     senderFingerprint: senderFp,
-                    sasCode: sasCode,
                     isTls: isTlsConnection,
                     isReverseConnect: reverseConnectTarget != null,
                     isIdentityVerified: isIdentityVerified,
@@ -820,11 +1133,7 @@ class ReceiverController {
       );
 
       if (!isAccepted || _isCancelled || _isActiveTransferCancelled) {
-        try {
-          client.write("${jsonEncode({"status": "REJECTED"})}\n");
-          await client.flush();
-        } catch (_) {}
-        client.destroy();
+        await _sendRejectionAndClose(client, backgroundLinger: true);
         isRejected = true;
         currentPhase = TransferPhase.idle;
         onUpdate(
@@ -850,11 +1159,11 @@ class ReceiverController {
       try {
         final int? freeBytes = await freeSpaceBytesFuture;
         if (freeBytes != null && freeBytes < totalExpectedBytes) {
-          client.write(
-            "${jsonEncode({"status": "REJECTED", "reason": "OUT_OF_SPACE"})}\n",
+          await _sendRejectionAndClose(
+            client,
+            reason: "OUT_OF_SPACE",
+            backgroundLinger: true,
           );
-          await client.flush();
-          client.destroy();
           isRejected = true;
           currentPhase = TransferPhase.idle;
           final freeMb = (freeBytes / 1024 / 1024).toStringAsFixed(1);
@@ -874,13 +1183,11 @@ class ReceiverController {
       try {
         _prepareTargetPaths(saveDirectory, metadata);
       } catch (_) {
-        try {
-          client.write(
-            "${jsonEncode({"status": "REJECTED", "reason": "INVALID_PATH"})}\n",
-          );
-          await client.flush();
-          client.destroy();
-        } catch (_) {}
+        await _sendRejectionAndClose(
+          client,
+          reason: "INVALID_PATH",
+          backgroundLinger: true,
+        );
         rethrow;
       }
 
@@ -895,8 +1202,7 @@ class ReceiverController {
           ? requestedStreams.clamp(1, maxParallelStreams)
           : 1;
 
-      int bytesSinceUpdate = 0;
-      DateTime lastTime = DateTime.now();
+      final speedTracker = TransferSpeedTracker();
 
       if (acceptedStreams > 1 && sessionId != null) {
         final List<_V2FileTarget> targets = <_V2FileTarget>[];
@@ -914,6 +1220,10 @@ class ReceiverController {
               targetSize: fileMeta["size"] as int,
               onPartialCreated: _activePartialPaths.add,
               onPartialFinalized: _activePartialPaths.remove,
+              onBytesWritten: (bytes) => v2Session?.releaseWriteBudget(bytes),
+              shouldFallbackOutOfOrder: () =>
+                  v2Session?.shouldFallbackOutOfOrder ?? false,
+              onWriteError: (err) => v2Session?.notifyWriteError(err),
             ),
           );
         }
@@ -929,17 +1239,12 @@ class ReceiverController {
           isCancelled: () => _isCancelled || _isActiveTransferCancelled,
           onProgress: (deltaBytes, activeFileName) {
             received += deltaBytes;
-            bytesSinceUpdate += deltaBytes;
-            final now = DateTime.now();
-            final elapsedMs = now.difference(lastTime).inMilliseconds;
-            if (elapsedMs > AppConstants.speedUpdateIntervalMs) {
-              final double speed =
-                  (bytesSinceUpdate / 1024 / 1024) / (elapsedMs / 1000.0);
+            speedTracker.recordBytes(deltaBytes, activeFileName, (speed, name) {
               onUpdate(
                 TransferModel(
                   speed: speed,
                   transferred: received / 1024 / 1024,
-                  fileName: activeFileName,
+                  fileName: name,
                   status: "Turbo Receiving ($acceptedStreams streams)...",
                   totalSize: totalSizeMB,
                   progress: totalExpectedBytes > 0
@@ -948,11 +1253,62 @@ class ReceiverController {
                   phase: TransferPhase.receiving,
                 ),
               );
-              bytesSinceUpdate = 0;
-              lastTime = now;
-            }
+            });
           },
         );
+        if (reverseConnectTarget == null) {
+          try {
+            final fastSrv = await ServerSocket.bind(
+              InternetAddress.anyIPv4,
+              0,
+              shared: true,
+            );
+            v2Session.fastDataServer = fastSrv;
+            v2Session.fastDataSub = fastSrv.listen(
+              (Socket dataClient) {
+                unawaited(() async {
+                  final dataReader = BufferedSocketReader(dataClient);
+                  try {
+                    final headerResult = await dataReader.readJsonHeader(
+                      maxHeaderBytes: 64 * 1024,
+                      timeout: const Duration(
+                        seconds: AppConstants.transferTimeoutSeconds,
+                      ),
+                    );
+                    if (headerResult == null) {
+                      await dataReader.cancel();
+                      dataClient.destroy();
+                      return;
+                    }
+                    final Map<String, dynamic> hdr = headerResult.header;
+                    if (hdr["role"] != "data" ||
+                        hdr["sessionId"] != v2Session!.sessionId ||
+                        v2Session.aborted) {
+                      try {
+                        dataClient.write(
+                          "${jsonEncode({"status": "REJECTED", "reason": "INVALID_SESSION"})}\n",
+                        );
+                        await dataClient.flush();
+                      } catch (_) {}
+                      await dataReader.cancel();
+                      dataClient.destroy();
+                      return;
+                    }
+                    await v2Session.runWorkerConnection(
+                      socket: dataClient,
+                      reader: dataReader,
+                    );
+                  } catch (_) {
+                    await dataReader.cancel();
+                    dataClient.destroy();
+                  }
+                }());
+              },
+              onError: (_) {},
+              cancelOnError: false,
+            );
+          } catch (_) {}
+        }
         _activeV2Session = v2Session;
       }
 
@@ -977,12 +1333,17 @@ class ReceiverController {
         }
       }
 
+      final int? readyFreqMhz = directFrequencyProvider?.call();
+      final int? readyFastDataPort = v2Session?.fastDataServer?.port;
       try {
         client.write(
           '${jsonEncode({
             "s": "r",
             if (requestedVersion >= 2) "v": 2,
             if (requestedVersion >= 2) "streams": acceptedStreams,
+            if (readyFastDataPort != null && readyFastDataPort > 0)
+              "dataPort": readyFastDataPort,
+            if (readyFreqMhz != null && readyFreqMhz > 0) "freqMhz": readyFreqMhz,
             if (requestedVersion >= 2 && localIdentity != null)
               "receiverPeerId": localIdentity.peerId,
             if (requestedVersion >= 2 && localIdentity != null)
@@ -1001,7 +1362,11 @@ class ReceiverController {
       if (v2Session != null) {
         final activeV2 = v2Session;
         if (reverseConnectTarget != null) {
-          if (reverseConnectTarget.useTls &&
+          final int? fastDataPort = (metadata["dataPort"] as num?)?.toInt();
+          final bool useFastRawData =
+              fastDataPort != null && fastDataPort > 0;
+          if (!useFastRawData &&
+              reverseConnectTarget.useTls &&
               (reverseConnectTarget.expectedFingerprint == null ||
                   reverseConnectTarget.expectedFingerprint!.isEmpty)) {
             throw const HandshakeException(
@@ -1014,11 +1379,12 @@ class ReceiverController {
               try {
                 final workerSocket = await connectTransferSocket(
                   host: reverseConnectTarget.ip,
-                  port: reverseConnectTarget.port,
-                  useTls: reverseConnectTarget.useTls,
+                  port: useFastRawData ? fastDataPort : reverseConnectTarget.port,
+                  useTls: useFastRawData ? false : reverseConnectTarget.useTls,
                   timeout: const Duration(seconds: 15),
-                  expectedPeerFingerprint:
-                      reverseConnectTarget.expectedFingerprint,
+                  expectedPeerFingerprint: useFastRawData
+                      ? null
+                      : reverseConnectTarget.expectedFingerprint,
                 );
                 workerSocket.write(
                   '${jsonEncode({
@@ -1188,30 +1554,26 @@ class ReceiverController {
               }
               bytesReadForCurrentFile += bytesToProcess;
               received += bytesToProcess;
-              bytesSinceUpdate += bytesToProcess;
               offset += bytesToProcess;
-            }
-
-            final now = DateTime.now();
-            final elapsedMs = now.difference(lastTime).inMilliseconds;
-            if (elapsedMs > AppConstants.speedUpdateIntervalMs) {
-              final double speed =
-                  (bytesSinceUpdate / 1024 / 1024) / (elapsedMs / 1000.0);
-              onUpdate(
-                TransferModel(
-                  speed: speed,
-                  transferred: received / 1024 / 1024,
-                  fileName: p.basename(fileMeta["path"] as String),
-                  status: "Receiving Data...",
-                  totalSize: totalSizeMB,
-                  progress: totalExpectedBytes > 0
-                      ? received / totalExpectedBytes
-                      : 0.0,
-                  phase: TransferPhase.receiving,
-                ),
+              speedTracker.recordBytes(
+                bytesToProcess,
+                p.basename(fileMeta["path"] as String),
+                (speed, name) {
+                  onUpdate(
+                    TransferModel(
+                      speed: speed,
+                      transferred: received / 1024 / 1024,
+                      fileName: name,
+                      status: "Receiving Data...",
+                      totalSize: totalSizeMB,
+                      progress: totalExpectedBytes > 0
+                          ? received / totalExpectedBytes
+                          : 0.0,
+                      phase: TransferPhase.receiving,
+                    ),
+                  );
+                },
               );
-              bytesSinceUpdate = 0;
-              lastTime = now;
             }
 
             if (bytesReadForCurrentFile == targetSize) {
@@ -1522,7 +1884,6 @@ class ReceiverController {
           _activePartialPath = null;
         }
         await reader.cancel();
-        client.destroy();
       } catch (_) {}
       if (identical(_activeV2Session, v2Session)) {
         _activeV2Session = null;
@@ -1532,6 +1893,12 @@ class ReceiverController {
       _activeClientReader = null;
       _activeSink = null;
       _hasActiveTransfer = false;
+      try {
+        await waitForPendingRejection();
+        if (!identical(_closingRejectionSocket, client)) {
+          client.destroy();
+        }
+      } catch (_) {}
     }
   }
 
@@ -1778,38 +2145,73 @@ class ReceiverController {
     }
   }
 
-  /// Cancels only the active transfer connection without stopping the server.
-  void cancelActiveTransfer({String? reason}) {
-    _isActiveTransferCancelled = true;
-    _activeTransferCancelReason = reason;
+  /// Sends a REJECTED control frame and flushes/closes TLS cleanly before destroy
+  /// so the sender observes the rejection instead of racing an abrupt RST or
+  /// premature Direct Wi-Fi teardown.
+  Future<void> _sendRejectionAndClose(
+    Socket client, {
+    String? reason,
+    bool backgroundLinger = false,
+  }) async {
+    _closingRejectionSocket = client;
+    bool flushed = false;
+    bool timedOut = false;
+    try {
+      client.write(
+        '${jsonEncode({"status": "REJECTED", "reason": ?reason})}\n',
+      );
+      await client.flush().timeout(
+        const Duration(milliseconds: 250),
+        onTimeout: () {
+          timedOut = true;
+        },
+      );
+      flushed = !timedOut;
+      await client.close().timeout(
+        const Duration(milliseconds: 200),
+        onTimeout: () {},
+      );
+    } catch (_) {}
+
+    Future<void> finishClose() async {
+      if (flushed) {
+        await Future.any<void>(<Future<void>>[
+          client.done.then<void>((_) {}, onError: (_) {}),
+          Future<void>.delayed(const Duration(milliseconds: 120)),
+        ]);
+      }
+      try {
+        client.destroy();
+      } catch (_) {}
+      if (identical(_closingRejectionSocket, client)) {
+        _closingRejectionSocket = null;
+      }
+    }
+
+    if (backgroundLinger) {
+      final Future<void> linger = finishClose();
+      _pendingRejectionFuture = linger;
+      unawaited(linger);
+      return;
+    }
+    await finishClose();
+  }
+
+  void _abortActiveControlAndWorkers({String rejectionReason = "CANCELLED"}) {
     _activeAuthDismissCallback?.call();
 
-    unawaited(_activeV2Session?.abort());
-
+    // Flush REJECTED on the control socket BEFORE aborting v2 data workers so
+    // callers waiting on session end / Wi-Fi teardown don't cut L2 mid-flight.
     final activeClient = _activeClient;
     _activeClient = null;
     if (activeClient != null) {
-      try {
-        activeClient.write(
-          "${jsonEncode({"status": "REJECTED", "reason": "CANCELLED"})}\n",
-        );
-        unawaited(
-          activeClient
-              .flush()
-              .timeout(const Duration(milliseconds: 250), onTimeout: () {})
-              .catchError((_) {})
-              .whenComplete(() {
-            try {
-              activeClient.destroy();
-            } catch (_) {}
-          }),
-        );
-      } catch (_) {
-        try {
-          activeClient.destroy();
-        } catch (_) {}
-      }
+      final Future<void> rejection =
+          _sendRejectionAndClose(activeClient, reason: rejectionReason);
+      _pendingRejectionFuture = rejection;
+      unawaited(rejection);
     }
+
+    unawaited(_activeV2Session?.abort());
 
     unawaited(_activeClientReader?.cancel());
     _activeClientReader = null;
@@ -1817,46 +2219,24 @@ class ReceiverController {
     _activeSink = null;
   }
 
+  /// Cancels only the active transfer connection without stopping the server.
+  void cancelActiveTransfer({String? reason}) {
+    _isActiveTransferCancelled = true;
+    _activeTransferCancelReason = reason;
+    _abortActiveControlAndWorkers();
+  }
+
   /// Stops the receiver server and cancels any active transfer.
   void stop({String? reason}) {
     _isCancelled = true;
     _cancelReason = reason;
-    _activeAuthDismissCallback?.call();
-
-    unawaited(_activeV2Session?.abort());
-
-    final activeClient = _activeClient;
-    _activeClient = null;
-    if (activeClient != null) {
-      try {
-        activeClient.write("${jsonEncode({"status": "REJECTED"})}\n");
-        unawaited(
-          activeClient
-              .flush()
-              .timeout(const Duration(milliseconds: 250), onTimeout: () {})
-              .catchError((_) {})
-              .whenComplete(() {
-            try {
-              activeClient.destroy();
-            } catch (_) {}
-          }),
-        );
-      } catch (_) {
-        try {
-          activeClient.destroy();
-        } catch (_) {}
-      }
-    }
-
-    unawaited(_activeClientReader?.cancel());
-    _activeClientReader = null;
+    _isActiveTransferCancelled = true;
+    _activeTransferCancelReason = reason;
+    _abortActiveControlAndWorkers();
     _plainServer?.close();
     _secureServer?.close();
     _plainServer = null;
     _secureServer = null;
-
-    _activeSink?.close();
-    _activeSink = null;
   }
 
   String _mapReceiverSocketError(SocketException e) {

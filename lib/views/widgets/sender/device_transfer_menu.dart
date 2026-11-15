@@ -396,7 +396,7 @@ class DeviceTransferMenu extends StatelessWidget {
                         child: Text(
                           state.selectedPaths.isEmpty
                               ? "Select Items to Send"
-                              : "Send ${state.selectedPaths.length} Items",
+                              : "Send ${state.selectedPaths.length} ${state.selectedPaths.length == 1 ? 'Item' : 'Items'}",
                           maxLines: 1,
                           style: TextStyle(
                             color: Colors.white,

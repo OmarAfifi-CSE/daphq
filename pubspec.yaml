@@ -30,7 +30,6 @@ dependencies:
   flutter_markdown_plus: ^1.0.12
   open_filex: ^5.0.0
   basic_utils: ^5.8.2
-  qr_flutter: ^4.1.0
 
 dev_dependencies:
   flutter_test:

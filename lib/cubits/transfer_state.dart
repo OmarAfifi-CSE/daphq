@@ -12,7 +12,6 @@ class AuthRequest {
   final double totalSizeMB;
   final String? senderPeerId;
   final String? senderFingerprint;
-  final String? sasCode;
   final bool isTls;
   final bool isTrustedPeer;
   final bool isFingerprintMismatch;
@@ -24,7 +23,6 @@ class AuthRequest {
     required this.totalSizeMB,
     this.senderPeerId,
     this.senderFingerprint,
-    this.sasCode,
     this.isTls = false,
     this.isTrustedPeer = false,
     this.isFingerprintMismatch = false,
@@ -52,7 +50,6 @@ class TransferState {
   // Discovery & Direct Fabric fields
   final List<DiscoveryModel> discoveredDevices;
   final List<UnifiedPeer> unifiedPeers;
-  final TransportPreference transportPreference;
   final List<TrustedDevice> trustedDevices;
   final String? localPeerId;
   final String? localFingerprint;
@@ -60,7 +57,6 @@ class TransferState {
   final String? directLinkStatus;
   final LocalRadioCapabilities? localRadioCapabilities;
   final String deviceName;
-  final bool isAdvancedMode;
 
   // UI Feedback properties
   final String? errorMessage;
@@ -85,7 +81,6 @@ class TransferState {
     this.showProgressView = false,
     this.discoveredDevices = const [],
     this.unifiedPeers = const [],
-    this.transportPreference = TransportPreference.autoSmart,
     this.trustedDevices = const [],
     this.localPeerId,
     this.localFingerprint,
@@ -93,7 +88,6 @@ class TransferState {
     this.directLinkStatus,
     this.localRadioCapabilities,
     this.deviceName = 'Unknown Device',
-    this.isAdvancedMode = false,
     this.errorMessage,
     this.warningMessage,
     this.showStorageSettingsDialog = false,
@@ -117,7 +111,6 @@ class TransferState {
     bool? showProgressView,
     List<DiscoveryModel>? discoveredDevices,
     List<UnifiedPeer>? unifiedPeers,
-    TransportPreference? transportPreference,
     List<TrustedDevice>? trustedDevices,
     String? localPeerId,
     String? localFingerprint,
@@ -125,7 +118,6 @@ class TransferState {
     String? directLinkStatus,
     LocalRadioCapabilities? localRadioCapabilities,
     String? deviceName,
-    bool? isAdvancedMode,
     String? errorMessage,
     String? warningMessage,
     bool? showStorageSettingsDialog,
@@ -153,7 +145,6 @@ class TransferState {
       showProgressView: showProgressView ?? this.showProgressView,
       discoveredDevices: discoveredDevices ?? this.discoveredDevices,
       unifiedPeers: unifiedPeers ?? this.unifiedPeers,
-      transportPreference: transportPreference ?? this.transportPreference,
       trustedDevices: trustedDevices ?? this.trustedDevices,
       localPeerId: localPeerId ?? this.localPeerId,
       localFingerprint: localFingerprint ?? this.localFingerprint,
@@ -165,7 +156,6 @@ class TransferState {
       localRadioCapabilities:
           localRadioCapabilities ?? this.localRadioCapabilities,
       deviceName: deviceName ?? this.deviceName,
-      isAdvancedMode: isAdvancedMode ?? this.isAdvancedMode,
       errorMessage: clearFeedback ? null : (errorMessage ?? this.errorMessage),
       warningMessage: clearFeedback
           ? null

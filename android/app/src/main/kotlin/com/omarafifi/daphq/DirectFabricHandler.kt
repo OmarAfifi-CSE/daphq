@@ -2,6 +2,7 @@ package com.omarafifi.daphq
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
@@ -22,13 +23,19 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
 import android.net.wifi.WifiNetworkSpecifier
 import android.net.wifi.p2p.WifiP2pConfig
@@ -37,7 +44,10 @@ import android.net.wifi.p2p.WifiP2pManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
+import androidx.core.location.LocationManagerCompat
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
@@ -47,10 +57,13 @@ import java.io.ByteArrayOutputStream
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.security.SecureRandom
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 class DirectFabricHandler(
     context: Context,
@@ -83,8 +96,50 @@ class DirectFabricHandler(
         appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
     private val wifiP2pManager: WifiP2pManager? =
         appContext.getSystemService(Context.WIFI_P2P_SERVICE) as? WifiP2pManager
+    private val locationManager: LocationManager? =
+        appContext.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
     @Volatile
     private var p2pChannel: WifiP2pManager.Channel? = null
+    @Volatile
+    private var radioReceiverRegistered: Boolean = false
+    private val direct5gHostUnsupported = AtomicBoolean(false)
+    private val directPrefs: SharedPreferences by lazy {
+        appContext.getSharedPreferences("daphq_direct_prefs", Context.MODE_PRIVATE)
+    }
+
+    private fun direct5gPrefKey(): String {
+        val iso = try {
+            val tm = appContext.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+            val netCountry = tm?.networkCountryIso?.trim()?.uppercase(Locale.US)?.takeIf { it.length == 2 }
+            val simCountry = tm?.simCountryIso?.trim()?.uppercase(Locale.US)?.takeIf { it.length == 2 }
+            val localeCountry = Locale.getDefault().country.trim().uppercase(Locale.US).takeIf { it.length == 2 }
+            netCountry ?: simCountry ?: localeCountry ?: "ZZ"
+        } catch (_: Throwable) {
+            "ZZ"
+        }
+        return "direct5g_unsupported_api${Build.VERSION.SDK_INT}_$iso"
+    }
+
+    private fun markDirect5gHostUnsupported() {
+        try {
+            directPrefs.edit().putBoolean(direct5gPrefKey(), true).apply()
+        } catch (_: Throwable) {}
+        if (direct5gHostUnsupported.compareAndSet(false, true)) {
+            val radioEvent = HashMap<String, Any?>()
+            radioEvent["type"] = "radioState"
+            radioEvent.putAll(buildCapabilities())
+            emitEvent(radioEvent)
+        }
+    }
+
+    private val radioStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val event = HashMap<String, Any?>()
+            event["type"] = "radioState"
+            event.putAll(buildCapabilities())
+            emitEvent(event)
+        }
+    }
 
     private var advertiser: BluetoothLeAdvertiser? = null
     private var advertiseCallback: AdvertiseCallback? = null
@@ -111,11 +166,37 @@ class DirectFabricHandler(
 
     private val bleDiscoverySeq = AtomicLong(0)
     private val hostSessionSeq = AtomicLong(0)
+    private val lohsLock = Any()
+    private var activeLohsReservation: WifiManager.LocalOnlyHotspotReservation? = null
 
     init {
+        try {
+            if (directPrefs.getBoolean(direct5gPrefKey(), false)) {
+                direct5gHostUnsupported.set(true)
+            }
+        } catch (_: Throwable) {}
         methodChannel.setMethodCallHandler(this)
         eventChannel.setStreamHandler(this)
         initP2pChannel()
+        registerRadioReceiver()
+    }
+
+    private fun registerRadioReceiver() {
+        if (radioReceiverRegistered) return
+        val filter = IntentFilter().apply {
+            addAction(WifiManager.WIFI_STATE_CHANGED_ACTION)
+            addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+            addAction(LocationManager.MODE_CHANGED_ACTION)
+        }
+        try {
+            ContextCompat.registerReceiver(
+                appContext,
+                radioStateReceiver,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+            radioReceiverRegistered = true
+        } catch (_: Throwable) {}
     }
 
     private fun initP2pChannel() {
@@ -162,8 +243,18 @@ class DirectFabricHandler(
             "startDirectHost" -> handleStartDirectHost(call, result)
             "connectDirectClient" -> handleConnectDirectClient(call, result)
             "exchangeGattLink" -> handleExchangeGattLink(call, result)
+            "getDirectHostClients" -> result.success(emptyList<String>())
             "stopDirectSession" -> {
                 stopDirectSessionInternal()
+                result.success(null)
+            }
+            "setTransferPowerLock" -> {
+                val enabled = when (val raw = call.arguments) {
+                    is Boolean -> raw
+                    is Map<*, *> -> raw["enabled"] as? Boolean ?: false
+                    else -> false
+                }
+                if (enabled) acquireTransferLocks() else releaseTransferLocks()
                 result.success(null)
             }
             else -> result.notImplemented()
@@ -207,27 +298,88 @@ class DirectFabricHandler(
         }
     }
 
+    private fun isOsLocationEnabled(): Boolean {
+        val lm = locationManager ?: return false
+        return try {
+            LocationManagerCompat.isLocationEnabled(lm)
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     private fun buildCapabilities(): Map<String, Any> {
         val adapter = bluetoothManager?.adapter
         val hasBleFeature =
             appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)
+        val hasWifiHardware = wifiManager != null ||
+            appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_WIFI)
         val hasP2pFeature =
             appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_WIFI_DIRECT)
-        val bleEnabled = hasBleFeature && adapter != null && adapter.isEnabled
+
         val wifiEnabled = try {
             wifiManager?.isWifiEnabled == true
         } catch (_: Throwable) {
             false
         }
-        val supports5g = wifiEnabled && wifiManager != null &&
-            (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP || wifiManager.is5GHzBandSupported)
-        val canHost5g = wifiEnabled && hasP2pFeature && supports5g
+        val bluetoothHardware = hasBleFeature && adapter != null
+        val bluetoothEnabled = try {
+            bluetoothHardware && (adapter?.isEnabled == true)
+        } catch (_: Throwable) {
+            false
+        }
+
+        val missingWifiPerm = !hasNearbyWifiPermission()
+        val missingBlePerm = !(hasBleScanPermission() &&
+            hasBleAdvertisePermission() &&
+            hasBleConnectPermission())
+
+        val osLocationEnabled = isOsLocationEnabled()
+        val wifiLocationOk =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU || osLocationEnabled
+        val bleLocationOk =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S || osLocationEnabled
+
+        val effectiveHasWifi = wifiEnabled && !missingWifiPerm && wifiLocationOk
+        val effectiveHasBle = bluetoothEnabled && !missingBlePerm && bleLocationOk
+        val canHost5g = effectiveHasWifi && resolveCanHostDirect5g(hasP2pFeature)
 
         return mapOf(
-            "hasWifi" to wifiEnabled,
-            "hasBle" to bleEnabled,
+            "hasWifi" to effectiveHasWifi,
+            "hasBle" to effectiveHasBle,
             "canHostDirect5g" to canHost5g,
+            "wifiHardwarePresent" to hasWifiHardware,
+            "bluetoothHardwarePresent" to bluetoothHardware,
+            "wifiEnabled" to wifiEnabled,
+            "bluetoothEnabled" to bluetoothEnabled,
+            "missingWifiPermission" to missingWifiPerm,
+            "missingBlePermission" to missingBlePerm,
+            "locationServiceEnabled" to wifiLocationOk,
         )
+    }
+
+    private fun resolveCanHostDirect5g(hasP2pFeature: Boolean): Boolean {
+        val wm = wifiManager ?: return false
+        if (!hasP2pFeature || direct5gHostUnsupported.get()) return false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && !wm.is5GHzBandSupported) {
+            return false
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && hasNearbyWifiPermission()) {
+            try {
+                val sapUsable = wm.getUsableChannels(
+                    2,
+                    android.net.wifi.WifiAvailableChannel.OP_MODE_SAP,
+                )
+                val goUsable = wm.getUsableChannels(
+                    2,
+                    android.net.wifi.WifiAvailableChannel.OP_MODE_WIFI_DIRECT_GO,
+                )
+                val hasSap5g = sapUsable.any { it.frequencyMhz >= 4900 }
+                val hasGo5g = goUsable.any { it.frequencyMhz >= 4900 }
+                if (!hasSap5g && !hasGo5g) return false
+            } catch (_: SecurityException) {
+            } catch (_: Throwable) {}
+        }
+        return true
     }
 
     @SuppressLint("MissingPermission")
@@ -248,11 +400,15 @@ class DirectFabricHandler(
             return
         }
 
+        val transferPort =
+            ((payload[18].toInt() and 0xFF) shl 8) or (payload[19].toInt() and 0xFF)
+        val effectivePort = if (transferPort in 1..65535) transferPort else 62004
+
         localInfoJson = JSONObject().apply {
             put("peerId", peerId)
             put("name", peerName)
             put("fp", fingerprint)
-            put("port", 62004)
+            put("port", effectivePort)
             put("platform", "android")
         }.toString()
 
@@ -335,16 +491,13 @@ class DirectFabricHandler(
                         }
 
                         override fun onScanFailed(errorCode: Int) {
-                            emitEvent(
-                                mapOf(
-                                    "type" to "radioState",
-                                    "hasWifi" to (wifiManager?.isWifiEnabled == true),
-                                    "hasBle" to adapter.isEnabled,
-                                    "bleAdvertising" to (advertiser != null),
-                                    "bleScanning" to false,
-                                    "canHostDirect5g" to (wifiManager?.is5GHzBandSupported == true),
-                                ),
-                            )
+                            val event = HashMap<String, Any?>()
+                            event["type"] = "radioState"
+                            event.putAll(buildCapabilities())
+                            event["hasBle"] = adapter.isEnabled
+                            event["bleAdvertising"] = (advertiser != null)
+                            event["bleScanning"] = false
+                            emitEvent(event)
                         }
                     }
                     leScanner.startScan(listOf(filter), scanSettings, cb)
@@ -922,6 +1075,15 @@ class DirectFabricHandler(
         }
 
         val prefer5Ghz = call.argument<Boolean>("prefer5Ghz") ?: true
+        val allow24GhzFallback = call.argument<Boolean>("allow24GhzFallback") ?: true
+        val rawStableTag = call.argument<String>("stableTag")
+        val cleanTag = sanitizeStableDirectTag(rawStableTag)
+        if (prefer5Ghz && !allow24GhzFallback && direct5gHostUnsupported.get()) {
+            result.success(null)
+            return
+        }
+        acquireTransferLocks()
+        closeActiveLohsReservation()
         val done = AtomicBoolean(false)
         val myHostToken = hostSessionSeq.incrementAndGet()
 
@@ -934,6 +1096,7 @@ class DirectFabricHandler(
                     return
                 }
                 if (done.compareAndSet(false, true)) {
+                    closeActiveLohsReservation()
                     try {
                         if (hasNearbyWifiPermission()) {
                             mgr.removeGroup(ch, null)
@@ -951,158 +1114,428 @@ class DirectFabricHandler(
             }
         }
 
-        mainHandler.postDelayed(timeoutRunnable, 12000)
+        mainHandler.postDelayed(timeoutRunnable, 18000L)
 
-        fun fetchGroupDetails() {
-            var retries = 0
-            fun poll() {
-                if (hostSessionSeq.get() != myHostToken) {
+        fun isStaleOrDone(): Boolean {
+            if (hostSessionSeq.get() != myHostToken) {
+                finish(null)
+                return true
+            }
+            return done.get()
+        }
+
+        fun removeGroupThen(delayMs: Long = 250L, next: () -> Unit) {
+            try {
+                if (!hasNearbyWifiPermission()) {
                     finish(null)
                     return
                 }
-                if (done.get()) return
-                mgr.requestGroupInfo(ch) { group: WifiP2pGroup? ->
-                    if (hostSessionSeq.get() != myHostToken) {
-                        finish(null)
-                        return@requestGroupInfo
+                mgr.removeGroup(ch, object : WifiP2pManager.ActionListener {
+                    override fun onSuccess() {
+                        if (isStaleOrDone()) return
+                        mainHandler.postDelayed(next, delayMs)
                     }
-                    if (done.get()) return@requestGroupInfo
-                    if (group != null && !group.networkName.isNullOrBlank() && !group.passphrase.isNullOrBlank()) {
-                        val resolvedIp = resolveP2pInterfaceIp()
-                        if (resolvedIp == null && retries < 4 && !done.get()) {
+
+                    override fun onFailure(reason: Int) {
+                        if (isStaleOrDone()) return
+                        mainHandler.postDelayed(next, delayMs)
+                    }
+                })
+            } catch (_: Throwable) {
+                if (!isStaleOrDone()) {
+                    mainHandler.postDelayed(next, delayMs)
+                }
+            }
+        }
+
+        fun emitReadyAndFinish(ssid: String, psk: String, hostIp: String, freqMhz: Int) {
+            if (prefer5Ghz && freqMhz in 1..4899) {
+                markDirect5gHostUnsupported()
+            }
+            emitEvent(
+                mapOf(
+                    "type" to "p2pState",
+                    "state" to "hostReady",
+                    "ssid" to ssid,
+                    "psk" to psk,
+                    "localIp" to hostIp,
+                ),
+            )
+            finish(
+                mapOf(
+                    "ssid" to ssid,
+                    "psk" to psk,
+                    "hostIp" to hostIp,
+                    "frequencyMhz" to freqMhz,
+                ),
+            )
+        }
+
+        val wm = wifiManager
+        val staApConcurrent = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            wm?.isStaApConcurrencySupported == true
+        val hasBleActive = (advertiser != null && advertiseCallback != null) ||
+            (scanner != null && scanCallback != null)
+        val canReplaceSlowP2pWithHotspot = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            wm != null &&
+            (staApConcurrent || hasBleActive)
+        val canTrySoftAp5Ghz = Build.VERSION.SDK_INT >= 36 &&
+            wm != null &&
+            wm.is5GHzBandSupported &&
+            (staApConcurrent || hasBleActive)
+
+        // Android 16 (API 36+) SoftAP with explicit BAND_5GHZ comes first in
+        // handleStartDirectHost; for P2P stages iterate 5GHz band + usable UNII-1/3 channels.
+        fun buildP2pConfig(mode: Int, explicitFreqMhz: Int = 0): WifiP2pConfig? {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+            val suffix = if (cleanTag.length >= 2) cleanTag else randomAlnum(4)
+            val psk = randomPassphrase(12)
+            val builder = WifiP2pConfig.Builder()
+                .setNetworkName("DIRECT-DQ-$suffix")
+                .setPassphrase(psk)
+            when {
+                explicitFreqMhz > 0 -> builder.setGroupOperatingFrequency(explicitFreqMhz)
+                mode == 0 -> builder.setGroupOperatingBand(WifiP2pConfig.GROUP_OWNER_BAND_5GHZ)
+                mode == 1 -> builder.setGroupOperatingFrequency(5180)
+                mode == 2 -> builder.setGroupOperatingFrequency(5745)
+                else -> builder.setGroupOperatingBand(WifiP2pConfig.GROUP_OWNER_BAND_AUTO)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                builder.enablePersistentMode(false)
+            }
+            return builder.build()
+        }
+
+        fun runP2pMode(
+            mode: Int,
+            attempt: Int,
+            reject24Ghz: Boolean,
+            onRejectOrFail: () -> Unit,
+            explicitFreqMhz: Int = 0,
+        ) {
+            if (isStaleOrDone()) return
+
+            fun fetchGroupDetails() {
+                var retries = 0
+                fun poll() {
+                    if (isStaleOrDone()) return
+                    mgr.requestGroupInfo(ch) { group: WifiP2pGroup? ->
+                        if (isStaleOrDone()) return@requestGroupInfo
+                        if (group != null && !group.networkName.isNullOrBlank() && !group.passphrase.isNullOrBlank()) {
+                            val freq = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                group.frequency.takeIf { it > 0 } ?: 0
+                            } else {
+                                0
+                            }
+                            if (reject24Ghz && freq in 1..4899) {
+                                removeGroupThen(250L, onRejectOrFail)
+                                return@requestGroupInfo
+                            }
+                            val resolvedIp = resolveP2pInterfaceIp()
+                            if (resolvedIp == null && retries < 4 && !done.get()) {
+                                retries++
+                                mainHandler.postDelayed({ poll() }, 250)
+                                return@requestGroupInfo
+                            }
+                            val hostIp = resolvedIp ?: "192.168.49.1"
+                            emitReadyAndFinish(group.networkName, group.passphrase, hostIp, freq)
+                        } else if (retries < 16 && !done.get()) {
                             retries++
                             mainHandler.postDelayed({ poll() }, 250)
-                            return@requestGroupInfo
-                        }
-                        val hostIp = resolvedIp ?: "192.168.49.1"
-                        val freq = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                            group.frequency.takeIf { it > 0 } ?: (if (prefer5Ghz) 5180 else 2437)
                         } else {
-                            2437
+                            onRejectOrFail()
                         }
-                        val info = mapOf(
-                            "ssid" to group.networkName,
-                            "psk" to group.passphrase,
-                            "hostIp" to hostIp,
-                            "frequencyMhz" to freq,
+                    }
+                }
+                mainHandler.postDelayed({ poll() }, 300)
+            }
+
+            val listener = object : WifiP2pManager.ActionListener {
+                override fun onSuccess() = fetchGroupDetails()
+                override fun onFailure(reason: Int) {
+                    if (isStaleOrDone()) return
+                    if (reason == WifiP2pManager.BUSY && attempt < 3) {
+                        mainHandler.postDelayed(
+                            {
+                                runP2pMode(
+                                    mode,
+                                    attempt + 1,
+                                    reject24Ghz,
+                                    onRejectOrFail,
+                                    explicitFreqMhz,
+                                )
+                            },
+                            350,
                         )
-                        emitEvent(
-                            mapOf(
-                                "type" to "p2pState",
-                                "state" to "hostReady",
-                                "ssid" to group.networkName,
-                                "psk" to group.passphrase,
-                                "localIp" to hostIp,
-                            ),
-                        )
-                        finish(info)
-                    } else if (retries < 16 && !done.get()) {
-                        retries++
-                        mainHandler.postDelayed({ poll() }, 250)
                     } else {
-                        finish(null)
+                        onRejectOrFail()
                     }
                 }
             }
-            mainHandler.postDelayed({ poll() }, 300)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                try {
+                    val config = buildP2pConfig(mode, explicitFreqMhz)
+                    if (config != null) {
+                        mgr.createGroup(ch, config, listener)
+                        return
+                    }
+                } catch (_: Throwable) {
+                    onRejectOrFail()
+                    return
+                }
+            }
+
+            if (mode == 2) {
+                mgr.createGroup(ch, listener)
+            } else {
+                onRejectOrFail()
+            }
         }
 
-        fun createGroupWithFallback(attempt: Int) {
-            if (hostSessionSeq.get() != myHostToken) {
+        fun runStageAutoFallback() {
+            runP2pMode(
+                mode = 3,
+                attempt = 0,
+                reject24Ghz = false,
+                onRejectOrFail = { finish(null) },
+            )
+        }
+
+        fun runStageLocalOnlyHotspot(
+            band5Only: Boolean = false,
+            onFailNext: () -> Unit = { runStageAutoFallback() },
+        ) {
+            if (isStaleOrDone()) return
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || wm == null || !hasNearbyWifiPermission()) {
+                onFailNext()
+                return
+            }
+            val ipsBefore = snapshotActiveIpv4s()
+            val stageDone = AtomicBoolean(false)
+            val stageReservation =
+                java.util.concurrent.atomic.AtomicReference<WifiManager.LocalOnlyHotspotReservation?>(null)
+            val pollRunnableRef = java.util.concurrent.atomic.AtomicReference<Runnable?>(null)
+
+            fun cancelStagePoll() {
+                pollRunnableRef.getAndSet(null)?.let { mainHandler.removeCallbacks(it) }
+            }
+
+            fun closeOwnReservation() {
+                val owned = stageReservation.getAndSet(null) ?: return
+                synchronized(lohsLock) {
+                    if (activeLohsReservation === owned) {
+                        activeLohsReservation = null
+                    }
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    try {
+                        owned.close()
+                    } catch (_: Throwable) {}
+                }
+            }
+
+            fun failStageOnce() {
+                cancelStagePoll()
+                closeOwnReservation()
+                if (stageDone.compareAndSet(false, true) && !isStaleOrDone()) {
+                    onFailNext()
+                }
+            }
+
+            val lohsCallback = object : WifiManager.LocalOnlyHotspotCallback() {
+                override fun onStarted(reservation: WifiManager.LocalOnlyHotspotReservation?) {
+                    if (reservation == null) {
+                        failStageOnce()
+                        return
+                    }
+                    var accepted = false
+                    synchronized(lohsLock) {
+                        if (hostSessionSeq.get() == myHostToken && !done.get() && !stageDone.get()) {
+                            activeLohsReservation?.let { prev ->
+                                if (prev !== reservation) {
+                                    try {
+                                        prev.close()
+                                    } catch (_: Throwable) {}
+                                }
+                            }
+                            activeLohsReservation = reservation
+                            stageReservation.set(reservation)
+                            accepted = true
+                        }
+                    }
+                    if (!accepted) {
+                        try {
+                            reservation.close()
+                        } catch (_: Throwable) {}
+                        return
+                    }
+
+                    val ssid: String?
+                    val psk: String?
+                    var lohsFreqMhz = 0
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        val softCfg: android.net.wifi.SoftApConfiguration? =
+                            reservation.softApConfiguration
+                        val rawWifiSsid = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            softCfg?.wifiSsid?.bytes?.let { String(it, Charsets.UTF_8) }
+                        } else {
+                            null
+                        }
+                        @Suppress("DEPRECATION")
+                        ssid = rawWifiSsid?.takeIf { it.isNotBlank() } ?: softCfg?.ssid
+                        psk = softCfg?.passphrase
+                        if (Build.VERSION.SDK_INT >= 36) {
+                            val chans = softCfg?.channels
+                            val idx5 = chans?.indexOfKey(android.net.wifi.SoftApConfiguration.BAND_5GHZ) ?: -1
+                            val idx2 = chans?.indexOfKey(android.net.wifi.SoftApConfiguration.BAND_2GHZ) ?: -1
+                            if (band5Only && (chans == null || chans.size() == 0 || idx5 < 0)) {
+                                failStageOnce()
+                                return
+                            }
+                            if (idx5 >= 0 && chans != null) {
+                                lohsFreqMhz = resolveChannelFrequencyMhz(2, chans.valueAt(idx5))
+                            } else if (idx2 >= 0 && chans != null) {
+                                lohsFreqMhz = resolveChannelFrequencyMhz(1, chans.valueAt(idx2))
+                            }
+                        }
+                    } else {
+                        @Suppress("DEPRECATION")
+                        val wifiCfg = reservation.wifiConfiguration
+                        @Suppress("DEPRECATION")
+                        ssid = wifiCfg?.SSID?.removeSurrounding("\"")
+                        @Suppress("DEPRECATION")
+                        psk = wifiCfg?.preSharedKey?.removeSurrounding("\"")
+                    }
+
+                    if (ssid.isNullOrBlank() || psk.isNullOrBlank()) {
+                        failStageOnce()
+                        return
+                    }
+
+                    var ipRetries = 0
+                    val pollTask = object : Runnable {
+                        override fun run() {
+                            if (stageDone.get() || isStaleOrDone()) return
+                            val hostIp = resolveApHostIp(ipsBefore)
+                            if (hostIp != null || ipRetries >= 12) {
+                                cancelStagePoll()
+                                if (stageDone.compareAndSet(false, true)) {
+                                    emitReadyAndFinish(ssid, psk, hostIp ?: "192.168.43.1", lohsFreqMhz)
+                                }
+                            } else {
+                                ipRetries++
+                                mainHandler.postDelayed(this, 200)
+                            }
+                        }
+                    }
+                    pollRunnableRef.set(pollTask)
+                    mainHandler.postDelayed(pollTask, 250)
+                }
+
+                override fun onStopped() {
+                    failStageOnce()
+                }
+
+                override fun onFailed(reason: Int) {
+                    failStageOnce()
+                }
+            }
+            try {
+                if (band5Only && Build.VERSION.SDK_INT >= 36) {
+                    val channels = android.util.SparseIntArray().apply {
+                        put(android.net.wifi.SoftApConfiguration.BAND_5GHZ, 0)
+                    }
+                    val softConfig = android.net.wifi.SoftApConfiguration.Builder()
+                        .setChannels(channels)
+                        .build()
+                    // Null SSID is explicitly permitted for LocalOnlyHotspot configs so the OS
+                    // assigns credentials while honoring the requested 5GHz band; calling
+                    // validateSoftApConfiguration() here rejects null SSIDs before LOHS runs.
+                    wm.startLocalOnlyHotspotWithConfiguration(
+                        softConfig,
+                        java.util.concurrent.Executor { runnable -> mainHandler.post(runnable) },
+                        lohsCallback,
+                    )
+                } else {
+                    wm.startLocalOnlyHotspot(lohsCallback, mainHandler)
+                }
+            } catch (_: SecurityException) {
+                onFailNext()
+            } catch (_: Throwable) {
+                onFailNext()
+            }
+        }
+
+        fun startStages() {
+            if (isStaleOrDone()) return
+            if (prefer5Ghz && !allow24GhzFallback && direct5gHostUnsupported.get()) {
                 finish(null)
                 return
             }
-            if (done.get()) return
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                try {
-                    val suffix = randomAlnum(4)
-                    val psk = randomPassphrase(12)
-                    val band = if (prefer5Ghz) {
-                        WifiP2pConfig.GROUP_OWNER_BAND_5GHZ
-                    } else {
-                        WifiP2pConfig.GROUP_OWNER_BAND_AUTO
-                    }
-                    val config = WifiP2pConfig.Builder()
-                        .setNetworkName("DIRECT-DQ-$suffix")
-                        .setPassphrase(psk)
-                        .setGroupOperatingBand(band)
-                        .build()
-                    mgr.createGroup(ch, config, object : WifiP2pManager.ActionListener {
-                        override fun onSuccess() = fetchGroupDetails()
-                        override fun onFailure(reason: Int) {
-                            if (hostSessionSeq.get() != myHostToken) {
-                                finish(null)
-                                return
-                            }
-                            if (done.get()) return
-                            if (reason == WifiP2pManager.BUSY && attempt < 2) {
-                                mainHandler.postDelayed({ createGroupWithFallback(attempt + 1) }, 350)
-                                return
-                            }
-                            mgr.createGroup(ch, object : WifiP2pManager.ActionListener {
-                                override fun onSuccess() = fetchGroupDetails()
-                                override fun onFailure(r2: Int) {
-                                    if (hostSessionSeq.get() != myHostToken) {
-                                        finish(null)
-                                        return
-                                    }
-                                    if (done.get()) return
-                                    if (r2 == WifiP2pManager.BUSY && attempt < 2) {
-                                        mainHandler.postDelayed({ createGroupWithFallback(attempt + 1) }, 350)
-                                    } else {
-                                        finish(null)
-                                    }
-                                }
-                            })
-                        }
-                    })
-                    return
-                } catch (_: Throwable) {}
+            if (!prefer5Ghz || Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                runStageAutoFallback()
+                return
             }
 
-            mgr.createGroup(ch, object : WifiP2pManager.ActionListener {
-                override fun onSuccess() = fetchGroupDetails()
-                override fun onFailure(reason: Int) {
-                    if (hostSessionSeq.get() != myHostToken) {
+            fun runP2p5GhzStages(canTryLegacyHotspot: Boolean) {
+                val p2pFreqs = discoverPreferred5GhzP2pFrequencies()
+                fun nextStepAfterChannels() {
+                    if (prefer5Ghz && !allow24GhzFallback) {
+                        markDirect5gHostUnsupported()
                         finish(null)
-                        return
-                    }
-                    if (done.get()) return
-                    if (reason == WifiP2pManager.BUSY && attempt < 2) {
-                        mainHandler.postDelayed({ createGroupWithFallback(attempt + 1) }, 350)
+                    } else if (canTryLegacyHotspot) {
+                        runStageLocalOnlyHotspot(
+                            band5Only = false,
+                            onFailNext = { runStageAutoFallback() },
+                        )
                     } else {
-                        finish(null)
+                        runStageAutoFallback()
                     }
                 }
-            })
+                fun tryP2pFreqIndex(idx: Int) {
+                    if (idx >= p2pFreqs.size) {
+                        nextStepAfterChannels()
+                        return
+                    }
+                    runP2pMode(
+                        mode = 1,
+                        attempt = 0,
+                        reject24Ghz = !allow24GhzFallback || canTryLegacyHotspot || idx < p2pFreqs.lastIndex,
+                        explicitFreqMhz = p2pFreqs[idx],
+                        onRejectOrFail = { tryP2pFreqIndex(idx + 1) },
+                    )
+                }
+                // Stage 1: Deterministic P2P 5GHz band -> usable UNII-1/UNII-3 channels
+                runP2pMode(
+                    mode = 0,
+                    attempt = 0,
+                    reject24Ghz = true,
+                    onRejectOrFail = { tryP2pFreqIndex(0) },
+                )
+            }
+
+            // Android 16 (API 36+): try explicit BAND_5GHZ LocalOnlyHotspot SoftAP first
+            // for full 80 MHz 5 GHz throughput (~1s startup, zero Wi-Fi picker prompt),
+            // cascading cleanly to multi-channel P2P 5GHz if SoftAP is unavailable.
+            if (Build.VERSION.SDK_INT >= 36 && canTrySoftAp5Ghz) {
+                runStageLocalOnlyHotspot(
+                    band5Only = true,
+                    onFailNext = { runP2p5GhzStages(canTryLegacyHotspot = false) },
+                )
+                return
+            }
+
+            runP2p5GhzStages(canTryLegacyHotspot = allow24GhzFallback && canReplaceSlowP2pWithHotspot)
         }
 
         try {
             mgr.requestGroupInfo(ch) { existingGroup ->
-                if (hostSessionSeq.get() != myHostToken) {
-                    finish(null)
-                    return@requestGroupInfo
-                }
-                if (done.get()) return@requestGroupInfo
+                if (isStaleOrDone()) return@requestGroupInfo
                 if (existingGroup != null) {
-                    mgr.removeGroup(ch, object : WifiP2pManager.ActionListener {
-                        override fun onSuccess() {
-                            if (hostSessionSeq.get() != myHostToken) {
-                                finish(null)
-                                return
-                            }
-                            mainHandler.postDelayed({ createGroupWithFallback(0) }, 250)
-                        }
-                        override fun onFailure(reason: Int) {
-                            if (hostSessionSeq.get() != myHostToken) {
-                                finish(null)
-                                return
-                            }
-                            mainHandler.postDelayed({ createGroupWithFallback(0) }, 250)
-                        }
-                    })
+                    removeGroupThen(250L) { startStages() }
                 } else {
-                    createGroupWithFallback(0)
+                    startStages()
                 }
             }
         } catch (_: SecurityException) {
@@ -1123,6 +1556,7 @@ class DirectFabricHandler(
             return
         }
 
+        acquireTransferLocks()
         unregisterActiveNetworkCallback()
         val mySessionId = synchronized(networkLock) {
             val next = networkSessionSeq.incrementAndGet()
@@ -1136,8 +1570,10 @@ class DirectFabricHandler(
         }
 
         val done = AtomicBoolean(false)
+        val pendingNoFreqFinish = AtomicReference<Runnable?>(null)
         lateinit var timeoutRunnable: Runnable
         fun finish(res: Map<String, Any>?) {
+            pendingNoFreqFinish.getAndSet(null)?.let { mainHandler.removeCallbacks(it) }
             mainHandler.removeCallbacks(timeoutRunnable)
             if (done.compareAndSet(false, true)) {
                 mainHandler.post { result.success(res) }
@@ -1152,7 +1588,7 @@ class DirectFabricHandler(
             }
             finish(null)
         }
-        mainHandler.postDelayed(timeoutRunnable, 15500)
+        mainHandler.postDelayed(timeoutRunnable, 25000)
 
         try {
             val specifier = WifiNetworkSpecifier.Builder()
@@ -1166,66 +1602,165 @@ class DirectFabricHandler(
                 .setNetworkSpecifier(specifier)
                 .build()
 
-            val callback = object : ConnectivityManager.NetworkCallback() {
-                private fun tryResolveFromLinkProps(props: LinkProperties?) {
-                    if (activeNetworkSessionId != mySessionId || done.get()) return
-                    val ipv4 = props?.linkAddresses
-                        ?.map { it.address }
-                        ?.filterIsInstance<Inet4Address>()
-                        ?.firstOrNull { !it.isLinkLocalAddress && !it.isLoopbackAddress }
-                        ?.hostAddress
-                    if (ipv4.isNullOrEmpty()) return
-                    val gwIp = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        props.dhcpServerAddress?.hostAddress ?: expectedGateway
-                    } else {
-                        expectedGateway
+            val latestCaps = AtomicReference<NetworkCapabilities?>(null)
+            val latestFreqMhz = AtomicInteger(0)
+            val latestLinkState = AtomicReference<Pair<Network, LinkProperties>?>(null)
+            var callbackRef: ConnectivityManager.NetworkCallback? = null
+
+            fun commitConnected(ipv4: String, gwIp: String, freqMhz: Int?) {
+                val eventMap = HashMap<String, Any?>().apply {
+                    put("type", "p2pState")
+                    put("state", "connected")
+                    put("ssid", ssid)
+                    put("localIp", ipv4)
+                    put("gatewayIp", gwIp)
+                    if (freqMhz != null && freqMhz > 0) {
+                        put("frequencyMhz", freqMhz)
                     }
-                    emitEvent(
-                        mapOf(
-                            "type" to "p2pState",
-                            "state" to "connected",
-                            "ssid" to ssid,
-                            "localIp" to ipv4,
-                            "gatewayIp" to gwIp,
-                        ),
-                    )
-                    finish(mapOf("localIp" to ipv4, "gatewayIp" to gwIp))
                 }
-
-                override fun onAvailable(network: Network) {
-                    if (activeNetworkSessionId != mySessionId) return
-                    cm.bindProcessToNetwork(network)
-                    tryResolveFromLinkProps(cm.getLinkProperties(network))
-                }
-
-                override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
-                    tryResolveFromLinkProps(linkProperties)
-                }
-
-                override fun onUnavailable() {
-                    synchronized(networkLock) {
-                        if (activeNetworkSessionId == mySessionId) {
-                            cm.bindProcessToNetwork(null)
-                        }
+                emitEvent(eventMap)
+                val resMap = HashMap<String, Any>().apply {
+                    put("localIp", ipv4)
+                    put("gatewayIp", gwIp)
+                    if (freqMhz != null && freqMhz > 0) {
+                        put("frequencyMhz", freqMhz)
                     }
-                    finish(null)
                 }
+                finish(resMap)
+            }
 
-                override fun onLost(network: Network) {
-                    val isCurrent = synchronized(networkLock) {
-                        activeNetworkCallback === this && activeNetworkSessionId == mySessionId
-                    }
-                    if (!isCurrent) return
-                    cm.bindProcessToNetwork(null)
-                    emitEvent(mapOf("type" to "p2pState", "state" to "disconnected"))
-                    finish(null)
+            fun resolveAddresses(props: LinkProperties?): Pair<String, String>? {
+                if (props == null) return null
+                val ipv4 = props.linkAddresses
+                    .map { it.address }
+                    .filterIsInstance<Inet4Address>()
+                    .firstOrNull { !it.isLinkLocalAddress && !it.isLoopbackAddress }
+                    ?.hostAddress
+                if (ipv4.isNullOrEmpty()) return null
+                val gwIp = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    props.dhcpServerAddress?.hostAddress ?: expectedGateway
+                } else {
+                    expectedGateway
+                }
+                return ipv4 to gwIp
+            }
+
+            fun tryResolveFromLinkProps(network: Network, props: LinkProperties?) {
+                if (activeNetworkSessionId != mySessionId || done.get()) return
+                val addrs = resolveAddresses(props) ?: return
+                val (ipv4, gwIp) = addrs
+                val capsForFreq = latestCaps.get() ?: cm.getNetworkCapabilities(network)
+                val resolvedFreq = extractWifiFrequencyMhz(network, capsForFreq, ssid)
+                    ?: latestFreqMhz.get()
+                if (resolvedFreq > 0) {
+                    commitConnected(ipv4, gwIp, resolvedFreq)
+                    return
+                }
+                if (props != null) {
+                    latestLinkState.set(network to props)
+                }
+                // Wait briefly for onCapabilitiesChanged (FLAG_INCLUDE_LOCATION_INFO)
+                // when DHCP finishes first so measured 5 GHz center frequency isn't lost.
+                val delayed = Runnable {
+                    if (activeNetworkSessionId != mySessionId || done.get()) return@Runnable
+                    val statePair = latestLinkState.get()
+                    val fallbackNet = statePair?.first ?: network
+                    val fallbackCaps = latestCaps.get() ?: cm.getNetworkCapabilities(fallbackNet)
+                    val fallbackFreq = extractWifiFrequencyMhz(fallbackNet, fallbackCaps, ssid)
+                        ?: latestFreqMhz.get()
+                    commitConnected(ipv4, gwIp, if (fallbackFreq > 0) fallbackFreq else null)
+                }
+                if (pendingNoFreqFinish.compareAndSet(null, delayed)) {
+                    mainHandler.postDelayed(delayed, 450)
                 }
             }
 
+            fun onNetAvailable(network: Network) {
+                if (activeNetworkSessionId != mySessionId) return
+                cm.bindProcessToNetwork(network)
+                tryResolveFromLinkProps(network, cm.getLinkProperties(network))
+            }
+
+            fun onNetCapabilities(network: Network, nc: NetworkCapabilities) {
+                if (activeNetworkSessionId != mySessionId) return
+                latestCaps.set(nc)
+                val freq = extractWifiFrequencyMhz(network, nc, ssid)
+                if (freq != null && freq > 0) {
+                    latestFreqMhz.set(freq)
+                    val pendingLp = latestLinkState.get()
+                    if (pendingLp != null && pendingLp.first == network && !done.get()) {
+                        tryResolveFromLinkProps(pendingLp.first, pendingLp.second)
+                    }
+                }
+            }
+
+            fun onNetUnavailable() {
+                synchronized(networkLock) {
+                    if (activeNetworkSessionId == mySessionId) {
+                        cm.bindProcessToNetwork(null)
+                    }
+                }
+                finish(null)
+            }
+
+            fun onNetLost() {
+                val isCurrent = synchronized(networkLock) {
+                    activeNetworkCallback === callbackRef && activeNetworkSessionId == mySessionId
+                }
+                if (!isCurrent) return
+                cm.bindProcessToNetwork(null)
+                emitEvent(mapOf("type" to "p2pState", "state" to "disconnected"))
+                finish(null)
+            }
+
+            fun createCallback(includeLocationInfo: Boolean): ConnectivityManager.NetworkCallback {
+                return if (includeLocationInfo && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    object : ConnectivityManager.NetworkCallback(
+                        ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO,
+                    ) {
+                        override fun onAvailable(network: Network) = onNetAvailable(network)
+                        override fun onCapabilitiesChanged(network: Network, nc: NetworkCapabilities) =
+                            onNetCapabilities(network, nc)
+                        override fun onLinkPropertiesChanged(network: Network, lp: LinkProperties) =
+                            tryResolveFromLinkProps(network, lp)
+                        override fun onUnavailable() = onNetUnavailable()
+                        override fun onLost(network: Network) = onNetLost()
+                    }
+                } else {
+                    object : ConnectivityManager.NetworkCallback() {
+                        override fun onAvailable(network: Network) = onNetAvailable(network)
+                        override fun onCapabilitiesChanged(network: Network, nc: NetworkCapabilities) =
+                            onNetCapabilities(network, nc)
+                        override fun onLinkPropertiesChanged(network: Network, lp: LinkProperties) =
+                            tryResolveFromLinkProps(network, lp)
+                        override fun onUnavailable() = onNetUnavailable()
+                        override fun onLost(network: Network) = onNetLost()
+                    }
+                }
+            }
+
+            val useLocationCallback = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+            var callback = createCallback(includeLocationInfo = useLocationCallback)
+            callbackRef = callback
             synchronized(networkLock) {
                 activeNetworkCallback = callback
             }
-            cm.requestNetwork(request, callback, 15000)
+            try {
+                cm.requestNetwork(request, callback, 24000)
+            } catch (sec: SecurityException) {
+                if (!useLocationCallback) throw sec
+                synchronized(networkLock) {
+                    if (activeNetworkCallback === callback) {
+                        unregisterActiveNetworkCallbackLocked()
+                    }
+                }
+                callback = createCallback(includeLocationInfo = false)
+                callbackRef = callback
+                synchronized(networkLock) {
+                    activeNetworkCallback = callback
+                }
+                cm.requestNetwork(request, callback, 24000)
+            }
         } catch (_: Throwable) {
             synchronized(networkLock) {
                 if (activeNetworkSessionId == mySessionId) {
@@ -1234,6 +1769,67 @@ class DirectFabricHandler(
             }
             finish(null)
         }
+    }
+
+    private fun resolveChannelFrequencyMhz(band: Int, channelNumber: Int): Int {
+        if (channelNumber <= 0) return 0
+        if (band == 2 /* BAND_5GHZ */ && channelNumber >= 32) {
+            return 5000 + channelNumber * 5
+        }
+        if (band == 1 /* BAND_2GHZ */) {
+            if (channelNumber in 1..13) return 2407 + channelNumber * 5
+            if (channelNumber == 14) return 2484
+        }
+        return 0
+    }
+
+    private fun discoverPreferred5GhzP2pFrequencies(): List<Int> {
+        val preferredOrder = listOf(5180, 5200, 5220, 5240, 5745, 5785, 5805, 5825)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && hasNearbyWifiPermission()) {
+            try {
+                val usable = wifiManager?.getUsableChannels(
+                    2, // WIFI_BAND_5_GHZ / SoftApConfiguration.BAND_5GHZ
+                    android.net.wifi.WifiAvailableChannel.OP_MODE_WIFI_DIRECT_GO,
+                )
+                if (!usable.isNullOrEmpty()) {
+                    val usableFreqs = usable.map { it.frequencyMhz }.filter { it >= 4900 }.toSet()
+                    if (usableFreqs.isNotEmpty()) {
+                        val ordered = preferredOrder.filter { it in usableFreqs } +
+                            usableFreqs.filter { it !in preferredOrder }
+                        return ordered.distinct().take(4)
+                    }
+                }
+            } catch (_: SecurityException) {
+            } catch (_: Throwable) {}
+        }
+        return listOf(5180, 5200, 5220, 5240)
+    }
+
+    private fun normalizeSsid(raw: String?): String? {
+        if (raw == null) return null
+        val trimmed = raw.trim().removeSurrounding("\"")
+        if (trimmed.isEmpty() || trimmed == "<unknown ssid>") return null
+        return trimmed
+    }
+
+    private fun extractWifiFrequencyMhz(
+        network: Network,
+        caps: NetworkCapabilities? = null,
+        targetSsid: String? = null,
+    ): Int? {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val resolvedCaps = caps ?: connectivityManager?.getNetworkCapabilities(network)
+                val transportInfo = resolvedCaps?.transportInfo
+                if (transportInfo is WifiInfo && transportInfo.frequency > 0) {
+                    val infoSsid = normalizeSsid(transportInfo.ssid)
+                    if (targetSsid == null || infoSsid == null || infoSsid == targetSsid) {
+                        return transportInfo.frequency
+                    }
+                }
+            }
+        } catch (_: Throwable) {}
+        return null
     }
 
     @Suppress("DEPRECATION")
@@ -1275,7 +1871,7 @@ class DirectFabricHandler(
             if (legacyWifiNetId == netId) legacyWifiNetId = -1
             finishLegacy(null)
         }
-        mainHandler.postDelayed(timeoutRunnable, 15500)
+        mainHandler.postDelayed(timeoutRunnable, 25000)
 
         var attempts = 0
         fun pollLegacy() {
@@ -1345,9 +1941,84 @@ class DirectFabricHandler(
         }
     }
 
+    private val transferLockSync = Any()
+    private var activeWifiLock: WifiManager.WifiLock? = null
+    private var activeWakeLock: PowerManager.WakeLock? = null
+
+    private fun sanitizeStableDirectTag(raw: String?): String {
+        if (raw.isNullOrBlank()) return ""
+        val sb = StringBuilder(10)
+        for (ch in raw) {
+            if (ch in 'a'..'z' || ch in 'A'..'Z' || ch in '0'..'9') {
+                sb.append(ch.uppercaseChar())
+                if (sb.length >= 10) break
+            }
+        }
+        return sb.toString()
+    }
+
+    private fun acquireTransferLocks() {
+        synchronized(transferLockSync) {
+            try {
+                if (activeWifiLock == null) {
+                    val wm = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                    val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                    } else {
+                        @Suppress("DEPRECATION")
+                        WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                    }
+                    activeWifiLock = wm?.createWifiLock(mode, "daphq:DirectTransferWifiLock")?.apply {
+                        setReferenceCounted(false)
+                    }
+                }
+                activeWifiLock?.let { if (!it.isHeld) it.acquire() }
+            } catch (_: Throwable) {}
+
+            try {
+                if (activeWakeLock == null) {
+                    val pm = appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+                    activeWakeLock = pm?.newWakeLock(
+                        PowerManager.PARTIAL_WAKE_LOCK,
+                        "daphq:DirectTransferWakeLock",
+                    )?.apply {
+                        setReferenceCounted(false)
+                    }
+                }
+                activeWakeLock?.let { if (!it.isHeld) it.acquire(30 * 60 * 1000L) }
+            } catch (_: Throwable) {}
+        }
+    }
+
+    private fun releaseTransferLocks() {
+        synchronized(transferLockSync) {
+            try {
+                activeWifiLock?.let { if (it.isHeld) it.release() }
+            } catch (_: Throwable) {}
+            try {
+                activeWakeLock?.let { if (it.isHeld) it.release() }
+            } catch (_: Throwable) {}
+        }
+    }
+
+    private fun closeActiveLohsReservation() {
+        val resToClose = synchronized(lohsLock) {
+            val prev = activeLohsReservation
+            activeLohsReservation = null
+            prev
+        }
+        if (resToClose != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                resToClose.close()
+            } catch (_: Throwable) {}
+        }
+    }
+
     @SuppressLint("MissingPermission")
     private fun stopDirectSessionInternal() {
+        releaseTransferLocks()
         hostSessionSeq.incrementAndGet()
+        closeActiveLohsReservation()
         synchronized(networkLock) {
             activeNetworkSessionId = networkSessionSeq.incrementAndGet()
             unregisterActiveNetworkCallbackLocked()
@@ -1363,17 +2034,87 @@ class DirectFabricHandler(
     }
 
     fun destroy() {
+        if (radioReceiverRegistered) {
+            try {
+                appContext.unregisterReceiver(radioStateReceiver)
+            } catch (_: Throwable) {}
+            radioReceiverRegistered = false
+        }
         stopBle()
         stopDirectSessionInternal()
         synchronized(gattClientLock) {
             gattSessionSeq.incrementAndGet()
             try {
                 activeClientGatt?.close()
+            } catch (_: SecurityException) {
             } catch (_: Throwable) {}
             activeClientGatt = null
         }
         methodChannel.setMethodCallHandler(null)
         eventChannel.setStreamHandler(null)
+    }
+
+    private fun isCellularOrTunnelInterface(rawName: String): Boolean {
+        val n = rawName.lowercase()
+        return n.contains("rmnet") ||
+            n.contains("ccmni") ||
+            n.contains("tun") ||
+            n.contains("ppp") ||
+            n.contains("dummy") ||
+            n.contains("v4-rmnet")
+    }
+
+    private fun snapshotActiveIpv4s(): Map<String, String> {
+        val out = LinkedHashMap<String, String>()
+        try {
+            val ifaces = NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
+                .filter { it.isUp && !it.isLoopback }
+            for (iface in ifaces) {
+                if (isCellularOrTunnelInterface(iface.name)) continue
+                for (addr in iface.inetAddresses.toList()) {
+                    if (addr is Inet4Address && !addr.isLoopbackAddress && !addr.isLinkLocalAddress) {
+                        val ip = addr.hostAddress
+                        if (!ip.isNullOrBlank()) {
+                            out[iface.name] = ip
+                        }
+                    }
+                }
+            }
+        } catch (_: Throwable) {}
+        return out
+    }
+
+    private fun resolveApHostIp(ipsBefore: Map<String, String>): String? {
+        return try {
+            val now = snapshotActiveIpv4s()
+            for ((name, ip) in now) {
+                val n = name.lowercase()
+                if (n.contains("p2p")) continue
+                if (n.contains("swlan") || n.contains("softap") ||
+                    n.startsWith("ap") || n.contains("ap0") || n.contains("sap")
+                ) {
+                    return ip
+                }
+            }
+            for ((name, ip) in now) {
+                val n = name.lowercase()
+                if (n.contains("p2p")) continue
+                if (ipsBefore[name] != ip &&
+                    (n.startsWith("wlan") || n.contains("wifi") || n.contains("wl"))
+                ) {
+                    return ip
+                }
+            }
+            for ((name, ip) in now) {
+                val n = name.lowercase()
+                if (n == "wlan1" || n == "wlan2" || n.startsWith("wlan1:") || n.startsWith("wlan2:")) {
+                    return ip
+                }
+            }
+            null
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     private fun resolveP2pInterfaceIp(): String? {

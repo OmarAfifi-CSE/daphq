@@ -23,6 +23,18 @@ class _TransferProgressViewState extends State<TransferProgressView> {
   int _fastCount = 0;
   bool _showSlowSpeedBanner = false;
 
+  bool _isDirect5gRoute(String? routeLabel) {
+    if (routeLabel == null) return false;
+    final lower = routeLabel.toLowerCase();
+    return lower.contains('direct 5ghz') && !lower.contains('fallback');
+  }
+
+  bool _isDirectRoute(String? routeLabel) {
+    if (routeLabel == null) return false;
+    final lower = routeLabel.toLowerCase();
+    return lower.contains('direct') && !lower.contains('fallback');
+  }
+
   ({bool isDone, bool isFailed}) _classifyTransferStatus(
     TransferModel model,
     TransferState state,
@@ -96,6 +108,7 @@ class _TransferProgressViewState extends State<TransferProgressView> {
             previous.model.transferred != current.model.transferred ||
             previous.model.progress != current.model.progress ||
             previous.model.phase != current.model.phase ||
+            previous.model.routeLabel != current.model.routeLabel ||
             previous.isTransferring != current.isTransferring ||
             previous.isReceivingActive != current.isReceivingActive;
       },
@@ -108,7 +121,7 @@ class _TransferProgressViewState extends State<TransferProgressView> {
             !isDone &&
             !isFailed;
 
-        if (!isActive) {
+        if (!isActive || _isDirect5gRoute(model.routeLabel)) {
           if (_showSlowSpeedBanner) {
             setState(() {
               _showSlowSpeedBanner = false;
@@ -156,6 +169,7 @@ class _TransferProgressViewState extends State<TransferProgressView> {
               p.totalSize != c.totalSize ||
               p.fileName != c.fileName ||
               p.analyzeCount != c.analyzeCount ||
+              p.routeLabel != c.routeLabel ||
               previous.isTransferring != current.isTransferring ||
               previous.isReceiving != current.isReceiving ||
               previous.isReceivingActive != current.isReceivingActive ||
@@ -218,6 +232,64 @@ class _TransferProgressViewState extends State<TransferProgressView> {
                     },
                   ),
                   SizedBox(height: 10.0.rh(isDesktop, desktopScale: scale)),
+
+                  if (model.routeLabel != null &&
+                      model.routeLabel!.trim().isNotEmpty) ...[
+                    Builder(
+                      builder: (context) {
+                        final bool isDirect = _isDirectRoute(
+                          model.routeLabel,
+                        );
+                        final Color accent = isDirect
+                            ? AppColors.success
+                            : AppColors.primaryLight;
+                        return Container(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 10.0.rw(isDesktop, desktopScale: scale),
+                            vertical: 4.0.rh(isDesktop, desktopScale: scale),
+                          ),
+                          decoration: BoxDecoration(
+                            color: accent.withAlpha(20),
+                            borderRadius: BorderRadius.circular(
+                              20.0.rr(isDesktop, desktopScale: scale),
+                            ),
+                            border: Border.all(color: accent.withAlpha(75)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                isDirect
+                                    ? Icons.bolt_rounded
+                                    : Icons.wifi_rounded,
+                                size: 13.0.rx(isDesktop, desktopScale: scale),
+                                color: accent,
+                              ),
+                              SizedBox(
+                                width: 5.0.rw(isDesktop, desktopScale: scale),
+                              ),
+                              Flexible(
+                                child: Text(
+                                  model.routeLabel!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: accent,
+                                    fontSize: 11.0.rx(
+                                      isDesktop,
+                                      desktopScale: scale,
+                                    ),
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                    SizedBox(height: 10.0.rh(isDesktop, desktopScale: scale)),
+                  ],
 
                   // 2. Speed Display — or File Count during analyze phase
                   if (model.analyzeCount != null)
@@ -405,7 +477,8 @@ class _TransferProgressViewState extends State<TransferProgressView> {
                   ],
 
                   // Smart Connection Quality / Speed Alert Banner
-                  if (_showSlowSpeedBanner) ...[
+                  if (_showSlowSpeedBanner &&
+                      !_isDirect5gRoute(model.routeLabel)) ...[
                       SizedBox(height: 12.0.rh(isDesktop, desktopScale: scale)),
                       Material(
                         color: Colors.transparent,

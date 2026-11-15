@@ -5,8 +5,19 @@ class AppConstants {
   /// TCP port used for all file transfers.
   static const int transferPort = 62004;
 
+  /// Safe fallback TCP transfer ports (< 49152, outside Windows Hyper-V/WSL NAT ranges).
+  static const List<int> transferFallbackPorts = <int>[42604, 42608];
+
   /// UDP port used for device discovery.
   static const int discoveryPort = 62005;
+
+  /// Ordered UDP discovery ports: primary (62005) plus safe non-ephemeral fallbacks (< 49152).
+  static const List<int> discoveryPorts = <int>[
+    discoveryPort,
+    42605,
+    42606,
+    42607,
+  ];
 
   /// Global branding string.
   static const String appName = 'Daphq';
@@ -28,11 +39,10 @@ class AppConstants {
   /// Default target IP address for the sender.
   static const String defaultTargetIp = '192.168.137.1';
 
-  /// Flush threshold for socket buffer (1 MB).
-  /// At typical hotspot speeds (~25 MB/s), this creates natural backpressure
-  /// so the send loop runs at network speed, not disk speed — ensuring smooth
-  /// progress updates on fast-storage devices (e.g. UFS 4.0).
-  static const int socketFlushThresholdBytes = 1 * 1024 * 1024;
+  /// Flush threshold for pipelined 5GHz socket writes (16 MB).
+  /// Large coalesced socket flushes fill high-bandwidth 5GHz/Wi-Fi 6 TCP windows
+  /// without draining the OS send buffer to zero every few megabytes.
+  static const int socketFlushThresholdBytes = 16 * 1024 * 1024;
 
   /// UI update interval during transfers (milliseconds).
   static const int speedUpdateIntervalMs = 500;
@@ -63,19 +73,15 @@ class AppConstants {
   static const String nearbyDevices = 'Nearby Devices';
   static const String searchingDevices = 'Searching for devices...';
   static const String noDevicesFound = 'No devices found yet. Make sure both are on same Wi-Fi.';
-  static const String advancedMode = 'Advanced (Manual IP)';
   static const String readyToReceive = 'Ready to Receive';
   static const String noFolderSelected = 'No receive folder selected';
   static const String saveToPrefix = 'Save to: ';
   static const String stopReceiver = 'Stop Receiver';
   static const String startReceiver = 'Start Receiver Server';
   static const String selectFolderFirst = 'Please select a receive folder first!';
-  static const String enterTargetIp = 'Please enter target IP!';
   
   static String saveTo(String path) => '$saveToPrefix$path';
 
-  static const String receiverIpLabel = 'Receiver IP Address (e.g. 192.168.x.x)';
-  static const String receiverIpHelper = 'Please update this to the exact Receiver IP';
   static const String sendFile = 'Send File';
   static const String sendFolder = 'Send Folder';
   static const String cancelTransfer = 'Cancel Transfer';
@@ -104,12 +110,16 @@ class AppConstants {
   static const double cardPadding = 12.0;
 
   // --- Discovery Status ---
-  static const String discoveryConflictTitle = 'Windows Hotspot conflict detected';
+  static const String discoveryConflictTitle = 'LAN discovery port blocked';
   static const String discoveryConflictHowTo = 'How to fix this?';
-  static const String discoveryConflictDesc = 'Windows ICS (Hotspot) is blocking the network port.';
-  static const String discoveryConflictStep1 = '1. Turn OFF Windows Hotspot.';
-  static const String discoveryConflictStep2 = '2. Wait 5 seconds (Cooldown).';
-  static const String discoveryConflictStep3 = '3. Turn Hotspot back ON.';
+  static const String discoveryConflictDesc =
+      'Windows Firewall, Hyper-V/WSL NAT exclusions, or Mobile Hotspot blocked Daphq\'s LAN discovery ports.';
+  static const String discoveryConflictStep1 =
+      '1. Allow Daphq on Private & Public networks in Windows Firewall.';
+  static const String discoveryConflictStep2 =
+      '2. If Windows Mobile Hotspot was just toggled, turn it OFF, wait 5 seconds, then turn it ON again.';
+  static const String discoveryConflictStep3 =
+      '3. Tap "Try Again Now" (Bluetooth fallback still works if enabled).';
   static const String discoveryConflictGotIt = 'Got it';
   static const String discoveryConflictTryAgain = 'Try Again Now';
   static const String discoveryStatusConnected = 'Connected';

@@ -11,10 +11,12 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -31,6 +33,7 @@
 #include <winrt/Windows.Devices.WiFiDirect.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.Networking.h>
 #include <winrt/Windows.Networking.Connectivity.h>
 #include <winrt/Windows.Networking.NetworkOperators.h>
 #include <winrt/Windows.Security.Credentials.h>
@@ -225,6 +228,97 @@ std::string RandomString(const char* alphabet, size_t len) {
   return out;
 }
 
+int QueryConnectedChannelFrequencyMhz(HANDLE wlan, const GUID& iface_guid) {
+  if (!wlan) return 0;
+  ULONG data_size = 0;
+  PVOID raw_data = nullptr;
+  WLAN_OPCODE_VALUE_TYPE value_type = wlan_opcode_value_type_invalid;
+  const DWORD res = ::WlanQueryInterface(
+      wlan,
+      &iface_guid,
+      wlan_intf_opcode_channel_number,
+      nullptr,
+      &data_size,
+      &raw_data,
+      &value_type);
+  int freq_mhz = 0;
+  if (res == ERROR_SUCCESS && raw_data != nullptr && data_size >= sizeof(ULONG)) {
+    const ULONG ch = *reinterpret_cast<const ULONG*>(raw_data);
+    if (ch >= 1 && ch <= 13) {
+      freq_mhz = static_cast<int>(2407 + 5 * ch);
+    } else if (ch == 14) {
+      freq_mhz = 2484;
+    } else if (ch >= 32 && ch <= 177) {
+      freq_mhz = static_cast<int>(5000 + 5 * ch);
+    } else if (ch >= 2400 && ch <= 7125) {
+      freq_mhz = static_cast<int>(ch);
+    } else if (ch >= 2400000 && ch <= 7125000) {
+      freq_mhz = static_cast<int>(ch / 1000);
+    }
+  }
+  if (raw_data != nullptr) {
+    ::WlanFreeMemory(raw_data);
+  }
+  if (freq_mhz > 0) {
+    return freq_mhz;
+  }
+
+  // Fallback via active BSS entry (ulChCenterFrequency in kHz) when a driver
+  // omits wlan_intf_opcode_channel_number right after association.
+  ULONG conn_size = 0;
+  PVOID conn_raw = nullptr;
+  WLAN_OPCODE_VALUE_TYPE conn_type = wlan_opcode_value_type_invalid;
+  if (::WlanQueryInterface(
+          wlan,
+          &iface_guid,
+          wlan_intf_opcode_current_connection,
+          nullptr,
+          &conn_size,
+          &conn_raw,
+          &conn_type) == ERROR_SUCCESS &&
+      conn_raw != nullptr &&
+      conn_size >= sizeof(WLAN_CONNECTION_ATTRIBUTES)) {
+    const auto* attrs =
+        reinterpret_cast<const WLAN_CONNECTION_ATTRIBUTES*>(conn_raw);
+    DOT11_SSID ssid = attrs->wlanAssociationAttributes.dot11Ssid;
+    PWLAN_BSS_LIST bss_list = nullptr;
+    if (::WlanGetNetworkBssList(
+            wlan,
+            &iface_guid,
+            ssid.uSSIDLength > 0 ? &ssid : nullptr,
+            attrs->wlanAssociationAttributes.dot11BssType,
+            FALSE,
+            nullptr,
+            &bss_list) == ERROR_SUCCESS &&
+        bss_list != nullptr) {
+      int ssid_match_freq = 0;
+      for (DWORD i = 0; i < bss_list->dwNumberOfItems; ++i) {
+        const WLAN_BSS_ENTRY& bss = bss_list->wlanBssEntries[i];
+        if (bss.ulChCenterFrequency == 0) continue;
+        const int cand = static_cast<int>(bss.ulChCenterFrequency / 1000);
+        if (std::memcmp(
+                bss.dot11Bssid,
+                attrs->wlanAssociationAttributes.dot11Bssid,
+                sizeof(DOT11_MAC_ADDRESS)) == 0) {
+          freq_mhz = cand;
+          break;
+        }
+        if (ssid_match_freq == 0) {
+          ssid_match_freq = cand;
+        }
+      }
+      if (freq_mhz == 0) {
+        freq_mhz = ssid_match_freq;
+      }
+      ::WlanFreeMemory(bss_list);
+    }
+  }
+  if (conn_raw != nullptr) {
+    ::WlanFreeMemory(conn_raw);
+  }
+  return freq_mhz;
+}
+
 bool QueryWifiInterfaceAddresses(
     const GUID* target_guid,
     std::string* out_local_ip,
@@ -332,46 +426,86 @@ std::string FindSoftApHostIp() {
   return tethering_137_candidate;
 }
 
-bool SelectBestWlanInterface(
-    HANDLE wlan,
-    GUID* out_guid,
-    bool* out_supports_5g) {
+struct WlanProbeResult {
+  bool hardware_present = false;
+  bool radio_on = false;
+  bool ready_found = false;
+  GUID best_guid{};
+  bool supports_5g = false;
+};
+
+WlanProbeResult ProbeWlanState(HANDLE wlan) {
+  WlanProbeResult res;
   PWLAN_INTERFACE_INFO_LIST iface_list = nullptr;
   if (::WlanEnumInterfaces(wlan, nullptr, &iface_list) != ERROR_SUCCESS ||
       !iface_list) {
-    return false;
+    return res;
   }
 
-  bool found = false;
+  res.hardware_present = (iface_list->dwNumberOfItems > 0);
   int best_score = -1;
-  GUID best_guid{};
 
   for (DWORD i = 0; i < iface_list->dwNumberOfItems; ++i) {
     const auto& info = iface_list->InterfaceInfo[i];
+    bool iface_radio_on = (info.isState != wlan_interface_state_not_ready);
+
+    DWORD rsz = 0;
+    PVOID rptr = nullptr;
+    WLAN_OPCODE_VALUE_TYPE rop = wlan_opcode_value_type_invalid;
+    if (::WlanQueryInterface(
+            wlan,
+            &info.InterfaceGuid,
+            wlan_intf_opcode_radio_state,
+            nullptr,
+            &rsz,
+            &rptr,
+            &rop) == ERROR_SUCCESS &&
+        rptr &&
+        rsz >= sizeof(WLAN_RADIO_STATE)) {
+      const auto* rs = static_cast<PWLAN_RADIO_STATE>(rptr);
+      if (rs->dwNumberOfPhys > 0) {
+        constexpr DWORD max_phys = static_cast<DWORD>(
+            sizeof(rs->PhyRadioState) / sizeof(rs->PhyRadioState[0]));
+        bool any_phy_on = false;
+        for (DWORD p = 0; p < rs->dwNumberOfPhys && p < max_phys; ++p) {
+          if (rs->PhyRadioState[p].dot11SoftwareRadioState ==
+                  dot11_radio_state_on &&
+              rs->PhyRadioState[p].dot11HardwareRadioState ==
+                  dot11_radio_state_on) {
+            any_phy_on = true;
+            break;
+          }
+        }
+        iface_radio_on = any_phy_on;
+      }
+    }
+    if (rptr) {
+      ::WlanFreeMemory(rptr);
+    }
+
+    if (iface_radio_on) {
+      res.radio_on = true;
+    }
     if (info.isState == wlan_interface_state_not_ready) continue;
     int score = (info.isState == wlan_interface_state_connected) ? 3 : 2;
     if (score > best_score) {
       best_score = score;
-      best_guid = info.InterfaceGuid;
-      found = true;
+      res.best_guid = info.InterfaceGuid;
+      res.ready_found = true;
     }
   }
   ::WlanFreeMemory(iface_list);
 
-  if (!found) return false;
-  *out_guid = best_guid;
-
-  if (out_supports_5g) {
-    *out_supports_5g = false;
+  if (res.ready_found) {
     PWLAN_INTERFACE_CAPABILITY cap = nullptr;
-    if (::WlanGetInterfaceCapability(wlan, &best_guid, nullptr, &cap) == ERROR_SUCCESS &&
+    if (::WlanGetInterfaceCapability(wlan, &res.best_guid, nullptr, &cap) == ERROR_SUCCESS &&
         cap) {
       for (DWORD j = 0; j < cap->dwNumberOfSupportedPhys; ++j) {
         const auto phy = cap->dot11PhyTypes[j];
         if (phy == dot11_phy_type_ofdm ||
             phy == dot11_phy_type_vht ||
             phy == dot11_phy_type_he) {
-          *out_supports_5g = true;
+          res.supports_5g = true;
           break;
         }
       }
@@ -379,6 +513,19 @@ bool SelectBestWlanInterface(
     }
   }
 
+  return res;
+}
+
+bool SelectBestWlanInterface(
+    HANDLE wlan,
+    GUID* out_guid,
+    bool* out_supports_5g) {
+  const WlanProbeResult probe = ProbeWlanState(wlan);
+  if (!probe.ready_found) return false;
+  *out_guid = probe.best_guid;
+  if (out_supports_5g) {
+    *out_supports_5g = probe.supports_5g;
+  }
   return true;
 }
 
@@ -416,6 +563,106 @@ bool IsWlanConnectedToSsid(
   return matches;
 }
 
+bool IsLocationConsentDeniedKey(HKEY root, const wchar_t* subkey) {
+  wchar_t value_buf[64]{};
+  DWORD cb = static_cast<DWORD>(sizeof(value_buf));
+  const LSTATUS st = ::RegGetValueW(
+      root,
+      subkey,
+      L"Value",
+      RRF_RT_REG_SZ,
+      nullptr,
+      value_buf,
+      &cb);
+  if (st != ERROR_SUCCESS) return false;
+  value_buf[63] = L'\0';
+  return ::_wcsicmp(value_buf, L"Deny") == 0;
+}
+
+bool QueryWindowsLocationConsent() {
+  static constexpr wchar_t kLocSubkey[] =
+      L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\location";
+  static constexpr wchar_t kLocNonPackagedSubkey[] =
+      L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\location\\NonPackaged";
+  if (IsLocationConsentDeniedKey(HKEY_LOCAL_MACHINE, kLocSubkey)) return false;
+  if (IsLocationConsentDeniedKey(HKEY_CURRENT_USER, kLocSubkey)) return false;
+  if (IsLocationConsentDeniedKey(HKEY_CURRENT_USER, kLocNonPackagedSubkey)) {
+    return false;
+  }
+  return true;
+}
+
+std::string SanitizeStableDirectTag(const char* raw) {
+  if (!raw) return {};
+  std::string out;
+  out.reserve(10);
+  for (const char* p = raw; *p != '\0' && out.size() < 10; ++p) {
+    const unsigned char uc = static_cast<unsigned char>(*p);
+    if (std::isalnum(uc) != 0) {
+      out.push_back(static_cast<char>(std::toupper(uc)));
+    }
+  }
+  return out;
+}
+
+bool CapsEqual(const DaphqRadioCapabilities& a, const DaphqRadioCapabilities& b) {
+  return a.has_wifi == b.has_wifi &&
+         a.has_ble == b.has_ble &&
+         a.wifi_hardware_present == b.wifi_hardware_present &&
+         a.wifi_enabled == b.wifi_enabled &&
+         a.bluetooth_hardware_present == b.bluetooth_hardware_present &&
+         a.bluetooth_enabled == b.bluetooth_enabled &&
+         a.can_host_direct_5g == b.can_host_direct_5g &&
+         a.location_service_enabled == b.location_service_enabled;
+}
+
+bool QueryConnectedProfileInfo(
+    HANDLE wlan, const GUID& iface_guid, std::wstring* out_profile_name) {
+  if (out_profile_name) out_profile_name->clear();
+  if (!wlan || !out_profile_name) return false;
+  DWORD data_size = 0;
+  PWLAN_CONNECTION_ATTRIBUTES conn_attrs = nullptr;
+  const DWORD qres = ::WlanQueryInterface(
+      wlan,
+      &iface_guid,
+      wlan_intf_opcode_current_connection,
+      nullptr,
+      &data_size,
+      reinterpret_cast<PVOID*>(&conn_attrs),
+      nullptr);
+  if (qres != ERROR_SUCCESS || !conn_attrs) {
+    if (conn_attrs) ::WlanFreeMemory(conn_attrs);
+    return false;
+  }
+  const bool connected = (conn_attrs->isState == wlan_interface_state_connected);
+  std::wstring profile_name(conn_attrs->strProfileName);
+  ::WlanFreeMemory(conn_attrs);
+  if (!connected || profile_name.empty()) return false;
+  if (profile_name.rfind(L"DIRECT-DQ-", 0) == 0) return false;
+  *out_profile_name = std::move(profile_name);
+  return true;
+}
+
+void SetWlanInterfacePerfMode(HANDLE wlan, const GUID& iface_guid, bool enable) {
+  if (!wlan) return;
+  BOOL bg_scan = enable ? FALSE : TRUE;
+  ::WlanSetInterface(
+      wlan,
+      &iface_guid,
+      wlan_intf_opcode_background_scan_enabled,
+      static_cast<DWORD>(sizeof(bg_scan)),
+      &bg_scan,
+      nullptr);
+  BOOL media_mode = enable ? TRUE : FALSE;
+  ::WlanSetInterface(
+      wlan,
+      &iface_guid,
+      wlan_intf_opcode_media_streaming_mode,
+      static_cast<DWORD>(sizeof(media_mode)),
+      &media_mode,
+      nullptr);
+}
+
 struct SharedCallbackState {
   std::mutex mu;
   std::condition_variable cv;
@@ -423,10 +670,15 @@ struct SharedCallbackState {
   bool alive = true;
   DaphqBleBeaconCallback beacon_cb = nullptr;
   DaphqGattRequestCallback gatt_cb = nullptr;
+  DaphqRadioStateCallback radio_cb = nullptr;
   void* user_data = nullptr;
   std::string local_info_json = "{}";
   std::unordered_map<uint64_t, BluetoothAddressType> ble_addr_types;
   std::vector<WiFiDirectDevice> active_wfd_devices;
+  bool radio_debounce_active = false;
+  std::chrono::steady_clock::time_point radio_debounce_deadline{};
+  bool has_last_radio_caps = false;
+  DaphqRadioCapabilities last_radio_caps{};
 };
 
 struct InFlightDecGuard {
@@ -476,8 +728,17 @@ struct DirectContext {
   TetheringWiFiBand orig_ap_band = TetheringWiFiBand::Auto;
 
   std::wstring saved_temp_profile_name;
+  std::wstring prev_wifi_profile;
   GUID active_wlan_guid{};
   bool has_active_wlan_guid = false;
+  GUID perf_tuned_guid{};
+  bool wlan_perf_tuned = false;
+  HANDLE power_request = INVALID_HANDLE_VALUE;
+  bool power_lock_active = false;
+
+  std::vector<std::pair<Radio, winrt::event_token>> radio_tokens;
+  winrt::event_token net_status_token{};
+  bool has_net_status_token = false;
 };
 
 template <typename AsyncOp>
@@ -511,6 +772,230 @@ bool AwaitWithAbort(
   }
 }
 
+void SetWindowsTransferPowerRequest(DirectContext* ctx, bool enable) {
+  if (!ctx) return;
+  HANDLE to_close = INVALID_HANDLE_VALUE;
+  if (enable) {
+    {
+      std::lock_guard<std::mutex> lock(ctx->handle_mu);
+      if (ctx->power_request != INVALID_HANDLE_VALUE || ctx->aborted.load()) {
+        ctx->power_lock_active = (ctx->power_request != INVALID_HANDLE_VALUE);
+        return;
+      }
+    }
+    REASON_CONTEXT reason{};
+    reason.Version = POWER_REQUEST_CONTEXT_VERSION;
+    reason.Flags = POWER_REQUEST_CONTEXT_SIMPLE_STRING;
+    reason.Reason.SimpleReasonString =
+        const_cast<LPWSTR>(L"Daphq active high-speed transfer");
+    HANDLE req = ::PowerCreateRequest(&reason);
+    if (req != INVALID_HANDLE_VALUE) {
+      if (!::PowerSetRequest(req, PowerRequestSystemRequired)) {
+        ::CloseHandle(req);
+        req = INVALID_HANDLE_VALUE;
+      }
+    }
+    std::lock_guard<std::mutex> lock(ctx->handle_mu);
+    if (req != INVALID_HANDLE_VALUE) {
+      if (ctx->power_request == INVALID_HANDLE_VALUE && !ctx->aborted.load()) {
+        ctx->power_request = req;
+        ctx->power_lock_active = true;
+      } else {
+        to_close = req;
+      }
+    }
+    if (to_close != INVALID_HANDLE_VALUE) {
+      ::PowerClearRequest(to_close, PowerRequestSystemRequired);
+      ::CloseHandle(to_close);
+    }
+  } else {
+    {
+      std::lock_guard<std::mutex> lock(ctx->handle_mu);
+      to_close = ctx->power_request;
+      ctx->power_request = INVALID_HANDLE_VALUE;
+      ctx->power_lock_active = false;
+    }
+    if (to_close != INVALID_HANDLE_VALUE) {
+      ::PowerClearRequest(to_close, PowerRequestSystemRequired);
+      ::CloseHandle(to_close);
+    }
+  }
+}
+
+DaphqRadioCapabilities ProbeWinRadioCapabilities(bool force_wlan_refresh = true) {
+  ComMtaScope com;
+  DaphqRadioCapabilities caps{};
+  caps.location_service_enabled = QueryWindowsLocationConsent() ? 1 : 0;
+
+  try {
+    static std::mutex s_wlan_cache_mu;
+    static bool s_has_wlan_cache = false;
+    static WlanProbeResult s_cached_wlan{};
+
+    bool wifi_hw_from_radio = false;
+    bool wifi_on_from_radio = false;
+    bool bt_hw_from_radio = false;
+    bool bt_on_from_radio = false;
+    bool radio_query_ok = false;
+
+    try {
+      auto radios = Radio::GetRadiosAsync().get();
+      radio_query_ok = true;
+      for (uint32_t i = 0; i < radios.Size(); ++i) {
+        auto r = radios.GetAt(i);
+        if (r.Kind() == RadioKind::WiFi) {
+          wifi_hw_from_radio = true;
+          if (r.State() == RadioState::On) {
+            wifi_on_from_radio = true;
+          }
+        } else if (r.Kind() == RadioKind::Bluetooth) {
+          bt_hw_from_radio = true;
+          if (r.State() == RadioState::On) {
+            bt_on_from_radio = true;
+          }
+        }
+      }
+    } catch (...) {
+      radio_query_ok = false;
+    }
+
+    bool need_wlan_probe = force_wlan_refresh || !radio_query_ok;
+    WlanProbeResult wres{};
+    {
+      std::lock_guard<std::mutex> clock(s_wlan_cache_mu);
+      if (!s_has_wlan_cache ||
+          (!s_cached_wlan.supports_5g && wifi_on_from_radio)) {
+        need_wlan_probe = true;
+      }
+      if (!need_wlan_probe) {
+        wres = s_cached_wlan;
+      }
+    }
+
+    if (need_wlan_probe) {
+      HANDLE wlan = nullptr;
+      DWORD negotiated = 0;
+      if (::WlanOpenHandle(2, nullptr, &negotiated, &wlan) == ERROR_SUCCESS && wlan) {
+        wres = ProbeWlanState(wlan);
+        ::WlanCloseHandle(wlan, nullptr);
+        std::lock_guard<std::mutex> clock(s_wlan_cache_mu);
+        s_cached_wlan = wres;
+        s_has_wlan_cache = true;
+      }
+    }
+
+    const bool wifi_hw_from_wlan = wres.hardware_present;
+    const bool wifi_on_from_wlan = wres.ready_found || wres.radio_on;
+    const bool supports_5g = wres.supports_5g;
+
+    const bool wifi_hw = wifi_hw_from_wlan || wifi_hw_from_radio;
+    const bool wifi_on = radio_query_ok
+                             ? wifi_on_from_radio
+                             : (wifi_hw_from_wlan && wifi_on_from_wlan);
+    caps.wifi_hardware_present = wifi_hw ? 1 : 0;
+    caps.wifi_enabled = (wifi_hw && wifi_on) ? 1 : 0;
+    caps.has_wifi = caps.wifi_enabled;
+    bool tethering_5g_capable = false;
+    if (caps.has_wifi && supports_5g) {
+      try {
+        auto profile = NetworkInformation::GetInternetConnectionProfile();
+        if (profile &&
+            NetworkOperatorTetheringManager::GetTetheringCapabilityFromConnectionProfile(
+                profile) == TetheringCapability::Enabled) {
+          auto tethering =
+              NetworkOperatorTetheringManager::CreateFromConnectionProfile(profile);
+          auto cfg = tethering.GetCurrentAccessPointConfiguration();
+          tethering_5g_capable =
+              cfg.IsBandSupported(TetheringWiFiBand::FiveGigahertz);
+        }
+      } catch (...) {
+        tethering_5g_capable = false;
+      }
+    }
+    caps.can_host_direct_5g = tethering_5g_capable ? 1 : 0;
+
+    BluetoothAdapter adapter{nullptr};
+    try {
+      adapter = BluetoothAdapter::GetDefaultAsync().get();
+    } catch (...) {
+      adapter = nullptr;
+    }
+    const bool adapter_ble_supported = adapter && adapter.IsLowEnergySupported();
+    const bool bt_hw = adapter_ble_supported || bt_hw_from_radio;
+    const bool bt_on = bt_hw_from_radio ? bt_on_from_radio : (!radio_query_ok && adapter_ble_supported);
+    caps.bluetooth_hardware_present = bt_hw ? 1 : 0;
+    caps.bluetooth_enabled = (bt_hw && bt_on) ? 1 : 0;
+    caps.has_ble = (adapter_ble_supported && bt_on) ? 1 : 0;
+  } catch (...) {}
+
+  return caps;
+}
+
+void NotifyRadioStateChange(const std::shared_ptr<SharedCallbackState>& cb_state) {
+  if (!cb_state) return;
+  bool launch_debouncer = false;
+  {
+    std::lock_guard<std::mutex> slock(cb_state->mu);
+    if (!cb_state->alive || !cb_state->radio_cb) return;
+    cb_state->radio_debounce_deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(380);
+    if (!cb_state->radio_debounce_active) {
+      cb_state->radio_debounce_active = true;
+      ++cb_state->in_flight_callbacks;
+      launch_debouncer = true;
+    }
+  }
+  cb_state->cv.notify_all();
+  if (!launch_debouncer) return;
+
+  std::thread([cb_state]() {
+    InFlightDecGuard dec{cb_state};
+    for (;;) {
+      std::unique_lock<std::mutex> lock(cb_state->mu);
+      if (!cb_state->alive || !cb_state->radio_cb) {
+        cb_state->radio_debounce_active = false;
+        return;
+      }
+      const auto deadline = cb_state->radio_debounce_deadline;
+      if (cb_state->cv.wait_until(
+              lock, deadline, [cb_state, deadline]() {
+                return !cb_state->alive || !cb_state->radio_cb ||
+                       cb_state->radio_debounce_deadline != deadline;
+              })) {
+        continue;
+      }
+      if (!cb_state->alive || !cb_state->radio_cb) {
+        cb_state->radio_debounce_active = false;
+        return;
+      }
+      DaphqRadioStateCallback cb = cb_state->radio_cb;
+      void* ud = cb_state->user_data;
+      cb_state->radio_debounce_active = false;
+      lock.unlock();
+
+      const DaphqRadioCapabilities caps = ProbeWinRadioCapabilities(false);
+      bool should_emit = true;
+      {
+        std::lock_guard<std::mutex> check_lock(cb_state->mu);
+        if (!cb_state->alive || cb_state->radio_cb != cb) {
+          return;
+        }
+        if (cb_state->has_last_radio_caps &&
+            CapsEqual(cb_state->last_radio_caps, caps)) {
+          should_emit = false;
+        } else {
+          cb_state->last_radio_caps = caps;
+          cb_state->has_last_radio_caps = true;
+        }
+      }
+      if (should_emit) {
+        cb(caps, ud);
+      }
+      return;
+    }
+  }).detach();
+}
+
 }  // namespace
 
 extern "C" {
@@ -527,6 +1012,67 @@ void* daphq_direct_create(
   return ctx;
 }
 
+void daphq_direct_set_radio_callback(
+    void* handle,
+    DaphqRadioStateCallback radio_cb) {
+  if (!handle) return;
+  auto* ctx = static_cast<DirectContext*>(handle);
+  if (ctx->aborted.load()) return;
+
+  {
+    std::lock_guard<std::mutex> slock(ctx->state->mu);
+    if (!ctx->state->alive) return;
+    ctx->state->radio_cb = radio_cb;
+  }
+
+  std::shared_ptr<SharedCallbackState> cb_state = ctx->state;
+  std::vector<std::pair<Radio, winrt::event_token>> new_tokens;
+  winrt::event_token new_net_token{};
+  bool got_net_token = false;
+
+  ComMtaScope com;
+  try {
+    auto radios = Radio::GetRadiosAsync().get();
+    for (uint32_t i = 0; i < radios.Size(); ++i) {
+      auto r = radios.GetAt(i);
+      if (r.Kind() == RadioKind::WiFi || r.Kind() == RadioKind::Bluetooth) {
+        auto tok = r.StateChanged(
+            [cb_state](Radio const&,
+                       winrt::Windows::Foundation::IInspectable const&) {
+              NotifyRadioStateChange(cb_state);
+            });
+        new_tokens.emplace_back(r, tok);
+      }
+    }
+  } catch (...) {}
+
+  try {
+    new_net_token = NetworkInformation::NetworkStatusChanged(
+        [cb_state](winrt::Windows::Foundation::IInspectable const&) {
+          NotifyRadioStateChange(cb_state);
+        });
+    got_net_token = true;
+  } catch (...) {}
+
+  std::lock_guard<std::mutex> lock(ctx->handle_mu);
+  for (auto& kv : ctx->radio_tokens) {
+    try {
+      kv.first.StateChanged(kv.second);
+    } catch (...) {}
+  }
+  ctx->radio_tokens = std::move(new_tokens);
+  if (ctx->has_net_status_token) {
+    try {
+      NetworkInformation::NetworkStatusChanged(ctx->net_status_token);
+    } catch (...) {}
+    ctx->has_net_status_token = false;
+  }
+  if (got_net_token) {
+    ctx->net_status_token = new_net_token;
+    ctx->has_net_status_token = true;
+  }
+}
+
 void daphq_direct_request_abort(void* handle) {
   if (!handle) return;
   auto* ctx = static_cast<DirectContext*>(handle);
@@ -536,6 +1082,7 @@ void daphq_direct_request_abort(void* handle) {
     ctx->state->alive = false;
     ctx->state->beacon_cb = nullptr;
     ctx->state->gatt_cb = nullptr;
+    ctx->state->radio_cb = nullptr;
     ctx->state->user_data = nullptr;
   }
   ctx->state->cv.notify_all();
@@ -548,6 +1095,23 @@ void daphq_direct_destroy(void* handle) {
   daphq_direct_stop_session(handle);
   auto* ctx = static_cast<DirectContext*>(handle);
   {
+    ComMtaScope com;
+    std::lock_guard<std::mutex> lock(ctx->handle_mu);
+    for (auto& kv : ctx->radio_tokens) {
+      try {
+        kv.first.StateChanged(kv.second);
+      } catch (...) {}
+    }
+    ctx->radio_tokens.clear();
+    if (ctx->has_net_status_token) {
+      try {
+        NetworkInformation::NetworkStatusChanged(ctx->net_status_token);
+      } catch (...) {}
+      ctx->has_net_status_token = false;
+    }
+  }
+  SetWindowsTransferPowerRequest(ctx, false);
+  {
     std::unique_lock<std::mutex> lock(ctx->state->mu);
     ctx->state->cv.wait(
         lock, [ctx]() { return ctx->state->in_flight_callbacks == 0; });
@@ -556,55 +1120,7 @@ void daphq_direct_destroy(void* handle) {
 }
 
 DaphqRadioCapabilities daphq_direct_get_capabilities(void* /*handle*/) {
-  ComMtaScope com;
-  DaphqRadioCapabilities caps{0, 0, 0};
-
-  try {
-    HANDLE wlan = nullptr;
-    DWORD negotiated = 0;
-    if (::WlanOpenHandle(2, nullptr, &negotiated, &wlan) == ERROR_SUCCESS && wlan) {
-      GUID iface_guid{};
-      bool supports_5g = false;
-      if (SelectBestWlanInterface(wlan, &iface_guid, &supports_5g)) {
-        caps.has_wifi = 1;
-        bool tethering_capable = false;
-        try {
-          auto profile = NetworkInformation::GetInternetConnectionProfile();
-          if (profile) {
-            auto cap = NetworkOperatorTetheringManager::GetTetheringCapabilityFromConnectionProfile(profile);
-            tethering_capable = (cap == TetheringCapability::Enabled);
-          }
-        } catch (...) {}
-        // Wi-Fi Direct / Hosted SoftAP 5GHz hosting is available on 5GHz-capable WLAN adapters
-        // (Mobile Hotspot adds ICS DHCP when an internet profile is enabled; WFD works offline too).
-        (void)tethering_capable;
-        caps.can_host_direct_5g = supports_5g ? 1 : 0;
-      }
-      ::WlanCloseHandle(wlan, nullptr);
-    }
-
-    auto adapter = BluetoothAdapter::GetDefaultAsync().get();
-    if (adapter && adapter.IsLowEnergySupported()) {
-      bool bt_radio_on = false;
-      try {
-        auto radios = Radio::GetRadiosAsync().get();
-        for (uint32_t i = 0; i < radios.Size(); ++i) {
-          auto r = radios.GetAt(i);
-          if (r.Kind() == RadioKind::Bluetooth) {
-            bt_radio_on = (r.State() == RadioState::On);
-            break;
-          }
-        }
-      } catch (...) {
-        bt_radio_on = true;
-      }
-      if (bt_radio_on) {
-        caps.has_ble = 1;
-      }
-    }
-  } catch (...) {}
-
-  return caps;
+  return ProbeWinRadioCapabilities(true);
 }
 
 int daphq_direct_start_ble_discovery(
@@ -922,7 +1438,8 @@ void daphq_direct_stop_ble_discovery(void* handle) {
   } catch (...) {}
 }
 
-DaphqDirectHostInfo daphq_direct_start_host(void* handle, int prefer_5ghz) {
+DaphqDirectHostInfo daphq_direct_start_host(
+    void* handle, int prefer_5ghz, const char* stable_tag) {
   DaphqDirectHostInfo info{};
   if (!handle) return info;
   ComMtaScope com;
@@ -932,7 +1449,10 @@ DaphqDirectHostInfo daphq_direct_start_host(void* handle, int prefer_5ghz) {
   daphq_direct_stop_session(handle);
   const uint64_t my_gen = ++ctx->session_generation;
 
-  const std::string suffix = RandomString("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 4);
+  const std::string clean_tag = SanitizeStableDirectTag(stable_tag);
+  const std::string suffix = clean_tag.size() >= 2
+      ? clean_tag
+      : RandomString("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 4);
   const std::string psk =
       RandomString("abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789", 12);
   const std::string ssid = "DIRECT-DQ-" + suffix;
@@ -1008,6 +1528,17 @@ DaphqDirectHostInfo daphq_direct_start_host(void* handle, int prefer_5ghz) {
           std::this_thread::sleep_for(std::chrono::milliseconds(250));
         }
 
+        bool actual_5g = using_5g;
+        try {
+          const auto active_cfg = tethering.GetCurrentAccessPointConfiguration();
+          const auto active_band = active_cfg.Band();
+          if (active_band == TetheringWiFiBand::TwoPointFourGigahertz) {
+            actual_5g = false;
+          } else if (active_band == TetheringWiFiBand::FiveGigahertz) {
+            actual_5g = true;
+          }
+        } catch (...) {}
+
         info.success = 1;
         std::snprintf(info.ssid, sizeof(info.ssid), "%s", ssid.c_str());
         std::snprintf(info.psk, sizeof(info.psk), "%s", psk.c_str());
@@ -1016,7 +1547,11 @@ DaphqDirectHostInfo daphq_direct_start_host(void* handle, int prefer_5ghz) {
             sizeof(info.host_ip),
             "%s",
             host_ip.empty() ? "192.168.137.1" : host_ip.c_str());
-        info.frequency_mhz = using_5g ? 5180 : 2437;
+        int verified_freq = 0;
+        if (!actual_5g) {
+          verified_freq = 2437;
+        }
+        info.frequency_mhz = verified_freq;
         return info;
       }
       // Restore original AP config if start failed
@@ -1082,7 +1617,7 @@ DaphqDirectHostInfo daphq_direct_start_host(void* handle, int prefer_5ghz) {
       std::this_thread::sleep_for(std::chrono::milliseconds(150));
     }
 
-    if (publisher.Status() == WiFiDirectAdvertisementPublisherStatus::Aborted) {
+    if (publisher.Status() != WiFiDirectAdvertisementPublisherStatus::Started) {
       listener.ConnectionRequested(token);
       publisher.Stop();
       return info;
@@ -1123,7 +1658,7 @@ DaphqDirectHostInfo daphq_direct_start_host(void* handle, int prefer_5ghz) {
         sizeof(info.host_ip),
         "%s",
         host_ip.empty() ? "192.168.137.1" : host_ip.c_str());
-    info.frequency_mhz = prefer_5ghz ? 5180 : 2437;
+    info.frequency_mhz = 0;
   } catch (...) {
     info.success = 0;
   }
@@ -1161,22 +1696,31 @@ DaphqDirectClientConn daphq_direct_connect_client(
     return conn;
   }
 
+  std::wstring prev_profile;
+  if (QueryConnectedProfileInfo(wlan, iface_guid, &prev_profile)) {
+    std::lock_guard<std::mutex> lock(ctx->handle_mu);
+    if (ctx->session_generation.load() == my_gen) {
+      ctx->prev_wifi_profile = prev_profile;
+    }
+  }
+
   const std::wstring wprofile_xml = BuildWpa2ProfileXml(ssid, psk);
   const std::wstring wprofile_name = Utf8ToWide(ssid);
+  const bool is_persistent_dq =
+      (ssid.rfind("DIRECT-DQ-", 0) == 0 && ssid.size() >= 15);
   std::wstring saved_profile;
+  bool wrote_saved_temp_name = false;
 
   WLAN_CONNECTION_PARAMETERS params{};
-  params.wlanConnectionMode = wlan_connection_mode_temporary_profile;
-  params.strProfile = wprofile_xml.c_str();
   params.pDot11Ssid = nullptr;
   params.pDesiredBssidList = nullptr;
   params.dot11BssType = dot11_BSS_type_infrastructure;
   params.dwFlags = 0;
 
-  DWORD conn_res = ::WlanConnect(wlan, &iface_guid, &params, nullptr);
-  if (conn_res != ERROR_SUCCESS) {
+  DWORD conn_res = ERROR_INVALID_PARAMETER;
+  if (is_persistent_dq) {
     DWORD reason_code = 0;
-    DWORD save_res = ::WlanSetProfile(
+    const DWORD save_res = ::WlanSetProfile(
         wlan,
         &iface_guid,
         WLAN_PROFILE_USER,
@@ -1185,49 +1729,131 @@ DaphqDirectClientConn daphq_direct_connect_client(
         TRUE,
         nullptr,
         &reason_code);
-    if (save_res != ERROR_SUCCESS) {
-      ::WlanCloseHandle(wlan, nullptr);
-      return conn;
+    if (save_res == ERROR_SUCCESS) {
+      params.wlanConnectionMode = wlan_connection_mode_profile;
+      params.strProfile = wprofile_name.c_str();
+      conn_res = ::WlanConnect(wlan, &iface_guid, &params, nullptr);
     }
-    saved_profile = wprofile_name;
-    {
-      std::lock_guard<std::mutex> lock(ctx->handle_mu);
-      ctx->saved_temp_profile_name = wprofile_name;
-    }
-    params.wlanConnectionMode = wlan_connection_mode_profile;
-    params.strProfile = wprofile_name.c_str();
-    conn_res = ::WlanConnect(wlan, &iface_guid, &params, nullptr);
   }
 
   if (conn_res != ERROR_SUCCESS) {
-    if (!saved_profile.empty()) {
+    params.wlanConnectionMode = wlan_connection_mode_temporary_profile;
+    params.strProfile = wprofile_xml.c_str();
+    conn_res = ::WlanConnect(wlan, &iface_guid, &params, nullptr);
+    if (conn_res != ERROR_SUCCESS) {
+      DWORD reason_code = 0;
+      DWORD save_res = ::WlanSetProfile(
+          wlan,
+          &iface_guid,
+          WLAN_PROFILE_USER,
+          wprofile_xml.c_str(),
+          nullptr,
+          TRUE,
+          nullptr,
+          &reason_code);
+      if (save_res != ERROR_SUCCESS) {
+        if (!prev_profile.empty()) {
+          std::lock_guard<std::mutex> lock(ctx->handle_mu);
+          if (ctx->session_generation.load() == my_gen) {
+            ctx->prev_wifi_profile.clear();
+          }
+        }
+        ::WlanCloseHandle(wlan, nullptr);
+        return conn;
+      }
+      if (!is_persistent_dq) {
+        saved_profile = wprofile_name;
+        std::lock_guard<std::mutex> lock(ctx->handle_mu);
+        if (ctx->session_generation.load() == my_gen) {
+          ctx->saved_temp_profile_name = wprofile_name;
+          wrote_saved_temp_name = true;
+        }
+      }
+      params.wlanConnectionMode = wlan_connection_mode_profile;
+      params.strProfile = wprofile_name.c_str();
+      conn_res = ::WlanConnect(wlan, &iface_guid, &params, nullptr);
+    }
+  }
+
+  if (conn_res != ERROR_SUCCESS) {
+    const bool stopped_or_superseded =
+        ctx->aborted.load() || ctx->session_generation.load() != my_gen;
+    if (!saved_profile.empty() && (!stopped_or_superseded || !wrote_saved_temp_name)) {
       ::WlanDeleteProfile(wlan, &iface_guid, saved_profile.c_str(), nullptr);
       std::lock_guard<std::mutex> lock(ctx->handle_mu);
-      ctx->saved_temp_profile_name.clear();
+      if (ctx->saved_temp_profile_name == saved_profile) {
+        ctx->saved_temp_profile_name.clear();
+      }
+    }
+    if (!prev_profile.empty()) {
+      std::lock_guard<std::mutex> lock(ctx->handle_mu);
+      if (ctx->session_generation.load() == my_gen) {
+        ctx->prev_wifi_profile.clear();
+      }
     }
     ::WlanCloseHandle(wlan, nullptr);
     return conn;
   }
 
+  bool aborted_before_wait = false;
   {
     std::lock_guard<std::mutex> lock(ctx->handle_mu);
-    ctx->active_wlan_guid = iface_guid;
-    ctx->has_active_wlan_guid = true;
+    if (ctx->aborted.load() || ctx->session_generation.load() != my_gen) {
+      aborted_before_wait = true;
+    } else {
+      ctx->active_wlan_guid = iface_guid;
+      ctx->has_active_wlan_guid = true;
+    }
+  }
+  if (aborted_before_wait) {
+    if (!saved_profile.empty() && !wrote_saved_temp_name) {
+      ::WlanDeleteProfile(wlan, &iface_guid, saved_profile.c_str(), nullptr);
+    }
+    ::WlanCloseHandle(wlan, nullptr);
+    return conn;
   }
 
-  // Wait up to 10 seconds for actual SSID association + non-APIPA DHCP IPv4
-  for (int i = 0; i < 40; ++i) {
+  DOT11_SSID target_ssid{};
+  const size_t target_ssid_len =
+      ssid.size() <= DOT11_SSID_MAX_LENGTH ? ssid.size() : DOT11_SSID_MAX_LENGTH;
+  target_ssid.uSSIDLength = static_cast<ULONG>(target_ssid_len);
+  if (target_ssid_len > 0) {
+    std::memcpy(target_ssid.ucSSID, ssid.data(), target_ssid_len);
+  }
+
+  // Wait up to 12 seconds for actual SSID association + non-APIPA DHCP IPv4
+  for (int i = 0; i < 48; ++i) {
     if (ctx->aborted.load() || ctx->session_generation.load() != my_gen) {
       break;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
     if (!IsWlanConnectedToSsid(wlan, &iface_guid, ssid)) {
+      if (i == 4 || i == 20) {
+        ::WlanScan(
+            wlan,
+            &iface_guid,
+            target_ssid_len > 0 ? &target_ssid : nullptr,
+            nullptr,
+            nullptr);
+        ::WlanConnect(wlan, &iface_guid, &params, nullptr);
+      } else if (i == 12 || i == 28) {
+        ::WlanConnect(wlan, &iface_guid, &params, nullptr);
+      }
       continue;
     }
     std::string local_ip;
     std::string gw_ip = fallback_gw;
     if (QueryWifiInterfaceAddresses(&iface_guid, &local_ip, &gw_ip)) {
+      SetWlanInterfacePerfMode(wlan, iface_guid, true);
+      {
+        std::lock_guard<std::mutex> lock(ctx->handle_mu);
+        if (ctx->session_generation.load() == my_gen) {
+          ctx->perf_tuned_guid = iface_guid;
+          ctx->wlan_perf_tuned = true;
+        }
+      }
       conn.success = 1;
+      conn.frequency_mhz = QueryConnectedChannelFrequencyMhz(wlan, iface_guid);
       std::snprintf(conn.local_ip, sizeof(conn.local_ip), "%s", local_ip.c_str());
       std::snprintf(conn.gateway_ip, sizeof(conn.gateway_ip), "%s", gw_ip.c_str());
       break;
@@ -1237,21 +1863,32 @@ DaphqDirectClientConn daphq_direct_connect_client(
   if (!conn.success) {
     const bool stopped_or_superseded =
         ctx->aborted.load() || ctx->session_generation.load() != my_gen;
-    if (stopped_or_superseded || IsWlanConnectedToSsid(wlan, &iface_guid, ssid)) {
+    if (!stopped_or_superseded && IsWlanConnectedToSsid(wlan, &iface_guid, ssid)) {
       ::WlanDisconnect(wlan, &iface_guid, nullptr);
     }
     if (ctx->session_generation.load() == my_gen) {
       std::lock_guard<std::mutex> lock(ctx->handle_mu);
       if (ctx->session_generation.load() == my_gen) {
         ctx->has_active_wlan_guid = false;
+        ctx->prev_wifi_profile.clear();
       }
     }
-    if (!saved_profile.empty()) {
+    if (!saved_profile.empty() && (!stopped_or_superseded || !wrote_saved_temp_name)) {
       ::WlanDeleteProfile(wlan, &iface_guid, saved_profile.c_str(), nullptr);
       std::lock_guard<std::mutex> lock(ctx->handle_mu);
       if (ctx->saved_temp_profile_name == saved_profile) {
         ctx->saved_temp_profile_name.clear();
       }
+    }
+    if (!stopped_or_superseded && !prev_profile.empty()) {
+      WLAN_CONNECTION_PARAMETERS rec{};
+      rec.wlanConnectionMode = wlan_connection_mode_profile;
+      rec.strProfile = prev_profile.c_str();
+      rec.pDot11Ssid = nullptr;
+      rec.pDesiredBssidList = nullptr;
+      rec.dot11BssType = dot11_BSS_type_infrastructure;
+      rec.dwFlags = 0;
+      ::WlanConnect(wlan, &iface_guid, &rec, nullptr);
     }
   }
 
@@ -1446,11 +2083,14 @@ void daphq_direct_stop_session(void* handle) {
   if (!handle) return;
   ComMtaScope com;
   auto* ctx = static_cast<DirectContext*>(handle);
-  ++ctx->session_generation;
+  const uint64_t stop_gen = ++ctx->session_generation;
 
   std::wstring temp_profile;
+  std::wstring reconnect_profile;
   GUID wlan_guid{};
   bool disconnect_wlan = false;
+  GUID perf_guid{};
+  bool restore_perf = false;
 
   WiFiDirectConnectionListener wfd_listener{nullptr};
   winrt::event_token wfd_token{};
@@ -1478,10 +2118,17 @@ void daphq_direct_stop_session(void* handle) {
     std::lock_guard<std::mutex> lock(ctx->handle_mu);
     temp_profile = std::move(ctx->saved_temp_profile_name);
     ctx->saved_temp_profile_name.clear();
+    reconnect_profile = std::move(ctx->prev_wifi_profile);
+    ctx->prev_wifi_profile.clear();
     if (ctx->has_active_wlan_guid) {
       wlan_guid = ctx->active_wlan_guid;
       ctx->has_active_wlan_guid = false;
       disconnect_wlan = true;
+    }
+    if (ctx->wlan_perf_tuned) {
+      perf_guid = ctx->perf_tuned_guid;
+      ctx->wlan_perf_tuned = false;
+      restore_perf = true;
     }
 
     wfd_listener = std::move(ctx->wfd_listener);
@@ -1520,18 +2167,173 @@ void daphq_direct_stop_session(void* handle) {
     }
   } catch (...) {}
 
-  if (disconnect_wlan || !temp_profile.empty()) {
+  if (disconnect_wlan || !temp_profile.empty() || restore_perf) {
     HANDLE wlan = nullptr;
     DWORD negotiated = 0;
     if (::WlanOpenHandle(2, nullptr, &negotiated, &wlan) == ERROR_SUCCESS && wlan) {
+      if (restore_perf) {
+        SetWlanInterfacePerfMode(wlan, perf_guid, false);
+      }
       if (disconnect_wlan) {
         ::WlanDisconnect(wlan, &wlan_guid, nullptr);
       }
       if (!temp_profile.empty()) {
         ::WlanDeleteProfile(wlan, &wlan_guid, temp_profile.c_str(), nullptr);
       }
+      if (disconnect_wlan &&
+          !reconnect_profile.empty() &&
+          !ctx->aborted.load() &&
+          ctx->session_generation.load() == stop_gen) {
+        WLAN_CONNECTION_PARAMETERS rec{};
+        rec.wlanConnectionMode = wlan_connection_mode_profile;
+        rec.strProfile = reconnect_profile.c_str();
+        rec.pDot11Ssid = nullptr;
+        rec.pDesiredBssidList = nullptr;
+        rec.dot11BssType = dot11_BSS_type_infrastructure;
+        rec.dwFlags = 0;
+        ::WlanConnect(wlan, &wlan_guid, &rec, nullptr);
+      }
       ::WlanCloseHandle(wlan, nullptr);
     }
+  }
+}
+
+int daphq_direct_get_host_client_ips(
+    void* handle,
+    char* out_ips_csv,
+    int out_capacity) {
+  if (!handle || !out_ips_csv || out_capacity <= 1) return 0;
+  out_ips_csv[0] = '\0';
+  ComMtaScope com;
+  auto* ctx = static_cast<DirectContext*>(handle);
+  if (ctx->aborted.load()) return 0;
+
+  NetworkOperatorTetheringManager tethering{nullptr};
+  {
+    std::lock_guard<std::mutex> lock(ctx->handle_mu);
+    tethering = ctx->tethering_mgr;
+  }
+
+  std::vector<std::string> ips;
+  auto append_unique_ip = [&ips](const std::string& ip) {
+    if (ip.empty() || ip == "0.0.0.0" || ip.rfind("127.", 0) == 0 ||
+        ip.rfind("169.254.", 0) == 0) {
+      return;
+    }
+    if (std::find(ips.begin(), ips.end(), ip) == ips.end()) {
+      ips.push_back(ip);
+    }
+  };
+
+  const std::string soft_ap_ip = FindSoftApHostIp();
+  const std::string host_ip = soft_ap_ip.empty() ? "192.168.137.1" : soft_ap_ip;
+  std::string subnet_prefix;
+  const size_t last_dot = host_ip.rfind('.');
+  if (last_dot != std::string::npos) {
+    subnet_prefix = host_ip.substr(0, last_dot + 1);
+  }
+
+  if (tethering) {
+    try {
+      const auto clients = tethering.GetTetheringClients();
+      for (auto const& client : clients) {
+        const auto host_names = client.HostNames();
+        for (auto const& hn : host_names) {
+          if (hn.Type() == winrt::Windows::Networking::HostNameType::Ipv4) {
+            const std::string ip = winrt::to_string(hn.CanonicalName());
+            if (ip != host_ip) {
+              append_unique_ip(ip);
+            }
+          }
+        }
+      }
+    } catch (...) {}
+  }
+
+  // Supplement WinRT tethering clients with active dynamic ARP neighbors on the
+  // SoftAP /24 subnet so DHCP clients are discovered immediately.
+  if (!subnet_prefix.empty()) {
+    ULONG buf_bytes = 0;
+    if (::GetIpNetTable(nullptr, &buf_bytes, FALSE) == ERROR_INSUFFICIENT_BUFFER &&
+        buf_bytes > 0) {
+      std::vector<uint8_t> table_buf(buf_bytes);
+      auto* table = reinterpret_cast<MIB_IPNETTABLE*>(table_buf.data());
+      if (::GetIpNetTable(table, &buf_bytes, FALSE) == NO_ERROR) {
+        for (DWORD i = 0; i < table->dwNumEntries; ++i) {
+          const MIB_IPNETROW& row = table->table[i];
+          if (row.dwType != MIB_IPNET_TYPE_DYNAMIC || row.dwPhysAddrLen != 6) {
+            continue;
+          }
+          struct in_addr in {};
+          in.s_addr = row.dwAddr;
+          char ip_buf[INET_ADDRSTRLEN]{};
+          if (::inet_ntop(AF_INET, &in, ip_buf, sizeof(ip_buf)) == nullptr) {
+            continue;
+          }
+          const std::string ip(ip_buf);
+          if (ip != host_ip &&
+              ip.rfind(subnet_prefix, 0) == 0 &&
+              ip != (subnet_prefix + "255")) {
+            append_unique_ip(ip);
+          }
+        }
+      }
+    }
+  }
+
+  std::string joined;
+  for (size_t i = 0; i < ips.size(); ++i) {
+    if (i > 0) joined.push_back(',');
+    joined += ips[i];
+  }
+  const size_t max_copy = static_cast<size_t>(out_capacity - 1);
+  const size_t n = (std::min)(joined.size(), max_copy);
+  if (n > 0) {
+    std::memcpy(out_ips_csv, joined.data(), n);
+  }
+  out_ips_csv[n] = '\0';
+  return static_cast<int>(ips.size());
+}
+
+void daphq_direct_set_transfer_power_lock(void* handle, int enabled) {
+  if (!handle) return;
+  ComMtaScope com;
+  auto* ctx = static_cast<DirectContext*>(handle);
+  const bool want_enable = (enabled != 0) && !ctx->aborted.load();
+  SetWindowsTransferPowerRequest(ctx, want_enable);
+
+  GUID target_guid{};
+  bool have_guid = false;
+  bool should_restore = false;
+  {
+    std::lock_guard<std::mutex> lock(ctx->handle_mu);
+    if (!want_enable) {
+      if (ctx->wlan_perf_tuned) {
+        target_guid = ctx->perf_tuned_guid;
+        have_guid = true;
+        should_restore = true;
+        ctx->wlan_perf_tuned = false;
+      }
+    } else if (ctx->has_active_wlan_guid) {
+      target_guid = ctx->active_wlan_guid;
+      have_guid = true;
+    }
+  }
+
+  HANDLE wlan = nullptr;
+  DWORD negotiated = 0;
+  if (::WlanOpenHandle(2, nullptr, &negotiated, &wlan) == ERROR_SUCCESS && wlan) {
+    if (want_enable) {
+      if (have_guid || SelectBestWlanInterface(wlan, &target_guid, nullptr)) {
+        SetWlanInterfacePerfMode(wlan, target_guid, true);
+        std::lock_guard<std::mutex> lock(ctx->handle_mu);
+        ctx->perf_tuned_guid = target_guid;
+        ctx->wlan_perf_tuned = true;
+      }
+    } else if (should_restore && have_guid) {
+      SetWlanInterfacePerfMode(wlan, target_guid, false);
+    }
+    ::WlanCloseHandle(wlan, nullptr);
   }
 }
 

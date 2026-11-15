@@ -11,6 +11,11 @@ typedef struct DaphqRadioCapabilities {
   int has_wifi;
   int has_ble;
   int can_host_direct_5g;
+  int wifi_hardware_present;
+  int bluetooth_hardware_present;
+  int wifi_enabled;
+  int bluetooth_enabled;
+  int location_service_enabled;
 } DaphqRadioCapabilities;
 
 typedef struct DaphqDirectHostInfo {
@@ -25,6 +30,7 @@ typedef struct DaphqDirectClientConn {
   int success;
   char local_ip[64];
   char gateway_ip[64];
+  int frequency_mhz;
 } DaphqDirectClientConn;
 
 typedef void (*DaphqBleBeaconCallback)(
@@ -39,10 +45,18 @@ typedef void (*DaphqGattRequestCallback)(
     const char* json_payload,
     void* user_data);
 
+typedef void (*DaphqRadioStateCallback)(
+    DaphqRadioCapabilities caps,
+    void* user_data);
+
 void* daphq_direct_create(
     DaphqBleBeaconCallback beacon_cb,
     DaphqGattRequestCallback gatt_cb,
     void* user_data);
+
+void daphq_direct_set_radio_callback(
+    void* handle,
+    DaphqRadioStateCallback radio_cb);
 
 void daphq_direct_destroy(void* handle);
 
@@ -57,7 +71,10 @@ int daphq_direct_start_ble_discovery(
 
 void daphq_direct_stop_ble_discovery(void* handle);
 
-DaphqDirectHostInfo daphq_direct_start_host(void* handle, int prefer_5ghz);
+DaphqDirectHostInfo daphq_direct_start_host(
+    void* handle,
+    int prefer_5ghz,
+    const char* stable_tag);
 
 DaphqDirectClientConn daphq_direct_connect_client(
     void* handle,
@@ -74,7 +91,16 @@ int daphq_direct_exchange_gatt_link(
 
 void daphq_direct_stop_session(void* handle);
 
+void daphq_direct_set_transfer_power_lock(void* handle, int enabled);
+
 void daphq_direct_request_abort(void* handle);
+
+// Writes a comma-separated list of IPv4 addresses for clients connected to the
+// active Windows Mobile Hotspot / ICS group. Returns the number of IPs written.
+int daphq_direct_get_host_client_ips(
+    void* handle,
+    char* out_ips_csv,
+    int out_capacity);
 
 #ifdef __cplusplus
 }

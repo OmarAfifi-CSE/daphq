@@ -8,12 +8,6 @@ enum PeerPlatform {
   windows,
 }
 
-enum TransportPreference {
-  autoSmart,
-  directTurbo,
-  lanOnly,
-}
-
 enum PeerTransportKind {
   lanOnly,
   bleDirectOnly,
@@ -242,100 +236,4 @@ class UnifiedPeer {
         caps,
         isTrusted,
       );
-}
-
-@immutable
-class PairingToken {
-  final String peerId;
-  final String fingerprint;
-  final String name;
-  final PeerPlatform platform;
-  final String? lanIp;
-  final int port;
-  final String? ssid;
-  final String? psk;
-
-  const PairingToken({
-    required this.peerId,
-    required this.fingerprint,
-    required this.name,
-    this.platform = PeerPlatform.unknown,
-    this.lanIp,
-    this.port = 62004,
-    this.ssid,
-    this.psk,
-  });
-}
-
-/// Compact URI codec (`daphq://pair?...`) for manual / QR out-of-band pairing when Bluetooth is absent.
-class PairingQrCodec {
-  static final RegExp _peerIdRegex = RegExp(r'^[0-9a-f]{16}$');
-  static final RegExp _fpRegex = RegExp(r'^[0-9a-f]{64}$');
-
-  static String encode(PairingToken token) {
-    final params = <String, String>{
-      'v': '2',
-      'id': token.peerId.trim().toLowerCase(),
-      'fp': token.fingerprint.trim().toLowerCase(),
-      'n': token.name.trim(),
-      'os': token.platform.name,
-      'p': token.port.toString(),
-    };
-    if (token.lanIp != null && token.lanIp!.trim().isNotEmpty) {
-      params['ip'] = token.lanIp!.trim();
-    }
-    if (token.ssid != null && token.ssid!.isNotEmpty) {
-      params['ssid'] = token.ssid!;
-    }
-    if (token.psk != null && token.psk!.isNotEmpty) {
-      params['psk'] = token.psk!;
-    }
-    return Uri(
-      scheme: 'daphq',
-      host: 'pair',
-      queryParameters: params,
-    ).toString();
-  }
-
-  static PairingToken? decode(String raw) {
-    final trimmed = raw.trim();
-    if (trimmed.isEmpty) return null;
-    final uri = Uri.tryParse(trimmed);
-    if (uri == null || uri.scheme != 'daphq' || uri.host != 'pair') {
-      return null;
-    }
-
-    final qp = uri.queryParameters;
-    final peerId = (qp['id'] ?? '').trim().toLowerCase();
-    final fp = (qp['fp'] ?? '').trim().toLowerCase();
-    if (!_peerIdRegex.hasMatch(peerId) || !_fpRegex.hasMatch(fp)) {
-      return null;
-    }
-
-    final port = int.tryParse(qp['p'] ?? '') ?? 62004;
-    if (port <= 0 || port > 65535) return null;
-
-    final osRaw = (qp['os'] ?? '').trim().toLowerCase();
-    final platform = switch (osRaw) {
-      'android' => PeerPlatform.android,
-      'windows' => PeerPlatform.windows,
-      _ => PeerPlatform.unknown,
-    };
-
-    final name = (qp['n'] ?? 'Unknown Device').trim();
-    final lanIp = qp['ip']?.trim();
-    final ssid = qp['ssid'];
-    final psk = qp['psk'];
-
-    return PairingToken(
-      peerId: peerId,
-      fingerprint: fp,
-      name: name.isEmpty ? 'Unknown Device' : name,
-      platform: platform,
-      lanIp: (lanIp != null && lanIp.isNotEmpty) ? lanIp : null,
-      port: port,
-      ssid: (ssid != null && ssid.isNotEmpty) ? ssid : null,
-      psk: (psk != null && psk.isNotEmpty) ? psk : null,
-    );
-  }
 }

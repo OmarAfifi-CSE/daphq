@@ -26,4 +26,5 @@ target_link_libraries(daphq_direct_win PRIVATE
   "ws2_32.lib"
   "ole32.lib"
   "bcrypt.lib"
+  "advapi32.lib"
 )

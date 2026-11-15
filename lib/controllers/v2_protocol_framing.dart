@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -6,10 +7,13 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
+import '../core/app_constants.dart';
+import '../security/device_identity_service.dart';
+
 const int daphqChunkMagic = 0x44514332; // 'DQC2'
 const int daphqEofFileIndex = 0xFFFFFFFF;
 const int daphqFrameHeaderSize = 20;
-const int daphqChunkSizeBytes = 256 * 1024; // 256 KB parallel work unit
+const int daphqChunkSizeBytes = 512 * 1024; // 512 KB parallel work unit
 const int daphqMaxFramePayloadBytes = 8 * 1024 * 1024;
 
 /// Detailed incoming transfer authentication metadata passed to v2 auth handlers.
@@ -20,7 +24,6 @@ class TransferAuthRequest {
   final double totalSizeMB;
   final String? senderPeerId;
   final String? senderFingerprint;
-  final String? sasCode;
   final bool isTls;
   final bool isReverseConnect;
   final bool isIdentityVerified;
@@ -32,11 +35,139 @@ class TransferAuthRequest {
     required this.totalSizeMB,
     this.senderPeerId,
     this.senderFingerprint,
-    this.sasCode,
     this.isTls = false,
     this.isReverseConnect = false,
     this.isIdentityVerified = false,
   });
+}
+
+/// Signed LAN control-plane message (`role: "direct_control"`) used to bootstrap a
+/// Direct 5GHz Wi-Fi P2P / SoftAP link between router-connected peers without Bluetooth.
+class DirectControlRequest {
+  final String requestId;
+  final String senderIp;
+  final String senderPeerId;
+  final String senderDeviceName;
+  final String? senderFingerprint;
+  final String action; // 'startHostAndWait' | 'joinHost' | 'teardown'
+  final String? ssid;
+  final String? psk;
+  final String? hostIp;
+  final int port;
+  final bool useReverseConnect;
+  final int? frequencyMhz;
+  final String? reverseToken;
+  final bool isIdentityVerified;
+
+  const DirectControlRequest({
+    required this.requestId,
+    required this.senderIp,
+    required this.senderPeerId,
+    required this.senderDeviceName,
+    this.senderFingerprint,
+    required this.action,
+    this.ssid,
+    this.psk,
+    this.hostIp,
+    this.port = 62004,
+    this.useReverseConnect = false,
+    this.frequencyMhz,
+    this.reverseToken,
+    this.isIdentityVerified = false,
+  });
+}
+
+/// Sends an ECDSA-signed TLS control request over LAN to negotiate a Direct 5GHz session.
+Future<Map<String, dynamic>> sendDirectControl({
+  required String host,
+  required int port,
+  required DeviceIdentity localIdentity,
+  required String localDeviceName,
+  required int localPort,
+  required String action,
+  String? expectedPeerFingerprint,
+  Future<bool> Function(String actualFingerprint)? onVerifyPeerFingerprint,
+  String? ssid,
+  String? psk,
+  String? hostIp,
+  bool reverseConnect = false,
+  int? frequencyMhz,
+  String? reverseToken,
+  Duration connectTimeout = const Duration(seconds: 4),
+  Duration responseTimeout = const Duration(seconds: 15),
+}) async {
+  String? verifiedServerFp = expectedPeerFingerprint?.trim().toLowerCase();
+  final Socket sock = await connectTransferSocket(
+    host: host,
+    port: port,
+    useTls: true,
+    timeout: connectTimeout,
+    expectedPeerFingerprint: expectedPeerFingerprint,
+    onVerifyPeerFingerprint: (actualFp) async {
+      verifiedServerFp = actualFp.trim().toLowerCase();
+      if (onVerifyPeerFingerprint != null) {
+        return onVerifyPeerFingerprint(actualFp);
+      }
+      return true;
+    },
+  );
+
+  final reader = BufferedSocketReader(sock);
+  try {
+    final String serverFp = verifiedServerFp ??
+        ((sock is SecureSocket && sock.peerCertificate != null)
+            ? DeviceIdentityService.fingerprintFromCertificate(
+                sock.peerCertificate!,
+              )
+            : '');
+    if (serverFp.isEmpty) {
+      throw const HandshakeException('Missing server certificate fingerprint');
+    }
+
+    final requestId = generateTransferSessionId();
+    final msg = DeviceIdentityService.buildAuthProofMessage(
+      sessionId: requestId,
+      senderPeerId: localIdentity.peerId,
+      senderFingerprint: localIdentity.certFingerprint,
+      serverFingerprint: serverFp,
+    );
+    final proof = DeviceIdentityService.signAuthProof(
+      privateKeyPem: localIdentity.privateKeyPem,
+      message: msg,
+    );
+
+    final payload = <String, dynamic>{
+      'v': 2,
+      'role': 'direct_control',
+      'requestId': requestId,
+      'action': action,
+      'peerId': localIdentity.peerId,
+      'peerName': localDeviceName,
+      'senderFp': localIdentity.certFingerprint,
+      'senderCertPem': localIdentity.certificatePem,
+      'senderProof': proof,
+      'port': localPort,
+      'reverseConnect': reverseConnect,
+      'ssid': ?ssid,
+      'psk': ?psk,
+      'hostIp': ?hostIp,
+      'frequencyMhz': ?frequencyMhz,
+      'reverseToken': ?reverseToken,
+    };
+
+    sock.write('${jsonEncode(payload)}\n');
+    await sock.flush();
+
+    final resp = await reader.readJsonHeader(
+      maxHeaderBytes: 64 * 1024,
+      timeout: responseTimeout,
+    );
+    return resp?.header ??
+        <String, dynamic>{'ok': false, 'error': 'emptyResponse'};
+  } finally {
+    await reader.cancel();
+    sock.destroy();
+  }
 }
 
 String generateTransferSessionId() {
@@ -48,17 +179,38 @@ String generateTransferSessionId() {
   return buf.toString();
 }
 
+/// Writes a 20-byte v2 frame header directly into [target] starting at
+/// [offsetBytes], avoiding a separate header allocation and socket write.
+void writeV2FrameHeaderTo(
+  Uint8List target, {
+  int offsetBytes = 0,
+  required int fileIndex,
+  required int fileOffset,
+  required int payloadLength,
+}) {
+  final view = ByteData.sublistView(
+    target,
+    offsetBytes,
+    offsetBytes + daphqFrameHeaderSize,
+  );
+  view.setUint32(0, daphqChunkMagic, Endian.big);
+  view.setUint32(4, fileIndex, Endian.big);
+  view.setUint64(8, fileOffset, Endian.big);
+  view.setUint32(16, payloadLength, Endian.big);
+}
+
 Uint8List buildV2FrameHeader({
   required int fileIndex,
   required int fileOffset,
   required int payloadLength,
 }) {
   final bytes = Uint8List(daphqFrameHeaderSize);
-  final view = ByteData.sublistView(bytes);
-  view.setUint32(0, daphqChunkMagic, Endian.big);
-  view.setUint32(4, fileIndex, Endian.big);
-  view.setUint64(8, fileOffset, Endian.big);
-  view.setUint32(16, payloadLength, Endian.big);
+  writeV2FrameHeaderTo(
+    bytes,
+    fileIndex: fileIndex,
+    fileOffset: fileOffset,
+    payloadLength: payloadLength,
+  );
   return bytes;
 }
 
@@ -140,7 +292,67 @@ Future<Socket> connectTransferSocket({
   return secureSocket;
 }
 
-/// Binds a TCP or TLS server socket across anyIPv4 with per-interface fallback.
+Future<({ServerSocket? plain, SecureServerSocket? secure})> _bindSingleTransferPort({
+  required int port,
+  SecurityContext? tlsContext,
+  required Future<ServerSocket> Function(
+    dynamic address,
+    int port, {
+    bool shared,
+  }) plainBind,
+  required Future<SecureServerSocket> Function(
+    dynamic address,
+    int port,
+    SecurityContext context, {
+    bool shared,
+  }) secureBind,
+}) async {
+  try {
+    if (tlsContext != null) {
+      final srv = await secureBind(
+        InternetAddress.anyIPv4,
+        port,
+        tlsContext,
+        shared: true,
+      );
+      return (plain: null, secure: srv);
+    }
+    final srv = await plainBind(
+      InternetAddress.anyIPv4,
+      port,
+      shared: true,
+    );
+    return (plain: srv, secure: null);
+  } catch (e) {
+    try {
+      final interfaces = await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+      );
+      for (final iface in interfaces) {
+        for (final addr in iface.addresses) {
+          if (!addr.isLoopback) {
+            try {
+              if (tlsContext != null) {
+                final srv = await secureBind(
+                  addr,
+                  port,
+                  tlsContext,
+                  shared: true,
+                );
+                return (plain: null, secure: srv);
+              }
+              final srv = await plainBind(addr, port, shared: true);
+              return (plain: srv, secure: null);
+            } catch (_) {}
+          }
+        }
+      }
+    } catch (_) {}
+    rethrow;
+  }
+}
+
+/// Binds a TCP or TLS server socket across anyIPv4 with per-interface and port fallbacks.
 Future<({ServerSocket? plain, SecureServerSocket? secure})> bindTransferServer({
   required int port,
   required Duration retryDelay,
@@ -148,61 +360,59 @@ Future<({ServerSocket? plain, SecureServerSocket? secure})> bindTransferServer({
   required bool Function() isCancelled,
   required void Function(int attempt, int totalAttempts) onAttempt,
   SecurityContext? tlsContext,
+  List<int> fallbackPorts = const <int>[],
+  Future<ServerSocket> Function(dynamic address, int port, {bool shared})?
+      plainBinder,
+  Future<SecureServerSocket> Function(
+    dynamic address,
+    int port,
+    SecurityContext context, {
+    bool shared,
+  })? secureBinder,
 }) async {
+  final Future<ServerSocket> Function(dynamic, int, {bool shared}) plainBind =
+      plainBinder ??
+      ((dynamic address, int port, {bool shared = true}) =>
+          ServerSocket.bind(address, port, shared: shared));
+  final Future<SecureServerSocket> Function(
+    dynamic,
+    int,
+    SecurityContext, {
+    bool shared,
+  }) secureBind = secureBinder ??
+      ((dynamic address, int port, SecurityContext context, {bool shared = true}) =>
+          SecureServerSocket.bind(address, port, context, shared: shared));
+
+  final List<int> candidatePorts = port == 0
+      ? const <int>[0]
+      : <int>[
+          port,
+          for (final alt in fallbackPorts)
+            if (alt > 0 && alt != port) alt,
+        ];
+
   int attempts = 0;
   Object? lastError;
 
   while (attempts < maxAttempts && !isCancelled()) {
     onAttempt(attempts + 1, maxAttempts);
-    try {
-      if (tlsContext != null) {
-        final srv = await SecureServerSocket.bind(
-          InternetAddress.anyIPv4,
-          port,
-          tlsContext,
-          shared: true,
-        );
-        return (plain: null, secure: srv);
-      } else {
-        final srv = await ServerSocket.bind(
-          InternetAddress.anyIPv4,
-          port,
-          shared: true,
-        );
-        return (plain: srv, secure: null);
-      }
-    } catch (e) {
-      lastError = e;
+    for (final candidatePort in candidatePorts) {
+      if (isCancelled()) break;
       try {
-        final interfaces = await NetworkInterface.list(
-          type: InternetAddressType.IPv4,
+        return await _bindSingleTransferPort(
+          port: candidatePort,
+          tlsContext: tlsContext,
+          plainBind: plainBind,
+          secureBind: secureBind,
         );
-        for (final iface in interfaces) {
-          for (final addr in iface.addresses) {
-            if (!addr.isLoopback) {
-              try {
-                if (tlsContext != null) {
-                  final srv = await SecureServerSocket.bind(
-                    addr,
-                    port,
-                    tlsContext,
-                    shared: true,
-                  );
-                  return (plain: null, secure: srv);
-                } else {
-                  final srv = await ServerSocket.bind(addr, port, shared: true);
-                  return (plain: srv, secure: null);
-                }
-              } catch (_) {}
-            }
-          }
-        }
-      } catch (_) {}
-
-      attempts++;
-      if (attempts < maxAttempts && !isCancelled()) {
-        await Future.delayed(retryDelay);
+      } catch (e) {
+        lastError = e;
       }
+    }
+
+    attempts++;
+    if (attempts < maxAttempts && !isCancelled()) {
+      await Future.delayed(retryDelay);
     }
   }
 
@@ -212,13 +422,92 @@ Future<({ServerSocket? plain, SecureServerSocket? secure})> bindTransferServer({
   return (plain: null, secure: null);
 }
 
-/// Helper that reads an initial newline-delimited JSON header without losing trailing payload bytes.
+/// Helper that reads an initial newline-delimited JSON header without losing trailing payload bytes,
+/// backed by a non-pausing push queue so high-rate TCP/TLS streams never suffer per-packet
+/// `StreamIterator` pause/resume syscalls or per-packet `Timer` allocations.
 class BufferedSocketReader {
-  final StreamIterator<Uint8List> _iterator;
+  static const int _highWaterMarkBytes = 32 * 1024 * 1024;
+  static const int _lowWaterMarkBytes = 16 * 1024 * 1024;
+
+  StreamSubscription<Uint8List>? _sub;
+  final ListQueue<Uint8List> _queue = ListQueue<Uint8List>();
+  int _queuedBytes = 0;
+  bool _subPaused = false;
+  bool _isDone = false;
+  Object? _error;
+  StackTrace? _errorStack;
+  Completer<bool>? _waiter;
+  Uint8List _current = Uint8List(0);
   Uint8List _leftover = Uint8List(0);
 
-  BufferedSocketReader(Socket socket)
-      : _iterator = StreamIterator<Uint8List>(socket);
+  BufferedSocketReader(Socket socket) {
+    try {
+      socket.setOption(SocketOption.tcpNoDelay, true);
+    } catch (_) {}
+    _sub = socket.listen(
+      _onData,
+      onError: _onError,
+      onDone: _onDone,
+      cancelOnError: true,
+    );
+  }
+
+  void _onData(Uint8List data) {
+    if (data.isEmpty) return;
+    final waiter = _waiter;
+    if (waiter != null && _queue.isEmpty) {
+      _waiter = null;
+      _current = data;
+      waiter.complete(true);
+      return;
+    }
+    _queue.addLast(data);
+    _queuedBytes += data.length;
+    if (!_subPaused && _queuedBytes >= _highWaterMarkBytes) {
+      _subPaused = true;
+      _sub?.pause();
+    }
+  }
+
+  void _onError(Object error, StackTrace stackTrace) {
+    _error = error;
+    _errorStack = stackTrace;
+    _isDone = true;
+    final waiter = _waiter;
+    if (waiter != null) {
+      _waiter = null;
+      waiter.completeError(error, stackTrace);
+    }
+  }
+
+  void _onDone() {
+    _isDone = true;
+    final waiter = _waiter;
+    if (waiter != null) {
+      _waiter = null;
+      waiter.complete(false);
+    }
+  }
+
+  void _maybeResumeSub() {
+    if (_subPaused && _queuedBytes <= _lowWaterMarkBytes && !_isDone) {
+      _subPaused = false;
+      _sub?.resume();
+    }
+  }
+
+  /// Synchronously pops the next buffered socket chunk if one is already in memory,
+  /// avoiding Future, Completer, Timer, and microtask overhead on the hot path.
+  Uint8List? tryMoveNextSync() {
+    if (_queue.isNotEmpty) {
+      final chunk = _queue.removeFirst();
+      _queuedBytes -= chunk.length;
+      _current = chunk;
+      _maybeResumeSub();
+      return chunk;
+    }
+    return null;
+  }
 
   Future<({Map<String, dynamic> header, Uint8List initialPayload})?>
       readJsonHeader({
@@ -229,7 +518,7 @@ class BufferedSocketReader {
     final deadline = DateTime.now().add(timeout);
 
     while (await _moveNextWithDeadline(deadline)) {
-      final chunk = _iterator.current;
+      final chunk = _current;
       final newlineIdx = chunk.indexOf(10); // '\n'
       if (newlineIdx != -1) {
         if (newlineIdx > 0) {
@@ -265,15 +554,39 @@ class BufferedSocketReader {
   }
 
   Future<bool> moveNext({Duration? timeout}) {
-    if (timeout == null) {
-      return _iterator.moveNext();
+    final syncChunk = tryMoveNextSync();
+    if (syncChunk != null) {
+      return Future<bool>.value(true);
     }
-    return _iterator.moveNext().timeout(timeout);
+    if (_error != null) {
+      final err = _error!;
+      final st = _errorStack;
+      _error = null;
+      _errorStack = null;
+      return Future<bool>.error(err, st);
+    }
+    if (_isDone) {
+      return Future<bool>.value(false);
+    }
+    final waiter = Completer<bool>();
+    _waiter = waiter;
+    if (timeout == null) {
+      return waiter.future;
+    }
+    return waiter.future.timeout(
+      timeout,
+      onTimeout: () {
+        if (identical(_waiter, waiter)) {
+          _waiter = null;
+        }
+        throw TimeoutException('Socket read timed out', timeout);
+      },
+    );
   }
 
-  Uint8List get current => _iterator.current;
+  Uint8List get current => _current;
 
-  /// Consumes newline-delimited UTF-8 lines using the single underlying [StreamIterator]
+  /// Consumes newline-delimited UTF-8 lines using the single underlying subscription
   /// (so callers never double-subscribe to a single-subscription [Socket] or [SecureSocket]).
   Future<void> drainLines({
     required void Function(String line) onLine,
@@ -311,8 +624,8 @@ class BufferedSocketReader {
 
     try {
       flushLines();
-      while (await _iterator.moveNext()) {
-        lineBuffer.addAll(_iterator.current);
+      while (await moveNext()) {
+        lineBuffer.addAll(_current);
         flushLines();
       }
       if (lineBuffer.isNotEmpty) {
@@ -329,17 +642,31 @@ class BufferedSocketReader {
   }
 
   Future<void> cancel() async {
+    _isDone = true;
+    _queue.clear();
+    _queuedBytes = 0;
+    final waiter = _waiter;
+    if (waiter != null && !waiter.isCompleted) {
+      _waiter = null;
+      waiter.complete(false);
+    }
+    final sub = _sub;
+    _sub = null;
     try {
-      await _iterator.cancel();
+      await sub?.cancel();
     } catch (_) {}
   }
 
   Future<bool> _moveNextWithDeadline(DateTime deadline) {
+    final syncChunk = tryMoveNextSync();
+    if (syncChunk != null) {
+      return Future<bool>.value(true);
+    }
     final remaining = deadline.difference(DateTime.now());
     if (remaining <= Duration.zero) {
       throw TimeoutException('Header read timed out');
     }
-    return _iterator.moveNext().timeout(remaining);
+    return moveNext(timeout: remaining);
   }
 }
 
@@ -404,8 +731,11 @@ Future<void> consumeV2WorkerFrames({
   required BufferedSocketReader reader,
   required Duration chunkTimeout,
   required bool Function() isCancelled,
-  required Future<void> Function(int fileIndex, int offset, Uint8List payload)
-      onChunk,
+  required FutureOr<void> Function(
+    int fileIndex,
+    int offset,
+    Uint8List payload,
+  ) onChunk,
 }) async {
   final headerBuf = Uint8List(daphqFrameHeaderSize);
   var headerFilled = 0;
@@ -449,6 +779,18 @@ Future<void> consumeV2WorkerFrames({
           if (payloadLen == 0) {
             continue;
           }
+          // Fast path: full frame payload is already contiguous in `chunk`
+          if (chunk.length - pos >= payloadLen) {
+            final completedPayload = Uint8List.fromList(
+              Uint8List.sublistView(chunk, pos, pos + payloadLen),
+            );
+            pos += payloadLen;
+            final res = onChunk(currentFileIndex, currentOffset, completedPayload);
+            if (res is Future<void>) {
+              await res;
+            }
+            continue;
+          }
           payloadBuf = Uint8List(payloadLen);
           payloadFilled = 0;
         }
@@ -463,7 +805,10 @@ Future<void> consumeV2WorkerFrames({
           final completedPayload = payloadBuf!;
           payloadBuf = null;
           payloadFilled = 0;
-          await onChunk(currentFileIndex, currentOffset, completedPayload);
+          final res = onChunk(currentFileIndex, currentOffset, completedPayload);
+          if (res is Future<void>) {
+            await res;
+          }
         }
       }
     }
@@ -475,6 +820,11 @@ Future<void> consumeV2WorkerFrames({
   }
 
   while (!sawEof && !isCancelled()) {
+    final syncChunk = reader.tryMoveNextSync();
+    if (syncChunk != null) {
+      await processChunkBytes(syncChunk);
+      continue;
+    }
     final hasNext = await reader.moveNext(timeout: chunkTimeout);
     if (!hasNext) break;
     await processChunkBytes(reader.current);
@@ -482,5 +832,170 @@ Future<void> consumeV2WorkerFrames({
 
   if (!sawEof && !isCancelled() && (headerFilled > 0 || payloadBuf != null)) {
     throw const SocketException('Worker stream terminated mid-frame');
+  }
+}
+
+/// Shared EMA-smoothed speed tracker used by both sender and receiver transfer loops.
+class TransferSpeedTracker {
+  TransferSpeedTracker({
+    DateTime Function()? nowProvider,
+    this.intervalMs = AppConstants.speedUpdateIntervalMs,
+    this.alpha = 0.35,
+  }) : _nowProvider = nowProvider ?? DateTime.now {
+    _lastEmit = _nowProvider();
+  }
+
+  final DateTime Function() _nowProvider;
+  final int intervalMs;
+  final double alpha;
+
+  late DateTime _lastEmit;
+  int _bytesSinceEmit = 0;
+  double? _smoothedMbps;
+
+  double get currentSpeedMbps => _smoothedMbps ?? 0.0;
+
+  void recordBytes(
+    int deltaBytes,
+    String activeFileName,
+    void Function(double speedMbps, String activeFileName) onEmit,
+  ) {
+    if (deltaBytes > 0) {
+      _bytesSinceEmit += deltaBytes;
+    }
+    final now = _nowProvider();
+    final elapsedMs = now.difference(_lastEmit).inMilliseconds;
+    if (elapsedMs < intervalMs || elapsedMs <= 0) {
+      return;
+    }
+
+    final instantMbps = (_bytesSinceEmit / (1024 * 1024)) / (elapsedMs / 1000.0);
+    _smoothedMbps = _smoothedMbps == null
+        ? instantMbps
+        : (alpha * instantMbps) + ((1.0 - alpha) * _smoothedMbps!);
+    _bytesSinceEmit = 0;
+    _lastEmit = now;
+    onEmit(_smoothedMbps!, activeFileName);
+  }
+}
+
+/// Contiguous byte range dequeued from [V2OrderedChunkCoalescer] for sequential disk flush.
+class CoalescedChunkBatch {
+  const CoalescedChunkBatch({required this.offset, required this.bytes});
+
+  final int offset;
+  final Uint8List bytes;
+}
+
+/// Orders out-of-order multi-stream chunks and merges contiguous offsets into large
+/// sequential write batches up to `maxBatchBytes` (default 2 MB).
+class V2OrderedChunkCoalescer {
+  final SplayTreeMap<int, Uint8List> _chunks = SplayTreeMap<int, Uint8List>();
+  final List<({int start, int end})> _flushedRanges = <({int start, int end})>[];
+  int _pendingBytes = 0;
+
+  int get pendingBytes => _pendingBytes;
+  bool get isEmpty => _chunks.isEmpty;
+
+  int get nextInOrderOffset =>
+      _flushedRanges.isNotEmpty && _flushedRanges.first.start == 0
+          ? _flushedRanges.first.end
+          : 0;
+
+  void enqueue(int offset, Uint8List data) {
+    final existing = _chunks[offset];
+    if (existing != null) {
+      _pendingBytes -= existing.length;
+    }
+    _chunks[offset] = data;
+    _pendingBytes += data.length;
+  }
+
+  /// Dequeues contiguous chunks starting at `nextInOrderOffset` (or the lowest queued
+  /// offset when [allowOutOfOrderFallback] is true) without allocating or copying a
+  /// combined buffer when chunks are already large.
+  ({int offset, List<Uint8List> parts, int totalBytes})? takeNextPartsList({
+    int maxBatchBytes = 8 * 1024 * 1024,
+    bool allowOutOfOrderFallback = false,
+  }) {
+    if (_chunks.isEmpty) return null;
+    final inOrder = nextInOrderOffset;
+    final int startOffset;
+    if (_chunks.containsKey(inOrder)) {
+      startOffset = inOrder;
+    } else if (allowOutOfOrderFallback) {
+      startOffset = _chunks.firstKey()!;
+    } else {
+      return null;
+    }
+
+    int cursor = startOffset;
+    int totalLen = 0;
+    final parts = <Uint8List>[];
+    while (true) {
+      final next = _chunks[cursor];
+      if (next == null) break;
+      if (parts.isNotEmpty && totalLen + next.length > maxBatchBytes) {
+        break;
+      }
+      _chunks.remove(cursor);
+      _pendingBytes -= next.length;
+      parts.add(next);
+      totalLen += next.length;
+      cursor += next.length;
+    }
+
+    _recordFlushedRange(startOffset, cursor);
+    return (offset: startOffset, parts: parts, totalBytes: totalLen);
+  }
+
+  CoalescedChunkBatch? takeNextBatch({
+    int maxBatchBytes = 4 * 1024 * 1024,
+    bool allowOutOfOrderFallback = false,
+  }) {
+    final res = takeNextPartsList(
+      maxBatchBytes: maxBatchBytes,
+      allowOutOfOrderFallback: allowOutOfOrderFallback,
+    );
+    if (res == null) return null;
+    final parts = res.parts;
+    if (parts.length == 1) {
+      return CoalescedChunkBatch(offset: res.offset, bytes: parts.first);
+    }
+
+    final combined = Uint8List(res.totalBytes);
+    var pos = 0;
+    for (final part in parts) {
+      combined.setAll(pos, part);
+      pos += part.length;
+    }
+    return CoalescedChunkBatch(offset: res.offset, bytes: combined);
+  }
+
+  void clear() {
+    _chunks.clear();
+    _flushedRanges.clear();
+    _pendingBytes = 0;
+  }
+
+  void _recordFlushedRange(int start, int end) {
+    if (end <= start) return;
+    _flushedRanges.add((start: start, end: end));
+    _flushedRanges.sort((a, b) => a.start.compareTo(b.start));
+    final merged = <({int start, int end})>[];
+    for (final r in _flushedRanges) {
+      if (merged.isEmpty || merged.last.end < r.start) {
+        merged.add(r);
+      } else {
+        final prev = merged.removeLast();
+        merged.add((
+          start: prev.start,
+          end: prev.end > r.end ? prev.end : r.end,
+        ));
+      }
+    }
+    _flushedRanges
+      ..clear()
+      ..addAll(merged);
   }
 }

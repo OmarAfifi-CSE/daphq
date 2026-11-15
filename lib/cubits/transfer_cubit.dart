@@ -11,7 +11,8 @@ import 'package:window_manager/window_manager.dart';
 
 import '../controllers/sender_controller.dart';
 import '../controllers/receiver_controller.dart';
-import '../controllers/v2_protocol_framing.dart' show generateTransferSessionId;
+import '../controllers/v2_protocol_framing.dart'
+    show DirectControlRequest, generateTransferSessionId, sendDirectControl;
 import '../services/discovery_service.dart';
 import '../services/history_service.dart';
 import 'package:file_picker/file_picker.dart';
@@ -29,6 +30,25 @@ import 'package:flutter/services.dart';
 import '../services/native_share_service.dart';
 import '../main.dart';
 
+typedef DirectControlSenderFn = Future<Map<String, dynamic>> Function({
+  required String host,
+  required int port,
+  required DeviceIdentity localIdentity,
+  required String localDeviceName,
+  required int localPort,
+  required String action,
+  String? expectedPeerFingerprint,
+  Future<bool> Function(String actualFingerprint)? onVerifyPeerFingerprint,
+  String? ssid,
+  String? psk,
+  String? hostIp,
+  bool reverseConnect,
+  int? frequencyMhz,
+  String? reverseToken,
+  Duration connectTimeout,
+  Duration responseTimeout,
+});
+
 class TransferCubit extends Cubit<TransferState> {
   final SenderController _sender;
   final ReceiverController _receiver;
@@ -38,6 +58,7 @@ class TransferCubit extends Cubit<TransferState> {
   final DirectNativeBridge _directBridge;
   final SmartLinkEvaluator _linkEvaluator;
   final PeerRegistry _peerRegistry;
+  final DirectControlSenderFn _directControlSender;
 
   Completer<bool>? _authCompleter;
   TransferAuthRequest? _pendingAuthV2Request;
@@ -57,6 +78,8 @@ class TransferCubit extends Cubit<TransferState> {
   DeviceIdentity? _localIdentity;
   LocalRadioCapabilities? _localRadioCaps;
   PeerCapabilities _localPeerCaps = const PeerCapabilities();
+  bool _bleDiscoveryStarted = false;
+  bool _isHandlingIncomingDirect = false;
   final Set<String> _activeLanIps = <String>{};
   Completer<DirectGattLinkRequestEvent>? _pendingHostReadyCompleter;
   String? _pendingHostReadyPeerId;
@@ -66,6 +89,33 @@ class TransferCubit extends Cubit<TransferState> {
   bool _activeHostedDirectSession = false;
   bool _isStartingHostedDirect = false;
   Timer? _hostedDirectWatchdogTimer;
+  String? _activeDirectRouteLabel;
+  int? _activeDirectFrequencyMhz;
+  int _activeListenPort = AppConstants.transferPort;
+  bool _sendingIsolationActive = false;
+
+  void _setActiveDirectFrequency(int? frequencyMhz) {
+    if (frequencyMhz != null && frequencyMhz > 0) {
+      _activeDirectFrequencyMhz = frequencyMhz;
+    }
+    _activeDirectRouteLabel =
+        directRouteLabelForFrequency(_activeDirectFrequencyMhz ?? frequencyMhz);
+  }
+  bool _receivingIsolationActive = false;
+  bool _appliedTransferIsolation = false;
+
+  String? get _stableDirectSsidTag =>
+      deriveStableDirectSsidTag(_localIdentity?.peerId ?? state.localPeerId);
+
+  Future<void> _syncTransferIsolation({bool? sending, bool? receiving}) async {
+    if (sending != null) _sendingIsolationActive = sending;
+    if (receiving != null) _receivingIsolationActive = receiving;
+    final bool desired = _sendingIsolationActive || _receivingIsolationActive;
+    if (desired == _appliedTransferIsolation) return;
+    _appliedTransferIsolation = desired;
+    discoveryService.setBroadcastPaused(desired);
+    await _directBridge.setTransferPowerLock(desired);
+  }
 
   void _safeEmit(TransferState nextState) {
     if (!isClosed) {
@@ -82,6 +132,7 @@ class TransferCubit extends Cubit<TransferState> {
     DirectNativeBridge? directBridge,
     SmartLinkEvaluator? linkEvaluator,
     PeerRegistry? peerRegistry,
+    DirectControlSenderFn? directControlSender,
     bool autoStart = true,
   }) : _sender = sender ?? SenderController(),
        _receiver = receiver ?? ReceiverController(),
@@ -92,6 +143,7 @@ class TransferCubit extends Cubit<TransferState> {
        _directBridge = directBridge ?? DirectNativeBridge(),
        _linkEvaluator = linkEvaluator ?? const SmartLinkEvaluator(),
        _peerRegistry = peerRegistry ?? PeerRegistry(),
+       _directControlSender = directControlSender ?? sendDirectControl,
        super(TransferState(model: TransferModel())) {
     _bindPeerStreams();
     if (autoStart) {
@@ -156,64 +208,120 @@ class TransferCubit extends Cubit<TransferState> {
 
     await _refreshTrustedDevices();
 
-    LocalRadioCapabilities caps;
-    try {
-      caps = await _directBridge.getCapabilities();
-    } catch (_) {
-      caps = LocalRadioCapabilities.fallbackForPlatform(
-        DirectNativeBridge.currentPlatform(),
-      );
-    }
-    _localRadioCaps = caps;
-    _localPeerCaps = PeerCapabilities(
-      tlsSupported: true,
-      direct5gHostCapable: caps.canHostDirect5g,
-      directClientCapable: caps.hasWifi,
-      multiStreamSupported: true,
-      platform: caps.localPlatform,
-    );
+    final caps = await _fetchNativeCapabilities();
+    if (isClosed) return;
 
-    if (!isClosed) {
+    if (!isClosed && _localIdentity != null) {
       emit(
         state.copyWith(
-          localPeerId: _localIdentity?.peerId,
-          localFingerprint: _localIdentity?.certFingerprint,
-          localRadioCapabilities: caps,
+          localPeerId: _localIdentity!.peerId,
+          localFingerprint: _localIdentity!.certFingerprint,
         ),
       );
     }
 
-    if (_localIdentity != null) {
-      discoveryService.updateAdvertisementMetadata(
-        peerId: _localIdentity!.peerId,
-        certFingerprint: _localIdentity!.certFingerprint,
-        capabilities: _localPeerCaps,
-        listenPort: AppConstants.transferPort,
-      );
-
-      if (caps.hasBle) {
-        try {
-          final beacon = BleBeaconPayload(
-            caps: _localPeerCaps,
-            peerId: _localIdentity!.peerId,
-            fingerprintPrefix: _localIdentity!.certFingerprint.substring(0, 16),
-            transferPort: AppConstants.transferPort,
-          );
-          await _directBridge.startBleDiscovery(
-            beaconPayload: BleBeaconCodec.encode(beacon),
-            peerId: _localIdentity!.peerId,
-            peerName: deviceName ?? state.deviceName,
-            fingerprint: _localIdentity!.certFingerprint,
-          );
-        } catch (_) {}
-      }
-    }
+    await _applyLocalCapabilities(
+      caps,
+      deviceNameOverride: deviceName,
+      restartBleIfNeeded: true,
+    );
 
     _peerPruneTimer ??= Timer.periodic(const Duration(seconds: 5), (_) {
       if (!isClosed) {
         _peerRegistry.pruneExpired();
       }
     });
+  }
+
+  Future<LocalRadioCapabilities> _fetchNativeCapabilities() async {
+    try {
+      return await _directBridge.getCapabilities();
+    } catch (_) {
+      return LocalRadioCapabilities.fallbackForPlatform(
+        DirectNativeBridge.currentPlatform(),
+      );
+    }
+  }
+
+  /// Refreshes Wi-Fi, Bluetooth, and Nearby permissions from native OS adapters
+  /// (e.g. after runtime permission prompts or returning from system settings)
+  /// and automatically brings up BLE discovery when newly permitted.
+  Future<void> refreshCapabilities({bool restartBleIfNeeded = true}) async {
+    if (isClosed) return;
+    final caps = await _fetchNativeCapabilities();
+    if (isClosed) return;
+    await _applyLocalCapabilities(
+      caps,
+      restartBleIfNeeded: restartBleIfNeeded,
+    );
+  }
+
+  Future<void> _applyLocalCapabilities(
+    LocalRadioCapabilities caps, {
+    String? deviceNameOverride,
+    bool restartBleIfNeeded = true,
+  }) async {
+    final prevHasBle = _localRadioCaps?.hasBle ?? false;
+    final bool changed =
+        _localRadioCaps != caps || state.localRadioCapabilities != caps;
+    _localRadioCaps = caps;
+    _localPeerCaps = PeerCapabilities(
+      tlsSupported: true,
+      direct5gHostCapable: caps.canHostDirect5g,
+      directClientCapable: caps.canUseDirectWifi,
+      multiStreamSupported: true,
+      platform: caps.localPlatform,
+    );
+
+    if (changed && !isClosed) {
+      emit(state.copyWith(localRadioCapabilities: caps));
+    }
+
+    if (!caps.hasBle) {
+      _bleDiscoveryStarted = false;
+    }
+
+    final identity = _localIdentity;
+    if (identity == null) return;
+
+    discoveryService.updateAdvertisementMetadata(
+      peerId: identity.peerId,
+      certFingerprint: identity.certFingerprint,
+      capabilities: _localPeerCaps,
+      listenPort: _activeListenPort,
+    );
+
+    if (restartBleIfNeeded &&
+        caps.hasBle &&
+        (!prevHasBle || !_bleDiscoveryStarted)) {
+      await _startBleIfReady(
+        identity: identity,
+        deviceName: deviceNameOverride ?? state.deviceName,
+      );
+    }
+  }
+
+  Future<void> _startBleIfReady({
+    required DeviceIdentity identity,
+    required String deviceName,
+  }) async {
+    try {
+      final beacon = BleBeaconPayload(
+        caps: _localPeerCaps,
+        peerId: identity.peerId,
+        fingerprintPrefix: identity.certFingerprint.substring(0, 16),
+        transferPort: _activeListenPort,
+      );
+      final ok = await _directBridge.startBleDiscovery(
+        beaconPayload: BleBeaconCodec.encode(beacon),
+        peerId: identity.peerId,
+        peerName: deviceName,
+        fingerprint: identity.certFingerprint,
+      );
+      if (ok) {
+        _bleDiscoveryStarted = true;
+      }
+    } catch (_) {}
   }
 
   Future<void> _refreshTrustedDevices() async {
@@ -237,56 +345,11 @@ class TransferCubit extends Cubit<TransferState> {
     } catch (_) {}
   }
 
-  Future<void> setTransportPreference(TransportPreference preference) async {
-    if (!isClosed) {
-      emit(state.copyWith(transportPreference: preference));
-    }
-  }
-
   Future<void> revokeTrustedDevice(String peerId) async {
     try {
       await _trustedDevicesService.revokeDevice(peerId);
       await _refreshTrustedDevices();
     } catch (_) {}
-  }
-
-  Future<PairingToken?> trustPeerFromQr(String rawUri) async {
-    final token = PairingQrCodec.decode(rawUri);
-    if (token == null) return null;
-
-    await _trustedDevicesService.trustDevice(
-      peerId: token.peerId,
-      certFingerprint: token.fingerprint,
-      displayName: token.name,
-      platform: token.platform.name,
-    );
-    _peerRegistry.upsertQrToken(token);
-    await _refreshTrustedDevices();
-
-    if (token.lanIp != null && token.lanIp!.isNotEmpty && !isClosed) {
-      emit(state.copyWith(targetIp: token.lanIp));
-    }
-    return token;
-  }
-
-  Future<String?> buildLocalPairingUri({String? lanIpOverride}) async {
-    _localIdentity ??= await _identityService.loadOrCreate();
-    final identity = _localIdentity;
-    if (identity == null) return null;
-
-    String? bestIp = lanIpOverride;
-    bestIp ??= await DiscoveryService.findBestLocalLanIp();
-
-    return PairingQrCodec.encode(
-      PairingToken(
-        peerId: identity.peerId,
-        fingerprint: identity.certFingerprint,
-        name: state.deviceName,
-        platform: DirectNativeBridge.currentPlatform(),
-        lanIp: bestIp,
-        port: AppConstants.transferPort,
-      ),
-    );
   }
 
   void _handleDirectFabricEvent(DirectFabricEvent event) {
@@ -306,18 +369,10 @@ class TransferCubit extends Cubit<TransferState> {
     }
 
     if (event is DirectRadioStateEvent) {
-      final caps = LocalRadioCapabilities(
-        hasWifi: event.hasWifi,
-        hasBle: event.hasBle,
-        canHostDirect5g: event.canHostDirect5g,
-        localPlatform: DirectNativeBridge.currentPlatform(),
+      final caps = event.toCapabilities(DirectNativeBridge.currentPlatform());
+      unawaited(
+        _applyLocalCapabilities(caps, restartBleIfNeeded: true),
       );
-      _localRadioCaps = caps;
-      _localPeerCaps = _localPeerCaps.copyWith(
-        direct5gHostCapable: caps.canHostDirect5g,
-        directClientCapable: caps.hasWifi,
-      );
-      emit(state.copyWith(localRadioCapabilities: caps));
       return;
     }
 
@@ -373,46 +428,167 @@ class TransferCubit extends Cubit<TransferState> {
     }
   }
 
-  Future<void> _handleIncomingJoinHost(DirectGattLinkRequestEvent event) async {
-    if (state.receiveFolder == null || event.ssid == null || event.psk == null) {
-      return;
-    }
-    if (isClosed ||
-        state.isTransferring ||
-        state.isReceivingActive ||
-        state.isDirectLinkConnecting ||
-        _activeHostedDirectSession ||
-        _isStartingHostedDirect) {
-      return;
-    }
-    final normalizedPeerId = event.peerId.trim().toLowerCase();
+  bool get _isBusyForIncomingDirect =>
+      isClosed ||
+      state.isTransferring ||
+      state.isReceivingActive ||
+      state.isDirectLinkConnecting ||
+      _activeHostedDirectSession ||
+      _isStartingHostedDirect ||
+      _isHandlingIncomingDirect;
+
+  Future<({bool allowed, String? trustedFingerprint})>
+  _validateIncomingDirectTrust(String peerId, String? peerFingerprint) async {
+    final normalizedPeerId = peerId.trim().toLowerCase();
     final trusted = normalizedPeerId.isNotEmpty
         ? await _trustedDevicesService.getDevice(normalizedPeerId)
         : null;
     if (trusted != null &&
-        event.peerFingerprint != null &&
-        event.peerFingerprint!.trim().isNotEmpty &&
+        peerFingerprint != null &&
+        peerFingerprint.trim().isNotEmpty &&
         trusted.certFingerprint.trim().toLowerCase() !=
-            event.peerFingerprint!.trim().toLowerCase()) {
+            peerFingerprint.trim().toLowerCase()) {
+      return (allowed: false, trustedFingerprint: null);
+    }
+    return (allowed: true, trustedFingerprint: trusted?.certFingerprint);
+  }
+
+  Future<Map<String, dynamic>> _handleDirectControlRequest(
+    DirectControlRequest req,
+  ) async {
+    if (!req.isIdentityVerified) {
+      return <String, dynamic>{'ok': false, 'error': 'unverifiedSender'};
+    }
+    if (req.action == 'teardown') {
+      await _stopHostedDirectSession();
+      return <String, dynamic>{'ok': true};
+    }
+    if (state.receiveFolder == null) {
+      return <String, dynamic>{'ok': false, 'error': 'receiverFolderUnset'};
+    }
+    if (_isBusyForIncomingDirect) {
+      return <String, dynamic>{'ok': false, 'error': 'busy'};
+    }
+
+    final trust = await _validateIncomingDirectTrust(
+      req.senderPeerId,
+      req.senderFingerprint,
+    );
+    if (!trust.allowed) {
+      return <String, dynamic>{'ok': false, 'error': 'fingerprintMismatch'};
+    }
+
+    if (req.action == 'joinHost') {
+      if (req.ssid == null || req.psk == null) {
+        return <String, dynamic>{'ok': false, 'error': 'missingCredentials'};
+      }
+      unawaited(
+        _handleIncomingJoinHost(
+          DirectGattLinkRequestEvent(
+            requestId: req.requestId,
+            peerId: req.senderPeerId,
+            peerName: req.senderDeviceName,
+            peerFingerprint: req.senderFingerprint,
+            action: 'joinHost',
+            ssid: req.ssid,
+            psk: req.psk,
+            hostIp: req.hostIp,
+            port: req.port,
+            useReverseConnect: req.useReverseConnect,
+            frequencyMhz: req.frequencyMhz,
+            reverseToken: req.reverseToken,
+          ),
+        ),
+      );
+      return <String, dynamic>{'ok': true};
+    }
+
+    if (req.action == 'startHostAndWait') {
+      _isStartingHostedDirect = true;
+      _hostedDirectWatchdogTimer?.cancel();
+      try {
+        if (!state.isReceiving) {
+          await startReceiver();
+        }
+        final hostInfo = await _directBridge.startDirectHost(
+          prefer5Ghz: true,
+          stableTag: _stableDirectSsidTag,
+        );
+        if (hostInfo == null) {
+          return <String, dynamic>{'ok': false, 'error': 'directHostFailed'};
+        }
+        _activeHostedDirectSession = true;
+        _setActiveDirectFrequency(hostInfo.frequencyMhz);
+        _scheduleHostedDirectWatchdog();
+        if (req.useReverseConnect && req.port > 0) {
+          unawaited(
+            _waitForHostedClientAndReverseAccept(
+              port: req.port,
+              peerName: req.senderDeviceName,
+              expectedSenderFingerprint:
+                  req.senderFingerprint ?? trust.trustedFingerprint,
+              reverseToken: req.reverseToken,
+              frequencyMhz: hostInfo.frequencyMhz,
+            ),
+          );
+        }
+        return <String, dynamic>{
+          'ok': true,
+          'ssid': hostInfo.ssid,
+          'psk': hostInfo.psk,
+          'hostIp': hostInfo.hostIp,
+          'port': _activeListenPort,
+          'frequencyMhz': hostInfo.frequencyMhz,
+          'reverseConnect': req.useReverseConnect,
+        };
+      } catch (e) {
+        await _stopHostedDirectSession();
+        return <String, dynamic>{'ok': false, 'error': e.toString()};
+      } finally {
+        _isStartingHostedDirect = false;
+      }
+    }
+
+    return <String, dynamic>{'ok': false, 'error': 'unknownAction'};
+  }
+
+  Future<void> _handleIncomingJoinHost(DirectGattLinkRequestEvent event) async {
+    if (state.receiveFolder == null || event.ssid == null || event.psk == null) {
       return;
     }
-    final expectedSenderFp = event.peerFingerprint ?? trusted?.certFingerprint;
-
+    if (_isBusyForIncomingDirect) {
+      return;
+    }
+    _isHandlingIncomingDirect = true;
+    bool keepDirectSession = false;
     try {
+      final trust = await _validateIncomingDirectTrust(
+        event.peerId,
+        event.peerFingerprint,
+      );
+      if (!trust.allowed) {
+        return;
+      }
+      final expectedSenderFp = event.peerFingerprint ?? trust.trustedFingerprint;
+
+      if (!event.useReverseConnect && !state.isReceiving) {
+        await startReceiver();
+      }
       _safeEmit(
         state.copyWith(
           isDirectLinkConnecting: true,
-          directLinkStatus: 'Joining Direct 5GHz Link from ${event.peerName}...',
+          directLinkStatus: 'Joining ${directRouteLabelForFrequency(event.frequencyMhz)} from ${event.peerName}...',
         ),
       );
+      _setActiveDirectFrequency(event.frequencyMhz);
       final conn = await _directBridge.connectDirectClient(
         ssid: event.ssid!,
         psk: event.psk!,
         frequencyMhz: event.frequencyMhz,
         expectedGatewayIp: event.hostIp,
       );
-      if (conn == null || !event.useReverseConnect) {
-        if (conn == null && event.useReverseConnect) {
+      if (conn == null) {
+        if (event.useReverseConnect) {
           _safeEmit(
             state.copyWith(
               errorMessage:
@@ -420,6 +596,17 @@ class TransferCubit extends Cubit<TransferState> {
             ),
           );
         }
+        return;
+      }
+      final int? resolvedFreq =
+          (conn.frequencyMhz != null && conn.frequencyMhz! > 0)
+              ? conn.frequencyMhz
+              : event.frequencyMhz;
+      _setActiveDirectFrequency(resolvedFreq);
+      if (!event.useReverseConnect) {
+        _activeHostedDirectSession = true;
+        _scheduleHostedDirectWatchdog();
+        keepDirectSession = true;
         return;
       }
 
@@ -437,6 +624,8 @@ class TransferCubit extends Cubit<TransferState> {
         useTls: true,
         expectedSenderFingerprint: expectedSenderFp,
         reverseAuthToken: event.reverseToken,
+        directFrequencyMhz: resolvedFreq,
+        onPeerReportedFrequency: _setActiveDirectFrequency,
         localIdentity: identity,
         onUpdate: _handleReceiverModelUpdate,
         onRequestAuth: (ip, name, count, size) => _authorizeIncomingTransfer(
@@ -453,7 +642,12 @@ class TransferCubit extends Cubit<TransferState> {
       );
     } catch (_) {
     } finally {
-      await _directBridge.stopDirectSession();
+      _isHandlingIncomingDirect = false;
+      if (!keepDirectSession) {
+        _activeDirectRouteLabel = null;
+        _activeDirectFrequencyMhz = null;
+        await _directBridge.stopDirectSession();
+      }
       _safeEmit(
         state.copyWith(
           isDirectLinkConnecting: false,
@@ -475,11 +669,74 @@ class TransferCubit extends Cubit<TransferState> {
     });
   }
 
+  Future<String?> _waitForHostedClientIp({
+    required bool Function() isAborted,
+    Duration timeout = const Duration(seconds: 26),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (!isClosed && !isAborted()) {
+      final clients = await _directBridge.getDirectHostClients();
+      if (clients.isNotEmpty) {
+        return clients.first;
+      }
+      if (DateTime.now().isAfter(deadline)) break;
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    return null;
+  }
+
+  Future<void> _waitForHostedClientAndReverseAccept({
+    required int port,
+    required String peerName,
+    String? expectedSenderFingerprint,
+    String? reverseToken,
+    int? frequencyMhz,
+  }) async {
+    try {
+      final clientIp = await _waitForHostedClientIp(
+        isAborted: () => !_activeHostedDirectSession,
+      );
+      if (clientIp == null ||
+          isClosed ||
+          !_activeHostedDirectSession ||
+          state.receiveFolder == null) {
+        await _stopHostedDirectSession();
+        return;
+      }
+      final identity = _localIdentity ?? await _identityService.loadOrCreate();
+      _localIdentity = identity;
+      await _receiver.acceptReverseTransfer(
+        senderIp: clientIp,
+        port: port,
+        saveDirectory: state.receiveFolder!,
+        deviceName: state.deviceName,
+        useTls: true,
+        expectedSenderFingerprint: expectedSenderFingerprint,
+        reverseAuthToken: reverseToken,
+        localIdentity: identity,
+        directFrequencyMhz: frequencyMhz,
+        onPeerReportedFrequency: _setActiveDirectFrequency,
+        onAuthDismissed: _handleAuthDismissed,
+        onUpdate: _handleReceiverModelUpdate,
+        onRequestAuthV2: _authorizeIncomingTransfer,
+        onDone: _handleReceiverTransferDone,
+      );
+    } catch (_) {
+      await _stopHostedDirectSession();
+    } finally {
+      if (!_activeHostedDirectSession) {
+        await _directBridge.stopDirectSession();
+      }
+    }
+  }
+
   Future<void> _stopHostedDirectSession() async {
     _hostedDirectWatchdogTimer?.cancel();
     _hostedDirectWatchdogTimer = null;
     if (!_activeHostedDirectSession) return;
     _activeHostedDirectSession = false;
+    _activeDirectRouteLabel = null;
+    _activeDirectFrequencyMhz = null;
     await _directBridge.stopDirectSession();
   }
 
@@ -512,9 +769,13 @@ class TransferCubit extends Cubit<TransferState> {
       if (!state.isReceiving) {
         await startReceiver();
       }
-      final hostInfo = await _directBridge.startDirectHost(prefer5Ghz: true);
+      final hostInfo = await _directBridge.startDirectHost(
+        prefer5Ghz: true,
+        stableTag: _stableDirectSsidTag,
+      );
       if (hostInfo == null) return;
       _activeHostedDirectSession = true;
+      _setActiveDirectFrequency(hostInfo.frequencyMhz);
 
       final peer = _peerRegistry.getByPeerId(event.peerId);
       final bleAddr = (peer?.bleAddress != null && peer!.bleAddress!.isNotEmpty)
@@ -539,8 +800,8 @@ class TransferCubit extends Cubit<TransferState> {
           'ssid': hostInfo.ssid,
           'psk': hostInfo.psk,
           'hostIp': hostInfo.hostIp,
-          'port': AppConstants.transferPort,
-          'reverseConnect': false,
+          'port': _activeListenPort,
+          'reverseConnect': event.useReverseConnect,
           'frequencyMhz': hostInfo.frequencyMhz,
         },
       );
@@ -549,6 +810,18 @@ class TransferCubit extends Cubit<TransferState> {
         return;
       }
       _scheduleHostedDirectWatchdog();
+      if (event.useReverseConnect && event.port > 0) {
+        unawaited(
+          _waitForHostedClientAndReverseAccept(
+            port: event.port,
+            peerName: event.peerName,
+            expectedSenderFingerprint:
+                event.peerFingerprint ?? trusted?.certFingerprint,
+            reverseToken: event.reverseToken,
+            frequencyMhz: hostInfo.frequencyMhz,
+          ),
+        );
+      }
     } catch (_) {
       await _stopHostedDirectSession();
     } finally {
@@ -569,16 +842,19 @@ class TransferCubit extends Cubit<TransferState> {
           resultList.every((r) => r == ConnectivityResult.none);
 
       if (isDisconnected) {
-        if (state.isTransferring) {
+        if (state.isTransferring && !state.isDirectLinkConnecting) {
           cancelSending(reason: "No network connection. Transfer cancelled.");
         }
       }
 
-      // If receiver was active (but not mid-transfer or negotiating direct link),
+      // If receiver was active (but not mid-transfer or negotiating/hosting direct link),
       // restart it to bind to new IP.
       if (state.isReceiving &&
           !state.isReceivingActive &&
           !state.isDirectLinkConnecting &&
+          !_activeHostedDirectSession &&
+          !_isStartingHostedDirect &&
+          !_isHandlingIncomingDirect &&
           !state.isTransferring &&
           !_isStartingReceiver) {
         startReceiver();
@@ -623,13 +899,17 @@ class TransferCubit extends Cubit<TransferState> {
       peerId: _localIdentity?.peerId,
       certFingerprint: _localIdentity?.certFingerprint,
       capabilities: _localPeerCaps,
-      listenPort: AppConstants.transferPort,
+      listenPort: _activeListenPort,
     );
   }
 
   Future<void> _startReceiverAutomatically() async {
-    // Wait a bit for permissions to be handled in main.dart or _prepareRequirements
-    await Future.delayed(const Duration(milliseconds: 1500));
+    // Allow HomePage's post-frame startup permissions to begin before checking
+    // storage/notification requirements so we don't collide with permission_handler.
+    await Future.delayed(const Duration(milliseconds: 250));
+    if (Platform.isAndroid) {
+      await StartupPermissionCoordinator.waitUntilFinished();
+    }
 
     if (state.isReceiving) return;
 
@@ -670,10 +950,6 @@ class TransferCubit extends Cubit<TransferState> {
     if (!isClosed) {
       emit(state.copyWith(isLocatingFolder: false));
     }
-  }
-
-  void toggleAdvancedMode() {
-    _safeEmit(state.copyWith(isAdvancedMode: !state.isAdvancedMode));
   }
 
   Future<void> addExternalFiles(List<String> paths) async {
@@ -738,6 +1014,7 @@ class TransferCubit extends Cubit<TransferState> {
 
   Future<bool> _prepareRequirements() async {
     if (!Platform.isAndroid) return true;
+    await StartupPermissionCoordinator.waitUntilFinished();
 
     bool showedWarning = false;
 
@@ -939,10 +1216,17 @@ class TransferCubit extends Cubit<TransferState> {
   }
 
   void _handleReceiverModelUpdate(TransferModel model) {
-    // Capture phase synchronously before async queue executes
+    // Capture phase and Direct route label synchronously before async queue
+    // or session teardown clears active Direct state prior to UI emission.
     final TransferPhase phase = model.phase != TransferPhase.idle
         ? model.phase
         : _receiver.currentPhase;
+    final String? capturedDirectLabel =
+        (_activeHostedDirectSession ||
+            _isHandlingIncomingDirect ||
+            state.isDirectLinkConnecting)
+        ? (_activeDirectRouteLabel ?? 'Direct Wi-Fi')
+        : null;
     _receiverUpdateChain = _receiverUpdateChain.then((_) async {
       if (isClosed) return;
       final bool isBusy =
@@ -999,6 +1283,24 @@ class TransferCubit extends Cubit<TransferState> {
       }
 
       if (!isClosed) {
+        final bool preserveVisibleOutcome =
+            !isBusy &&
+            !wasActive &&
+            phase == TransferPhase.idle &&
+            (state.isTransferring || state.showProgressView);
+        if (preserveVisibleOutcome) {
+          return;
+        }
+        final String? activeDirectLabel =
+            (_activeHostedDirectSession ||
+                _isHandlingIncomingDirect ||
+                state.isDirectLinkConnecting)
+            ? (_activeDirectRouteLabel ?? capturedDirectLabel ?? 'Direct Wi-Fi')
+            : capturedDirectLabel;
+        if (activeDirectLabel != null) {
+          model.routeLabel = model.routeLabel ?? activeDirectLabel;
+        }
+        unawaited(_syncTransferIsolation(receiving: isBusy));
         emit(
           state.copyWith(
             model: model,
@@ -1053,11 +1355,6 @@ class TransferCubit extends Cubit<TransferState> {
       }
     }
 
-    final sasCode = req.sasCode ??
-        ((req.senderFingerprint != null && _localIdentity != null)
-            ? _localIdentity!.computeSasWith(req.senderFingerprint!)
-            : null);
-
     try {
       if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
         windowManager.isMinimized().then((isMinimized) async {
@@ -1092,7 +1389,6 @@ class TransferCubit extends Cubit<TransferState> {
           totalSizeMB: req.totalSizeMB,
           senderPeerId: req.senderPeerId,
           senderFingerprint: req.senderFingerprint,
-          sasCode: sasCode,
           isTls: req.isTls,
           isTrustedPeer: false,
           isFingerprintMismatch: isMismatch,
@@ -1171,6 +1467,26 @@ class TransferCubit extends Cubit<TransferState> {
               deviceName: state.deviceName,
               tlsContext: identity?.createServerContext(),
               localIdentity: identity,
+              onListening: (boundPort) {
+                if (boundPort <= 0 ||
+                    myRxToken != _receiverSessionSeq ||
+                    isClosed) {
+                  return;
+                }
+                final bool changed = _activeListenPort != boundPort;
+                _activeListenPort = boundPort;
+                discoveryService.updateAdvertisementMetadata(
+                  listenPort: boundPort,
+                );
+                if (changed && _bleDiscoveryStarted && identity != null) {
+                  unawaited(
+                    _startBleIfReady(
+                      identity: identity,
+                      deviceName: state.deviceName,
+                    ),
+                  );
+                }
+              },
               onAuthDismissed: _handleAuthDismissed,
               onUpdate: _handleReceiverModelUpdate,
               onRequestAuth: (senderIp, senderName, count, size) =>
@@ -1183,6 +1499,9 @@ class TransferCubit extends Cubit<TransferState> {
                     ),
                   ),
               onRequestAuthV2: _authorizeIncomingTransfer,
+              onDirectControlRequest: _handleDirectControlRequest,
+              directFrequencyProvider: () => _activeDirectFrequencyMhz,
+              onPeerReportedFrequency: _setActiveDirectFrequency,
               onDone: () {
                 if (myRxToken != _receiverSessionSeq || isClosed) return;
                 _handleReceiverTransferDone();
@@ -1213,7 +1532,6 @@ class TransferCubit extends Cubit<TransferState> {
                 totalSizeMB: ar.totalSizeMB,
                 senderPeerId: ar.senderPeerId,
                 senderFingerprint: ar.senderFingerprint,
-                sasCode: ar.sasCode,
                 isTls: ar.isTls,
               ));
     _pendingAuthV2Request = null;
@@ -1517,6 +1835,7 @@ class TransferCubit extends Cubit<TransferState> {
 
     bool directSessionStarted = false;
     try {
+      await _syncTransferIsolation(sending: true);
       final identity = _localIdentity ?? await _identityService.loadOrCreate();
       _localIdentity = identity;
       final localCaps =
@@ -1526,10 +1845,7 @@ class TransferCubit extends Cubit<TransferState> {
           );
 
       bool lanProbeHealthy = true;
-      if (peer.hasLan &&
-          peer.hasBle &&
-          localCaps.hasBle &&
-          state.transportPreference == TransportPreference.autoSmart) {
+      if (peer.hasLan && peer.hasBle && localCaps.hasBle) {
         lanProbeHealthy = await _probeLanHealthy(peer.lanIp!, peer.port);
       }
 
@@ -1537,28 +1853,23 @@ class TransferCubit extends Cubit<TransferState> {
 
       final plan = _linkEvaluator.planTransfer(
         peer: peer,
-        preference: state.transportPreference,
         localCaps: localCaps,
         localPeerId: identity.peerId,
         lanProbeHealthy: lanProbeHealthy,
       );
 
-      if (plan.strategy == LinkExecutionStrategy.manualQrFallback) {
-        throw "Peer is unreachable over LAN or Direct BLE (${plan.reason}). Use QR Pairing to exchange endpoints.";
+      if (plan.strategy == LinkExecutionStrategy.unreachable) {
+        throw plan.reason;
       }
 
-      if (plan.strategy == LinkExecutionStrategy.bleTriggeredDirectP2p) {
-        directSessionStarted = true;
-        await _executeDirectP2pTransfer(
-          peer: peer,
-          itemsToSend: itemsToSend,
-          plan: plan,
-          identity: identity,
-          onUpdate: onTokenizedSenderUpdate,
-        );
-      } else {
+      TransferModel decorateRoute(TransferModel model, String routeLabel) {
+        model.routeLabel = model.routeLabel ?? routeLabel;
+        return model;
+      }
+
+      Future<void> sendViaLan(String routeLabel) {
         final effectiveIp = peer.lanIp ?? targetIp;
-        await _sender.sendData(
+        return _sender.sendData(
           paths: itemsToSend,
           targetIp: effectiveIp,
           targetDeviceName: peer.name,
@@ -1573,8 +1884,101 @@ class TransferCubit extends Cubit<TransferState> {
                     peer.fingerprintPrefix!.toLowerCase(),
                   )
               : null,
-          onUpdate: onTokenizedSenderUpdate,
+          onUpdate: (model) =>
+              onTokenizedSenderUpdate(decorateRoute(model, routeLabel)),
         );
+      }
+
+      if (plan.strategy == LinkExecutionStrategy.lanTriggeredDirectP2p ||
+          plan.strategy == LinkExecutionStrategy.bleTriggeredDirectP2p) {
+        directSessionStarted = true;
+        bool peerResponded = false;
+        bool switchedWifi = false;
+        bool remoteDirectSignaled = false;
+
+        try {
+          await _executeDirectP2pTransfer(
+            peer: peer,
+            itemsToSend: itemsToSend,
+            plan: plan,
+            localCaps: localCaps,
+            identity: identity,
+            onWifiSwitched: () => switchedWifi = true,
+            onRemoteDirectSignaled: () => remoteDirectSignaled = true,
+            onUpdate: (model) {
+              if (model.phase == TransferPhase.sending ||
+                  model.phase == TransferPhase.finalizing ||
+                  model.phase == TransferPhase.done ||
+                  model.phase == TransferPhase.cancelled ||
+                  (model.phase == TransferPhase.waitingAuth &&
+                      model.status.contains(' to accept'))) {
+                peerResponded = true;
+              }
+              if (model.phase == TransferPhase.failed &&
+                  !peerResponded &&
+                  peer.hasLan &&
+                  !model.status.startsWith('Security Alert:')) {
+                return;
+              }
+              onTokenizedSenderUpdate(
+                decorateRoute(model, _activeDirectRouteLabel ?? 'Direct Wi-Fi'),
+              );
+            },
+          );
+        } catch (directError) {
+          final errText = directError.toString();
+          final bool securityBlocked = directError is HandshakeException ||
+              directError is TlsException ||
+              errText.contains('Security Alert') ||
+              errText.toLowerCase().contains('mismatch') ||
+              errText.toLowerCase().contains('rejected');
+          final bool cancelled = mySendToken != _sendSessionToken ||
+              (directError is TransferSendException &&
+                  directError.phase == TransferPhase.cancelled) ||
+              state.model.phase == TransferPhase.cancelled;
+
+          if (peerResponded || cancelled || securityBlocked || !peer.hasLan) {
+            rethrow;
+          }
+
+          // Pre-bytes Direct setup failed: teardown direct state, wait briefly
+          // for Router Wi-Fi recovery if needed, and transparently fall back to LAN TLS.
+          _activeDirectRouteLabel = null;
+          _activeDirectFrequencyMhz = null;
+          await _directBridge.stopDirectSession();
+          directSessionStarted = false;
+          if (mySendToken != _sendSessionToken || isClosed) return;
+
+          _safeEmit(
+            state.copyWith(
+              isDirectLinkConnecting: false,
+              directLinkStatus: 'Direct 5GHz unavailable; using Router LAN...',
+            ),
+          );
+
+          if (switchedWifi) {
+            for (var attempt = 0; attempt < 6; attempt++) {
+              if (mySendToken != _sendSessionToken || isClosed) return;
+              if (await _probeLanHealthy(peer.lanIp!, peer.port)) break;
+              await Future<void>.delayed(const Duration(milliseconds: 400));
+            }
+          }
+
+          if (remoteDirectSignaled) {
+            await _sendDirectTeardownSignal(
+              peer: peer,
+              identity: identity,
+              localCaps: localCaps,
+            );
+          }
+
+          await sendViaLan('Router LAN • Direct 5GHz fallback');
+        }
+      } else {
+        final routeLabel = plan.strategy == LinkExecutionStrategy.legacyPlainLan
+            ? 'Router LAN (Legacy)'
+            : 'Router LAN • ${plan.parallelStreams}x TLS';
+        await sendViaLan(routeLabel);
       }
 
       // Log success individually for each item atomically
@@ -1679,6 +2083,8 @@ class TransferCubit extends Cubit<TransferState> {
         );
       }
     } finally {
+      _activeDirectRouteLabel = null;
+      await _syncTransferIsolation(sending: false);
       if (directSessionStarted && mySendToken == _sendSessionToken) {
         await _directBridge.stopDirectSession();
       }
@@ -1726,68 +2132,408 @@ class TransferCubit extends Cubit<TransferState> {
     }
   }
 
+  Future<void> _sendDirectTeardownSignal({
+    required UnifiedPeer peer,
+    required DeviceIdentity identity,
+    required LocalRadioCapabilities localCaps,
+  }) async {
+    final reqId = generateTransferSessionId();
+    bool sent = false;
+    if (peer.hasLan) {
+      try {
+        await _directControlSender(
+          host: peer.lanIp!,
+          port: peer.port,
+          localIdentity: identity,
+          localDeviceName: state.deviceName,
+          localPort: _activeListenPort,
+          action: 'teardown',
+          expectedPeerFingerprint: peer.certFingerprint,
+          onVerifyPeerFingerprint: peer.fingerprintPrefix != null
+              ? (actualFp) async => actualFp.toLowerCase().startsWith(
+                    peer.fingerprintPrefix!.toLowerCase(),
+                  )
+              : null,
+          connectTimeout: const Duration(seconds: 2),
+          responseTimeout: const Duration(seconds: 2),
+        );
+        sent = true;
+      } catch (_) {}
+    }
+    final bleAddr = peer.bleAddress;
+    if (!sent && bleAddr != null && bleAddr.isNotEmpty && localCaps.hasBle) {
+      try {
+        await _directBridge.exchangeGattLink(
+          bleAddress: bleAddr,
+          payload: <String, dynamic>{
+            'requestId': reqId,
+            'peerId': identity.peerId,
+            'peerName': state.deviceName,
+            'peerFingerprint': identity.certFingerprint,
+            'action': 'teardown',
+          },
+        );
+      } catch (_) {}
+    }
+  }
+
   Future<void> _executeDirectP2pTransfer({
     required UnifiedPeer peer,
     required List<String> itemsToSend,
     required LinkPlan plan,
+    required LocalRadioCapabilities localCaps,
     required DeviceIdentity identity,
+    required void Function() onWifiSwitched,
+    void Function()? onRemoteDirectSignaled,
     required void Function(TransferModel) onUpdate,
   }) async {
-    final bleAddr = peer.bleAddress;
-    if (bleAddr == null || bleAddr.isEmpty) {
-      throw "Direct BLE link unavailable for ${peer.name}.";
+    _activeDirectFrequencyMhz = null;
+    _activeDirectRouteLabel = null;
+    final bool preferLanControl =
+        plan.strategy == LinkExecutionStrategy.lanTriggeredDirectP2p &&
+        peer.hasLan;
+    final String? bleAddr = peer.bleAddress;
+    final bool canBleControl =
+        bleAddr != null && bleAddr.isNotEmpty && localCaps.hasBle;
+
+    if (!preferLanControl && !canBleControl) {
+      throw 'No LAN or BLE control channel available for Direct 5GHz.';
     }
 
     final reqId = generateTransferSessionId();
     String? verifiedFingerprint = peer.certFingerprint;
 
-    if (plan.shouldLocalHostDirectGroup) {
-      if (!isClosed) {
-        emit(
-          state.copyWith(
-            isDirectLinkConnecting: true,
-            directLinkStatus: 'Creating 5GHz Direct Link for ${peer.name}...',
-          ),
+    bool matchesPinnedOrPrefix(String fp) {
+      final norm = fp.trim().toLowerCase();
+      if (norm.length != 64) return true;
+      final pinned = peer.certFingerprint?.trim().toLowerCase();
+      if (pinned != null && pinned.isNotEmpty) return norm == pinned;
+      final prefix = peer.fingerprintPrefix?.trim().toLowerCase();
+      if (prefix != null && prefix.isNotEmpty) return norm.startsWith(prefix);
+      return true;
+    }
+
+    Future<bool> verifyPeerCert(
+      String actualFp, {
+      Completer<void>? pendingJoin,
+    }) async {
+      if (verifiedFingerprint == null &&
+          pendingJoin != null &&
+          !pendingJoin.isCompleted) {
+        await pendingJoin.future.timeout(
+          const Duration(seconds: 25),
+          onTimeout: () {},
         );
       }
-      final hostInfo = await _directBridge.startDirectHost(prefer5Ghz: true);
-      if (hostInfo == null) {
-        if (peer.hasLan) {
+      if (verifiedFingerprint != null) {
+        return actualFp.toLowerCase() == verifiedFingerprint!.toLowerCase();
+      }
+      if (peer.fingerprintPrefix != null) {
+        return actualFp.toLowerCase().startsWith(
+          peer.fingerprintPrefix!.toLowerCase(),
+        );
+      }
+      return false;
+    }
+
+    bool useReverseConnect = plan.useReverseConnect;
+    if (plan.shouldLocalHostDirectGroup) {
+      _safeEmit(
+        state.copyWith(
+          isDirectLinkConnecting: true,
+          directLinkStatus: 'Creating 5GHz Direct Link for ${peer.name}...',
+        ),
+      );
+      final hostInfo = await _directBridge.startDirectHost(
+        prefer5Ghz: true,
+        stableTag: _stableDirectSsidTag,
+        allow24GhzFallback: !peer.caps.direct5gHostCapable,
+      );
+      if (hostInfo == null && peer.caps.direct5gHostCapable) {
+        _localRadioCaps = _localRadioCaps?.copyWith(canHostDirect5g: false);
+        if (localCaps.localPlatform != PeerPlatform.android ||
+            peer.platform != PeerPlatform.windows) {
+          useReverseConnect = false;
+        }
+      } else if (hostInfo == null) {
+        throw 'Could not start Direct 5GHz Wi-Fi P2P host on this device.';
+      } else {
+        _setActiveDirectFrequency(hostInfo.frequencyMhz);
+
+        _safeEmit(
+          state.copyWith(
+            directLinkStatus: preferLanControl
+                ? 'Connecting ${peer.name} directly on 5GHz...'
+                : 'Signaling ${peer.name} over BLE...',
+          ),
+        );
+
+        final String? reverseToken =
+            plan.useReverseConnect ? generateTransferSessionId() : null;
+        final Completer<void> joinHostDone = Completer<void>();
+
+        Future<bool> dispatchJoinHost(int connectPort) async {
+          try {
+            bool signaled = false;
+            String? observedFp;
+
+            if (preferLanControl) {
+              try {
+                final lanResp = await _directControlSender(
+                  host: peer.lanIp!,
+                  port: peer.port,
+                  localIdentity: identity,
+                  localDeviceName: state.deviceName,
+                  localPort: connectPort,
+                  action: 'joinHost',
+                  expectedPeerFingerprint: verifiedFingerprint,
+                  onVerifyPeerFingerprint: verifiedFingerprint == null
+                      ? (actualFp) async {
+                          if (!matchesPinnedOrPrefix(actualFp)) return false;
+                          observedFp = actualFp.toLowerCase();
+                          return true;
+                        }
+                      : null,
+                  ssid: hostInfo.ssid,
+                  psk: hostInfo.psk,
+                  hostIp: hostInfo.hostIp,
+                  reverseConnect: plan.useReverseConnect,
+                  frequencyMhz: hostInfo.frequencyMhz,
+                  reverseToken: reverseToken,
+                  connectTimeout: const Duration(seconds: 4),
+                  responseTimeout: const Duration(seconds: 5),
+                );
+                signaled = lanResp['ok'] == true;
+              } catch (e) {
+                if (e is HandshakeException || e is TlsException) rethrow;
+                signaled = false;
+              }
+            }
+
+            if (!signaled && canBleControl) {
+              final gattResp = await _directBridge.exchangeGattLink(
+                bleAddress: bleAddr,
+                payload: <String, dynamic>{
+                  'requestId': reqId,
+                  'peerId': identity.peerId,
+                  'peerName': state.deviceName,
+                  'peerFingerprint': identity.certFingerprint,
+                  'action': 'joinHost',
+                  'ssid': hostInfo.ssid,
+                  'psk': hostInfo.psk,
+                  'hostIp': hostInfo.hostIp,
+                  'port': connectPort,
+                  'reverseConnect': plan.useReverseConnect,
+                  'reverseToken': ?reverseToken,
+                  'frequencyMhz': hostInfo.frequencyMhz,
+                },
+              );
+              if (gattResp != null && gattResp['ok'] != false) {
+                signaled = true;
+                observedFp = (gattResp['fp'] as String?) ?? observedFp;
+              }
+            }
+
+            if (!signaled) {
+              if (useReverseConnect) {
+                _sender.cancel(
+                  reason: 'Could not signal Direct 5GHz link to ${peer.name}.',
+                );
+              }
+              return false;
+            }
+            onRemoteDirectSignaled?.call();
+
+            if (observedFp != null && observedFp!.length == 64) {
+              final normalizedFp = observedFp!.toLowerCase();
+              final trusted =
+                  await _trustedDevicesService.getDevice(peer.peerId);
+              if (trusted != null &&
+                  trusted.certFingerprint.trim().toLowerCase() != normalizedFp) {
+                if (useReverseConnect) {
+                  _sender.cancel(
+                    reason: 'Peer certificate mismatch for ${peer.name}.',
+                  );
+                } else {
+                  throw HandshakeException(
+                    'Peer certificate mismatch for ${peer.name}.',
+                  );
+                }
+                return false;
+              }
+              verifiedFingerprint = normalizedFp;
+            }
+            return true;
+          } catch (e) {
+            if (e is HandshakeException || e is TlsException) {
+              if (!plan.useReverseConnect) rethrow;
+              _sender.cancel(
+                reason: 'Security Alert: TLS certificate error for ${peer.name}.',
+              );
+              return false;
+            }
+            if (useReverseConnect) {
+              _sender.cancel(
+                reason: 'Could not signal Direct 5GHz link to ${peer.name}.',
+              );
+            }
+            return false;
+          } finally {
+            if (!joinHostDone.isCompleted) {
+              joinHostDone.complete();
+            }
+          }
+        }
+
+        if (useReverseConnect) {
           await _sender.sendData(
             paths: itemsToSend,
-            targetIp: peer.lanIp!,
+            targetIp: hostInfo.hostIp,
             targetDeviceName: peer.name,
             senderDeviceName: state.deviceName,
-            port: peer.port,
+            port: 0,
             useTls: plan.useTls,
-            expectedPeerFingerprint: peer.certFingerprint,
+            expectedPeerFingerprint: verifiedFingerprint,
+            expectedPeerFingerprintProvider: () => verifiedFingerprint,
             localIdentity: identity,
             parallelStreams: plan.parallelStreams,
-            onVerifyPeerFingerprint:
-                peer.certFingerprint == null && peer.fingerprintPrefix != null
-                ? (actualFp) async => actualFp.toLowerCase().startsWith(
-                    peer.fingerprintPrefix!.toLowerCase(),
-                  )
-                : null,
+            listenForReverseReceiver: true,
+            reverseAuthToken: reverseToken,
+            reverseConnectTimeout: const Duration(seconds: 35),
+            onReverseListening: (boundPort) {
+              unawaited(dispatchJoinHost(boundPort));
+            },
+            onVerifyPeerFingerprint: (actualFp) =>
+                verifyPeerCert(actualFp, pendingJoin: joinHostDone),
+            directFrequencyProvider: () => _activeDirectFrequencyMhz,
+            onPeerReportedFrequency: _setActiveDirectFrequency,
             onUpdate: onUpdate,
           );
-          return;
+        } else {
+          final signaled = await dispatchJoinHost(_activeListenPort);
+          if (!signaled) {
+            throw 'Could not signal Direct 5GHz link to ${peer.name}.';
+          }
+          _safeEmit(
+            state.copyWith(
+              directLinkStatus: 'Waiting for ${peer.name} to join Direct 5GHz...',
+            ),
+          );
+          final int activeSendToken = _sendSessionToken;
+          final clientIp = await _waitForHostedClientIp(
+            isAborted: () => _sendSessionToken != activeSendToken,
+          );
+          if (clientIp == null) {
+            throw '${peer.name} did not join the Direct 5GHz link in time.';
+          }
+          onWifiSwitched();
+          await _sender.sendData(
+            paths: itemsToSend,
+            targetIp: clientIp,
+            targetDeviceName: peer.name,
+            senderDeviceName: state.deviceName,
+            port: peer.port > 0 ? peer.port : AppConstants.transferPort,
+            useTls: plan.useTls,
+            expectedPeerFingerprint: verifiedFingerprint,
+            expectedPeerFingerprintProvider: () => verifiedFingerprint,
+            localIdentity: identity,
+            parallelStreams: plan.parallelStreams,
+            onVerifyPeerFingerprint: (actualFp) => verifyPeerCert(actualFp),
+            directFrequencyProvider: () => _activeDirectFrequencyMhz,
+            onPeerReportedFrequency: _setActiveDirectFrequency,
+            onUpdate: onUpdate,
+          );
         }
-        throw "Could not start Direct 5GHz Wi-Fi P2P host on this device.";
+        return;
+      }
+    }
+
+    // Peer hosts the Direct AP/GO (e.g. Windows 5GHz Mobile Hotspot when Android
+    // sends to Windows, or Android GO when an offline Windows PC sends to Android).
+    _safeEmit(
+      state.copyWith(
+        isDirectLinkConnecting: true,
+        directLinkStatus: preferLanControl
+            ? 'Preparing 5GHz Direct Link on ${peer.name}...'
+            : 'Requesting ${peer.name} 5GHz Direct Link via BLE...',
+      ),
+    );
+
+    Future<({DirectClientConnection conn, String? fallbackHostIp, int targetPort})>
+    requestAndJoinPeerHost({
+      required int listenPort,
+      String? reverseToken,
+    }) async {
+      String? ssid;
+      String? psk;
+      String? hostIp;
+      int targetPort = peer.port;
+      int? freqMhz;
+
+      String? lanErrorReason;
+      if (preferLanControl) {
+        try {
+          final lanResp = await _directControlSender(
+            host: peer.lanIp!,
+            port: peer.port,
+            localIdentity: identity,
+            localDeviceName: state.deviceName,
+            localPort: listenPort,
+            action: 'startHostAndWait',
+            expectedPeerFingerprint: verifiedFingerprint,
+            onVerifyPeerFingerprint: verifiedFingerprint == null
+                ? (actualFp) async {
+                    if (!matchesPinnedOrPrefix(actualFp)) return false;
+                    verifiedFingerprint = actualFp.toLowerCase();
+                    return true;
+                  }
+                : null,
+            reverseConnect: plan.useReverseConnect,
+            reverseToken: reverseToken,
+            connectTimeout: const Duration(seconds: 4),
+            responseTimeout: const Duration(seconds: 22),
+          );
+          if (lanResp['ok'] == true &&
+              lanResp['ssid'] is String &&
+              lanResp['psk'] is String) {
+            ssid = lanResp['ssid'] as String;
+            psk = lanResp['psk'] as String;
+            hostIp = lanResp['hostIp'] as String?;
+            targetPort = (lanResp['port'] as num?)?.toInt() ?? peer.port;
+            freqMhz = (lanResp['frequencyMhz'] as num?)?.toInt();
+          } else {
+            final err = lanResp['error'];
+            if (err is String && err.trim().isNotEmpty) {
+              lanErrorReason = err.trim();
+            } else {
+              lanErrorReason = 'ok=${lanResp['ok']}';
+            }
+          }
+        } catch (e) {
+          if (e is HandshakeException || e is TlsException) rethrow;
+          lanErrorReason = e.toString();
+        }
       }
 
-      if (!isClosed) {
-        emit(
-          state.copyWith(
-            directLinkStatus: 'Signaling ${peer.name} over BLE GATT...',
+      if (ssid == null && canBleControl) {
+        _pendingHostReadyPeerId = peer.peerId.trim().toLowerCase();
+        _pendingHostReadyRequestId = reqId;
+        _pendingHostReadyExpectedFp = peer.certFingerprint?.trim().toLowerCase();
+        _pendingHostReadyExpectedFpPrefix = peer.fingerprintPrefix
+            ?.trim()
+            .toLowerCase();
+        final hostReadyCompleter = Completer<DirectGattLinkRequestEvent>();
+        hostReadyCompleter.future.catchError(
+          (_) => DirectGattLinkRequestEvent(
+            requestId: reqId,
+            peerId: peer.peerId,
+            peerName: peer.name,
+            action: 'hostReady',
           ),
         );
-      }
+        _pendingHostReadyCompleter = hostReadyCompleter;
 
-      final String reverseToken = generateTransferSessionId();
-      final Completer<void> joinHostDone = Completer<void>();
-
-      Future<void> dispatchJoinHost(int boundPort) async {
+        late final DirectGattLinkRequestEvent hostReady;
         try {
           final gattResp = await _directBridge.exchangeGattLink(
             bleAddress: bleAddr,
@@ -1796,49 +2542,90 @@ class TransferCubit extends Cubit<TransferState> {
               'peerId': identity.peerId,
               'peerName': state.deviceName,
               'peerFingerprint': identity.certFingerprint,
-              'action': 'joinHost',
-              'ssid': hostInfo.ssid,
-              'psk': hostInfo.psk,
-              'hostIp': hostInfo.hostIp,
-              'port': boundPort,
-              'reverseConnect': true,
-              'reverseToken': reverseToken,
-              'frequencyMhz': hostInfo.frequencyMhz,
+              'action': 'startHostAndWait',
+              'port': listenPort,
+              'reverseConnect': plan.useReverseConnect,
+              'reverseToken': ?reverseToken,
             },
           );
           if (gattResp == null || gattResp['ok'] == false) {
-            _sender.cancel(
-              reason: "Could not reach ${peer.name} over BLE GATT.",
-            );
-            return;
+            throw 'Could not reach ${peer.name} over BLE GATT.';
           }
-          final fp = gattResp['fp'] as String?;
+          final fp = (gattResp['fp'] as String?)?.trim().toLowerCase();
           if (fp != null && fp.length == 64) {
-            final normalizedFp = fp.toLowerCase();
-            final trusted = await _trustedDevicesService.getDevice(peer.peerId);
-            if (trusted != null &&
-                trusted.certFingerprint.trim().toLowerCase() != normalizedFp) {
-              _sender.cancel(
-                reason: "Peer certificate mismatch for ${peer.name}.",
+            if (!matchesPinnedOrPrefix(fp)) {
+              throw HandshakeException(
+                'Peer certificate mismatch for ${peer.name}.',
               );
-              return;
             }
-            verifiedFingerprint = normalizedFp;
+            verifiedFingerprint = fp;
+            _pendingHostReadyExpectedFp = fp;
           }
-        } catch (_) {
-          _sender.cancel(
-            reason: "Could not reach ${peer.name} over BLE GATT.",
+
+          hostReady = await hostReadyCompleter.future.timeout(
+            const Duration(seconds: 22),
           );
         } finally {
-          if (!joinHostDone.isCompleted) {
-            joinHostDone.complete();
+          if (identical(_pendingHostReadyCompleter, hostReadyCompleter)) {
+            _pendingHostReadyCompleter = null;
+            _pendingHostReadyPeerId = null;
+            _pendingHostReadyRequestId = null;
+            _pendingHostReadyExpectedFp = null;
+            _pendingHostReadyExpectedFpPrefix = null;
           }
         }
+
+        if (hostReady.peerFingerprint != null &&
+            hostReady.peerFingerprint!.length == 64) {
+          if (!matchesPinnedOrPrefix(hostReady.peerFingerprint!)) {
+            throw HandshakeException(
+              'Peer certificate mismatch for ${peer.name}.',
+            );
+          }
+          verifiedFingerprint = hostReady.peerFingerprint!.toLowerCase();
+        }
+
+        ssid = hostReady.ssid;
+        psk = hostReady.psk;
+        hostIp = hostReady.hostIp;
+        if (hostReady.port > 0) targetPort = hostReady.port;
+        freqMhz = hostReady.frequencyMhz;
       }
 
+      if (ssid == null || psk == null) {
+        final detail = (lanErrorReason != null && lanErrorReason.isNotEmpty)
+            ? ' ($lanErrorReason)'
+            : '';
+        throw 'Direct 5GHz credentials were not returned by ${peer.name}.$detail';
+      }
+      onRemoteDirectSignaled?.call();
+
+      _setActiveDirectFrequency(freqMhz);
+      _safeEmit(
+        state.copyWith(
+          directLinkStatus: 'Connecting 5GHz Direct Wi-Fi to ${peer.name}...',
+        ),
+      );
+      onWifiSwitched();
+      final clientConn = await _directBridge.connectDirectClient(
+        ssid: ssid,
+        psk: psk,
+        frequencyMhz: freqMhz,
+        expectedGatewayIp: hostIp,
+      );
+      if (clientConn == null) {
+        throw 'Could not join Direct 5GHz network from ${peer.name}.';
+      }
+      _setActiveDirectFrequency(clientConn.frequencyMhz ?? freqMhz);
+      return (conn: clientConn, fallbackHostIp: hostIp, targetPort: targetPort);
+    }
+
+    if (useReverseConnect) {
+      final reverseToken = generateTransferSessionId();
+      final joinDone = Completer<void>();
       await _sender.sendData(
         paths: itemsToSend,
-        targetIp: hostInfo.hostIp,
+        targetIp: peer.lanIp ?? '0.0.0.0',
         targetDeviceName: peer.name,
         senderDeviceName: state.deviceName,
         port: 0,
@@ -1849,147 +2636,53 @@ class TransferCubit extends Cubit<TransferState> {
         parallelStreams: plan.parallelStreams,
         listenForReverseReceiver: true,
         reverseAuthToken: reverseToken,
+        reverseConnectTimeout: const Duration(seconds: 35),
         onReverseListening: (boundPort) {
-          unawaited(dispatchJoinHost(boundPort));
+          unawaited(() async {
+            try {
+              await requestAndJoinPeerHost(
+                listenPort: boundPort,
+                reverseToken: reverseToken,
+              );
+            } catch (e, st) {
+              _sender.failReverseSetup(e, st);
+            } finally {
+              if (!joinDone.isCompleted) {
+                joinDone.complete();
+              }
+            }
+          }());
         },
-        onVerifyPeerFingerprint: (actualFp) async {
-          if (verifiedFingerprint == null && !joinHostDone.isCompleted) {
-            await joinHostDone.future.timeout(
-              const Duration(seconds: 5),
-              onTimeout: () {},
-            );
-          }
-          if (verifiedFingerprint != null) {
-            return actualFp.toLowerCase() == verifiedFingerprint!.toLowerCase();
-          }
-          if (peer.fingerprintPrefix != null) {
-            return actualFp.toLowerCase().startsWith(
-              peer.fingerprintPrefix!.toLowerCase(),
-            );
-          }
-          return false;
-        },
+        onVerifyPeerFingerprint: (actualFp) =>
+            verifyPeerCert(actualFp, pendingJoin: joinDone),
+        directFrequencyProvider: () => _activeDirectFrequencyMhz,
+        onPeerReportedFrequency: _setActiveDirectFrequency,
         onUpdate: onUpdate,
       );
       return;
     }
 
-    // Receiver hosts the 5GHz GO (e.g. Windows sending to Android).
-    if (!isClosed) {
-      emit(
-        state.copyWith(
-          isDirectLinkConnecting: true,
-          directLinkStatus: 'Requesting ${peer.name} 5GHz Direct Link via BLE...',
-        ),
-      );
-    }
-
-    _pendingHostReadyPeerId = peer.peerId.trim().toLowerCase();
-    _pendingHostReadyRequestId = reqId;
-    _pendingHostReadyExpectedFp = peer.certFingerprint?.trim().toLowerCase();
-    _pendingHostReadyExpectedFpPrefix = peer.fingerprintPrefix?.trim().toLowerCase();
-    final hostReadyCompleter = Completer<DirectGattLinkRequestEvent>();
-    hostReadyCompleter.future.catchError((_) => DirectGattLinkRequestEvent(
-      requestId: reqId,
-      peerId: peer.peerId,
-      peerName: peer.name,
-      action: 'hostReady',
-    ));
-    _pendingHostReadyCompleter = hostReadyCompleter;
-
-    late final DirectGattLinkRequestEvent hostReady;
-    try {
-      final gattResp = await _directBridge.exchangeGattLink(
-        bleAddress: bleAddr,
-        payload: <String, dynamic>{
-          'requestId': reqId,
-          'peerId': identity.peerId,
-          'peerName': state.deviceName,
-          'peerFingerprint': identity.certFingerprint,
-          'action': 'startHostAndWait',
-          'port': peer.port,
-          'reverseConnect': plan.useReverseConnect,
-        },
-      );
-      if (gattResp == null || gattResp['ok'] == false) {
-        throw "Could not reach ${peer.name} over BLE GATT.";
-      }
-      final fp = (gattResp['fp'] as String?)?.trim().toLowerCase();
-      if (fp != null && fp.length == 64) {
-        final pinned = _pendingHostReadyExpectedFp;
-        final prefix = _pendingHostReadyExpectedFpPrefix;
-        if ((pinned != null && pinned.isNotEmpty && pinned != fp) ||
-            (pinned == null &&
-                prefix != null &&
-                prefix.isNotEmpty &&
-                !fp.startsWith(prefix))) {
-          throw "Peer certificate mismatch for ${peer.name}.";
-        }
-        verifiedFingerprint = fp;
-        _pendingHostReadyExpectedFp = fp;
-      }
-
-      hostReady = await hostReadyCompleter.future.timeout(
-        const Duration(seconds: 15),
-      );
-    } finally {
-      if (identical(_pendingHostReadyCompleter, hostReadyCompleter)) {
-        _pendingHostReadyCompleter = null;
-        _pendingHostReadyPeerId = null;
-        _pendingHostReadyRequestId = null;
-        _pendingHostReadyExpectedFp = null;
-        _pendingHostReadyExpectedFpPrefix = null;
-      }
-    }
-
-    if (hostReady.peerFingerprint != null &&
-        hostReady.peerFingerprint!.length == 64) {
-      verifiedFingerprint = hostReady.peerFingerprint!.toLowerCase();
-    }
-
-    if (hostReady.ssid == null || hostReady.psk == null) {
-      throw "Direct Wi-Fi credentials were not returned by ${peer.name}.";
-    }
-
-    if (!isClosed) {
-      emit(
-        state.copyWith(
-          directLinkStatus: 'Connecting 5GHz Wi-Fi Direct to ${peer.name}...',
-        ),
-      );
-    }
-    final clientConn = await _directBridge.connectDirectClient(
-      ssid: hostReady.ssid!,
-      psk: hostReady.psk!,
-      frequencyMhz: hostReady.frequencyMhz,
-      expectedGatewayIp: hostReady.hostIp,
+    final joined = await requestAndJoinPeerHost(
+      listenPort: _activeListenPort,
     );
-    if (clientConn == null) {
-      throw "Could not join Direct 5GHz network from ${peer.name}.";
-    }
-
-    final targetHostIp = clientConn.gatewayIp.isNotEmpty
-        ? clientConn.gatewayIp
-        : (hostReady.hostIp ?? '192.168.49.1');
-    final targetPort = hostReady.port > 0 ? hostReady.port : peer.port;
+    final targetHostIp = joined.conn.gatewayIp.isNotEmpty
+        ? joined.conn.gatewayIp
+        : (joined.fallbackHostIp ?? '192.168.49.1');
 
     await _sender.sendData(
       paths: itemsToSend,
       targetIp: targetHostIp,
       targetDeviceName: peer.name,
       senderDeviceName: state.deviceName,
-      port: targetPort,
+      port: joined.targetPort,
       useTls: plan.useTls,
       expectedPeerFingerprint: verifiedFingerprint,
       expectedPeerFingerprintProvider: () => verifiedFingerprint,
       localIdentity: identity,
       parallelStreams: plan.parallelStreams,
-      onVerifyPeerFingerprint: verifiedFingerprint == null &&
-              peer.fingerprintPrefix != null
-          ? (actualFp) async => actualFp.toLowerCase().startsWith(
-                peer.fingerprintPrefix!.toLowerCase(),
-              )
-          : null,
+      onVerifyPeerFingerprint: (actualFp) => verifyPeerCert(actualFp),
+      directFrequencyProvider: () => _activeDirectFrequencyMhz,
+      onPeerReportedFrequency: _setActiveDirectFrequency,
       onUpdate: onUpdate,
     );
   }
@@ -2025,6 +2718,8 @@ class TransferCubit extends Cubit<TransferState> {
     _connectivitySubscription?.cancel();
     _directBridge.stopBleDiscovery();
     _directBridge.stopDirectSession();
+    _activeDirectRouteLabel = null;
+    unawaited(_syncTransferIsolation(sending: false, receiving: false));
     _peerRegistry.dispose();
     discoveryService.dispose();
     _receiver.stop();
@@ -2045,7 +2740,10 @@ class TransferCubit extends Cubit<TransferState> {
     _pendingHostReadyRequestId = null;
     _pendingHostReadyExpectedFp = null;
     _pendingHostReadyExpectedFpPrefix = null;
+    _activeDirectRouteLabel = null;
+    _activeDirectFrequencyMhz = null;
     _directBridge.stopDirectSession();
+    unawaited(_syncTransferIsolation(sending: false));
     _safeEmit(
       state.copyWith(
         isTransferring: false,
@@ -2082,7 +2780,17 @@ class TransferCubit extends Cubit<TransferState> {
 
   void cancelReceiving({String? reason}) {
     _receiver.cancelActiveTransfer(reason: reason);
-    unawaited(_stopHostedDirectSession());
+    unawaited(
+      _receiver.waitForPendingRejection().whenComplete(() {
+        if (!isClosed &&
+            _activeHostedDirectSession &&
+            !state.isReceivingActive &&
+            !state.isTransferring) {
+          unawaited(_stopHostedDirectSession());
+        }
+      }),
+    );
+    unawaited(_syncTransferIsolation(receiving: false));
     if (state.authRequest != null) {
       resolveAuth(false);
     }
