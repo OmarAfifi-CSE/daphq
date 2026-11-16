@@ -1,114 +1,173 @@
 /**
- * Daphq Command Center - Interactive Neural Network Background
- * High-performance Canvas animation with proximity-based connections.
+ * Daphq - Interactive Constellation Background
+ * Smooth proximity particle network matching the in-app Orbital Radar aesthetic.
  */
+'use strict';
 
-class NetworkBackground {
-    constructor(canvasId) {
-        this.canvas = document.getElementById(canvasId);
-        this.ctx = this.canvas.getContext('2d');
-        this.particles = [];
-        this.mouse = { x: null, y: null, radius: 150 };
-        this.particleCount = 80;
-        this.connectionDistance = 150;
-        this.surgeActive = false;
-        this.surgeColor = '#3D5AFE';
+class NetworkParticle {
+  constructor(width, height) {
+    this.x = Math.random() * width;
+    this.y = Math.random() * height;
+    this.vx = (Math.random() - 0.5) * 0.55;
+    this.vy = (Math.random() - 0.5) * 0.55;
+    this.radius = Math.random() * 1.9 + 1;
+  }
 
-        this.init();
-        this.animate();
+  update(width, height, mouse) {
+    this.x += this.vx;
+    this.y += this.vy;
 
-        window.addEventListener('resize', () => this.resize());
-        window.addEventListener('mousemove', (e) => {
-            this.mouse.x = e.x;
-            this.mouse.y = e.y;
-        });
+    if (this.x < 0) {
+      this.x = 0;
+      this.vx *= -1;
+    } else if (this.x > width) {
+      this.x = width;
+      this.vx *= -1;
     }
 
-    init() {
-        this.resize();
-        this.particles = [];
-        for (let i = 0; i < this.particleCount; i++) {
-            this.particles.push(new Particle(this.canvas.width, this.canvas.height));
-        }
+    if (this.y < 0) {
+      this.y = 0;
+      this.vy *= -1;
+    } else if (this.y > height) {
+      this.y = height;
+      this.vy *= -1;
     }
 
-    resize() {
-        this.canvas.width = window.innerWidth;
-        this.canvas.height = window.innerHeight;
+    if (mouse.x !== null && mouse.y !== null) {
+      const dx = mouse.x - this.x;
+      const dy = mouse.y - this.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance > 0 && distance < mouse.radius) {
+        const force = (mouse.radius - distance) / mouse.radius;
+        this.x -= dx * force * 0.02;
+        this.y -= dy * force * 0.02;
+      }
     }
+  }
 
-    triggerSurge() {
-        this.surgeActive = true;
-        setTimeout(() => this.surgeActive = false, 2000);
-    }
-
-    draw() {
-        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-        
-        for (let i = 0; i < this.particles.length; i++) {
-            this.particles[i].update(this.mouse);
-            this.particles[i].draw(this.ctx);
-
-            for (let j = i; j < this.particles.length; j++) {
-                const dx = this.particles[i].x - this.particles[j].x;
-                const dy = this.particles[i].y - this.particles[j].y;
-                const distance = Math.sqrt(dx * dx + dy * dy);
-
-                if (distance < this.connectionDistance) {
-                    let opacity = 1 - (distance / this.connectionDistance);
-                    this.ctx.strokeStyle = this.surgeActive ? `rgba(0, 229, 255, ${opacity * 0.8})` : `rgba(68, 138, 255, ${opacity * 0.2})`;
-                    this.ctx.lineWidth = this.surgeActive ? 2 : 1;
-                    this.ctx.beginPath();
-                    this.ctx.moveTo(this.particles[i].x, this.particles[i].y);
-                    this.ctx.lineTo(this.particles[j].x, this.particles[j].y);
-                    this.ctx.stroke();
-                }
-            }
-        }
-    }
-
-    animate() {
-        this.draw();
-        requestAnimationFrame(() => this.animate());
-    }
+  draw(ctx) {
+    ctx.fillStyle = 'rgba(100, 181, 246, 0.85)';
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
-class Particle {
-    constructor(width, height) {
-        this.x = Math.random() * width;
-        this.y = Math.random() * height;
-        this.vx = (Math.random() - 0.5) * 0.5;
-        this.vy = (Math.random() - 0.5) * 0.5;
-        this.radius = Math.random() * 2 + 1;
+class NetworkBackground {
+  constructor(canvasId) {
+    this.canvas = document.getElementById(canvasId);
+    if (!this.canvas) return;
+    this.ctx = this.canvas.getContext('2d');
+    if (!this.ctx) return;
+
+    this.particles = [];
+    this.mouse = { x: null, y: null, radius: 150 };
+    this.connectionDistance = 150;
+    this.rafId = null;
+    this.reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    this.userPaused = this.reducedMotionQuery.matches;
+    this.overrideReducedMotion = false;
+
+    this.onResize = () => this.resize();
+    this.onMouseMove = (event) => {
+      this.mouse.x = event.clientX;
+      this.mouse.y = event.clientY;
+    };
+    this.onMouseLeave = () => {
+      this.mouse.x = null;
+      this.mouse.y = null;
+    };
+    this.onVisibilityChange = () => this.syncPlayback();
+    this.onReducedMotionChange = () => this.syncPlayback();
+
+    window.addEventListener('resize', this.onResize);
+    window.addEventListener('mousemove', this.onMouseMove, { passive: true });
+    window.addEventListener('mouseleave', this.onMouseLeave);
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
+    this.reducedMotionQuery.addEventListener('change', this.onReducedMotionChange);
+
+    this.init();
+    this.syncPlayback();
+  }
+
+  init() {
+    this.resize();
+    const count = window.innerWidth < 700 ? 48 : 80;
+    this.particles = [];
+    for (let i = 0; i < count; i++) {
+      this.particles.push(new NetworkParticle(this.canvas.width, this.canvas.height));
     }
+    this.draw(false);
+  }
 
-    update(mouse) {
-        this.x += this.vx;
-        this.y += this.vy;
+  resize() {
+    this.canvas.width = window.innerWidth;
+    this.canvas.height = window.innerHeight;
+  }
 
-        // Bounce off walls
-        if (this.x < 0 || this.x > window.innerWidth) this.vx *= -1;
-        if (this.y < 0 || this.y > window.innerHeight) this.vy *= -1;
+  shouldAnimate() {
+    if (this.userPaused || document.hidden) return false;
+    return this.overrideReducedMotion || !this.reducedMotionQuery.matches;
+  }
 
-        // Mouse interaction
-        if (mouse.x && mouse.y) {
-            const dx = mouse.x - this.x;
-            const dy = mouse.y - this.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            if (distance < mouse.radius) {
-                const force = (mouse.radius - distance) / mouse.radius;
-                this.x -= dx * force * 0.02;
-                this.y -= dy * force * 0.02;
-            }
+  setPaused(paused) {
+    this.userPaused = paused;
+    this.overrideReducedMotion = !paused;
+    this.syncPlayback();
+  }
+
+  isPaused() {
+    return !this.shouldAnimate();
+  }
+
+  syncPlayback() {
+    if (this.shouldAnimate()) {
+      if (this.rafId === null) {
+        const step = () => {
+          if (!this.shouldAnimate()) {
+            this.rafId = null;
+            return;
+          }
+          this.draw(true);
+          this.rafId = requestAnimationFrame(step);
+        };
+        this.rafId = requestAnimationFrame(step);
+      }
+    } else if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
+  }
+
+  draw(advance) {
+    const { width, height } = this.canvas;
+    this.ctx.clearRect(0, 0, width, height);
+
+    for (let i = 0; i < this.particles.length; i++) {
+      const particle = this.particles[i];
+      if (advance) {
+        particle.update(width, height, this.mouse);
+      }
+      particle.draw(this.ctx);
+
+      for (let j = i + 1; j < this.particles.length; j++) {
+        const other = this.particles[j];
+        const dx = particle.x - other.x;
+        const dy = particle.y - other.y;
+        const distance = Math.hypot(dx, dy);
+
+        if (distance < this.connectionDistance) {
+          const opacity = 1 - distance / this.connectionDistance;
+          this.ctx.strokeStyle = `rgba(68, 138, 255, ${(opacity * 0.24).toFixed(3)})`;
+          this.ctx.lineWidth = 1;
+          this.ctx.beginPath();
+          this.ctx.moveTo(particle.x, particle.y);
+          this.ctx.lineTo(other.x, other.y);
+          this.ctx.stroke();
         }
+      }
     }
-
-    draw(ctx) {
-        ctx.fillStyle = 'rgba(68, 138, 255, 0.8)';
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-        ctx.fill();
-    }
+  }
 }
 
 window.NetworkBackground = NetworkBackground;

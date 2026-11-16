@@ -2,312 +2,418 @@
 <html lang="en">
 
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description"
-        content="Daphq - Lightning Fast Local Network File Transfer for Windows and Android. No size limits, secure, and blazing fast.">
-    <title>Daphq - Lightning Fast Local File Transfer</title>
-    <!-- Google Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link
-        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@400;500&display=swap"
-        rel="stylesheet">
-    <link rel="stylesheet" href="css/style.css">
-    <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
-    <link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192.png">
-    <link rel="icon" type="image/png" sizes="512x512" href="assets/icon-512.png">
-    <link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192-maskable.png">
-    <link rel="icon" type="image/png" sizes="512x512" href="assets/icon-512-maskable.png">
-    <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
-    <!-- Font Awesome -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0A0A1A">
+  <title>Daphq — No cables. Full 5GHz speed.</title>
+  <meta name="description"
+    content="Move gigabytes of photos, 4K videos, and whole folders straight between Windows and Android over 5GHz Wi-Fi. No cloud, no cables, no size limits.">
+  <meta property="og:title" content="Daphq — No cables. Full 5GHz speed.">
+  <meta property="og:description"
+    content="Your files. Between your Windows PC and Android phone. Fast, private, and offline over local 5GHz Wi-Fi.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="https://omarafifi-cse.github.io/daphq/assets/windows-interface.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Daphq — No cables. Full 5GHz speed.">
+  <meta name="twitter:description"
+    content="Move gigabytes between Windows and Android without cables or cloud limits.">
+  <meta name="twitter:image" content="https://omarafifi-cse.github.io/daphq/assets/windows-interface.png">
+  <link rel="canonical" href="https://omarafifi-cse.github.io/daphq/">
+  <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
+  <link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192.png">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@500;600;700&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="js/network-bg.js" defer></script>
+  <script src="js/main.js" defer></script>
 </head>
 
 <body>
-    <!-- Neural Network Background -->
-    <canvas id="network-canvas"></canvas>
+  <canvas id="network-canvas" aria-hidden="true"></canvas>
+  <a class="skip-link" href="#main">Skip to content</a>
 
-    <!-- Navigation -->
-    <nav class="navbar">
-        <div class="nav-container">
-            <div class="logo" style="display: flex; align-items: center; gap: 12px; cursor: pointer;"
-                onclick="window.scrollTo({top: 0, behavior: 'smooth'})">
-                <img src="assets/icon-192.png" alt="Daphq Logo" width="36" height="36" style="border-radius: 8px;">
-                <span class="logo-text">Daphq</span>
-            </div>
-            <div class="nav-links">
-                <a href="#">Home</a>
-                <a href="#demo">Demo</a>
-                <a href="#features">Features</a>
-                <a href="#how-it-works">How it Works</a>
-                <a href="https://github.com/OmarAfifi-CSE/daphq" target="_blank" class="github-link">GitHub</a>
-            </div>
-            <a href="#download" class="btn btn-nav">Download Now</a>
-        </div>
+  <header class="site-header">
+    <a class="brand" href="#" aria-label="Daphq home">
+      <img src="assets/icon-192.png" width="36" height="36" alt="">
+      <span>daphq<span class="brand-dot">.</span></span>
+    </a>
+    <nav aria-label="Main">
+      <a href="#why">Why Daphq</a>
+      <a href="#screens">Screens</a>
+      <a href="#privacy">Privacy</a>
+      <a href="#how-it-works">How it works</a>
+      <a href="#questions">Questions</a>
     </nav>
+    <a class="button button-small" href="#download">
+      Get Daphq <span aria-hidden="true">↓</span>
+    </a>
+  </header>
 
-    <!-- Hero Section -->
-    <header class="hero">
-        <div class="container hero-content">
-            <div class="hero-text fade-up">
-                <div class="badge" id="version-badge">Latest Version is Here!</div>
-                <h1>Transfer Files at <span class="gradient-text">Lightning Speed</span></h1>
-                <p>Move gigabytes of data between any combination of Windows and Android devices in seconds. No cloud,
-                    no size limits, 100% secure over your local Wi-Fi or Hotspot.</p>
-                <div class="hero-buttons">
-                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-primary btn-large"
-                        id="main-download-btn">
-                        <i class="fab fa-windows"></i> Download for Windows
-                    </a>
-                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-secondary btn-large"
-                        id="hero-android-btn">
-                        <i class="fab fa-android"></i> Download for Android
-                    </a>
-                </div>
-            </div>
-            <div class="hero-image fade-up delay-1">
-                <div class="glass-card mockup-container">
-                    <img src="assets/mockup.png" alt="Daphq App Mockup" class="floating">
-                </div>
-            </div>
-        </div>
-    </header>
+  <main id="main" tabindex="-1">
+    <!-- Hero -->
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="version-eyebrow">WINDOWS &amp; ANDROID · FULL 5GHZ WI-FI</span>
+        </p>
+        <h1 id="hero-title">No cables.<br>Full <span class="highlight">5GHz<svg viewBox="0 0 320 22"
+              preserveAspectRatio="none" aria-hidden="true">
+              <path d="M4 16Q150 2 316 12" />
+            </svg></span> speed.</h1>
+        <p class="hero-description">Send movies, vacation photos, and entire folders straight between your Windows PC
+          and Android phone. No cloud limits, no mobile data, and no typing IP addresses.</p>
 
-    <!-- Demo Section -->
-    <section id="demo" class="demo-section">
-        <div class="container">
-            <div class="section-header fade-up" style="margin-bottom: 40px;">
-                <h2>See it in <span class="gradient-text">Action</span></h2>
-                <p>Lightning fast file transfers in just a few clicks.</p>
-            </div>
-            <div class="demo-container glass-card fade-up delay-1">
-                <div class="demo-header">
-                    <div class="mac-buttons">
-                        <span></span><span></span><span></span>
-                    </div>
-                    <span class="demo-title">daphq - local transfer</span>
-                </div>
-                <img src="assets/Demo.gif" alt="Daphq Demo" class="demo-gif" loading="lazy">
-            </div>
+        <div class="hero-actions" id="hero-actions">
+          <a class="button button-primary" id="hero-primary-btn"
+            href="https://github.com/OmarAfifi-CSE/daphq/releases/latest">
+            <svg class="os-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+              <path fill="currentColor"
+                d="M1 1.5h6.5v6H1zm7.5 0H15v6H8.5zM1 8.5h6.5v6H1zm7.5 0H15v6H8.5z" />
+            </svg>
+            <span class="btn-label">Download for Windows</span>
+            <span class="btn-arrow" aria-hidden="true">↗</span>
+          </a>
+          <a class="button button-secondary" id="hero-secondary-btn"
+            href="https://github.com/OmarAfifi-CSE/daphq/releases/latest">
+            <svg class="os-icon" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+              <path fill="currentColor"
+                d="M17.6 9.48l1.84-3.18c.16-.31.04-.69-.26-.85-.29-.15-.65-.06-.83.22l-1.88 3.24a11.43 11.43 0 0 0-8.94 0L5.65 5.67c-.19-.28-.54-.37-.83-.22-.3.16-.42.54-.26.85l1.84 3.18C4.81 10.67 3.55 12.66 3.15 15h17.7c-.4-2.34-1.66-4.33-3.25-5.52zM9 13a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm6 0a1 1 0 1 1 0-2 1 1 0 0 1 0 2z" />
+            </svg>
+            <span class="btn-label">Download for Android</span>
+          </a>
         </div>
+        <p class="fine-print">Works offline · Zero cloud uploads · Open source</p>
+      </div>
+
+      <!-- Bespoke CSS Orbital Radar Bridge -->
+      <div class="hero-art" role="img"
+        aria-label="Illustration of a Windows PC and Android phone linked on Daphq's Orbital Radar transferring files at 86 MB/s">
+        <div class="radar-ring radar-outer"></div>
+        <div class="radar-ring radar-inner"></div>
+        <span class="compass compass-n" aria-hidden="true">N</span>
+        <span class="compass compass-e" aria-hidden="true">E</span>
+        <span class="compass compass-s" aria-hidden="true">S</span>
+        <span class="compass compass-w" aria-hidden="true">W</span>
+
+        <div class="radar-hub">
+          <img src="assets/icon-192.png" width="38" height="38" alt="">
+        </div>
+
+        <div class="peer-pill peer-pc">
+          <span class="peer-dot" aria-hidden="true"></span>
+          <div>
+            <strong>Omar-PC</strong>
+            <small>Windows 11</small>
+          </div>
+        </div>
+
+        <div class="peer-pill peer-phone">
+          <span class="peer-dot peer-dot-blue" aria-hidden="true"></span>
+          <div>
+            <strong>OnePlus Phone</strong>
+            <small>5GHz Direct</small>
+          </div>
+        </div>
+
+        <div class="transfer-card">
+          <div class="transfer-head">
+            <span class="transfer-badge">Direct 5GHz Wi-Fi</span>
+            <span class="transfer-speed">86.4 MB/s</span>
+          </div>
+          <div class="transfer-file">
+            <span>Vacation-4K.mov &amp; 142 photos</span>
+            <span class="transfer-check">✓</span>
+          </div>
+          <div class="transfer-bar"><i></i></div>
+        </div>
+
+        <div class="local-seal">
+          <span class="seal-icon" aria-hidden="true">⇄</span>
+          <span>Straight across the room.<br><strong>Never uploaded.</strong></span>
+        </div>
+      </div>
+
+      <div class="hero-baseline">
+        <span>WINDOWS 10/11 + ANDROID</span>
+        <span>UP TO 80–90+ MB/S ON 5GHZ WI-FI</span>
+        <span>SCROLL TO EXPLORE ↓</span>
+      </div>
     </section>
 
-    <!-- Brand Stats Bar -->
-    <div class="stats-bar">
-        <div class="container stats-container">
-            <!--
-            <div class="stat-item">
-                <i class="fab fa-github"></i>
-                <span id="github-stars">...</span> <span>Stars</span>
+    <!-- Stories -->
+    <section class="possibilities wrap section" id="why" aria-labelledby="possibilities-title">
+      <div class="section-intro">
+        <p class="eyebrow">BIG FILES. ZERO WAITING.</p>
+        <h2 id="possibilities-title">Get your files across<br>before the coffee <span class="serene">gets cold.</span>
+        </h2>
+        <p>No upload bars. No cloud compression. Just your own Wi-Fi moving things the fast way.</p>
+      </div>
+
+      <div class="stories">
+        <article class="story">
+          <div class="story-art folder-art" aria-hidden="true">
+            <div class="folder-card">
+              <span>📁 Summer-Trip (4.2 GB)</span>
+              <b>248 items</b>
             </div>
-            <div class="stat-divider"></div>
-            <div class="stat-item">
-                <i class="fas fa-code-branch"></i>
-                <span id="github-forks">...</span> <span>Forks</span>
+            <div class="folder-done">Saved with original folders ✓</div>
+          </div>
+          <p class="story-kicker">MOVE THE BIG STUFF</p>
+          <h3>Whole folders.<br>Not one file at a time.</h3>
+          <p>Drop a multi-gigabyte movie or hundreds of vacation photos. Daphq recreates every subfolder cleanly and
+            renames duplicates safely instead of overwriting.</p>
+          <span class="capability">No size caps · Folder trees preserved</span>
+        </article>
+
+        <article class="story">
+          <div class="story-art link-art" aria-hidden="true">
+            <div class="band-pill">
+              <span class="peer-dot"></span>
+              <strong>5GHz Direct Link</strong>
+              <small>Auto</small>
             </div>
-            <div class="stat-divider"></div>
-            -->
-            <div class="stat-item">
-                <i class="fas fa-user-shield"></i>
-                <span>100% Open Source</span>
-            </div>
+            <span class="hotspot-note">Manual Windows Hotspot stays untouched</span>
+          </div>
+          <p class="story-kicker">ZERO-TOUCH PAIRING</p>
+          <h3>No typing IPs.<br>No breaking your hotspot.</h3>
+          <p>Nearby devices spot each other automatically over Wi-Fi and Bluetooth. Already sharing your laptop's
+            Mobile Hotspot manually? Daphq uses it gently without turning it off.</p>
+          <span class="capability">Auto 5GHz · Safe with manual hotspots</span>
+        </article>
+
+        <article class="story">
+          <div class="story-art share-art" aria-hidden="true">
+            <span class="share-chip chip-win">Right-click ➔ Send via Daphq</span>
+            <span class="share-chip chip-and">Android Share ➔ Daphq</span>
+          </div>
+          <p class="story-kicker">SHARE FROM ANYWHERE</p>
+          <h3>Right-click on PC.<br>Share menu on Android.</h3>
+          <p>Start sending straight from Windows File Explorer or Android's Share sheet without digging through folders
+            twice.</p>
+          <span class="capability">Native Explorer &amp; Android integration</span>
+        </article>
+      </div>
+    </section>
+
+    <!-- Screens Switcher (Real Screenshots + Live Demo) -->
+    <section class="screens-section section" id="screens" aria-labelledby="screens-title">
+      <div class="wrap">
+        <div class="screens-heading">
+          <div>
+            <p class="eyebrow">SAME RADAR. BOTH DEVICES.</p>
+            <h2 id="screens-title">Clean on desktop.<br>Effortless in <span class="serene">your hand.</span></h2>
+          </div>
+          <p>Real screenshots from Windows and Android,<br>plus a live transfer recording.</p>
         </div>
+
+        <div class="screen-controls">
+          <div class="screen-buttons" role="group" aria-label="Choose a preview">
+            <button type="button" data-screen="windows" aria-pressed="true">
+              <span class="swatch swatch-win" aria-hidden="true"></span>Windows App
+            </button>
+            <button type="button" data-screen="android" aria-pressed="false">
+              <span class="swatch swatch-and" aria-hidden="true"></span>Android App
+            </button>
+            <button type="button" data-screen="demo" aria-pressed="false">
+              <span class="swatch swatch-demo" aria-hidden="true"></span>Live Demo
+            </button>
+          </div>
+          <span class="screen-hint">Tip: Use arrow keys or click to switch</span>
+        </div>
+
+        <div class="app-preview" data-screen="windows" id="app-preview"
+          aria-label="Real Windows desktop screenshot of the Daphq app">
+          <div class="preview-stage">
+            <img id="screen-shot" class="preview-img active" src="assets/windows-interface.png" width="1086"
+              height="693" alt="Daphq Windows desktop app showing a nearby Android phone on the Orbital Radar">
+            <img id="screen-shot-next" class="preview-img incoming" src="assets/windows-interface.png" width="1086"
+              height="693" alt="" aria-hidden="true">
+          </div>
+        </div>
+
+        <div class="preview-caption">
+          <p id="screen-description" aria-live="polite">
+            <strong>Windows Desktop Radar.</strong> Toggle Discoverable, pick your download folder, and spot nearby
+            devices cleanly on a calm midnight radar.
+          </p>
+          <span id="screen-meta">Real app capture · Windows 10/11 &amp; Android</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Privacy & Offline -->
+    <section class="privacy-section wrap section" id="privacy" aria-labelledby="privacy-title">
+      <div class="privacy-visual" aria-hidden="true">
+        <div class="privacy-orbit">
+          <span class="orbit-file file-a">.mov</span>
+          <span class="orbit-file file-b">.zip</span>
+          <div class="room-bridge">
+            <div class="room-screen">
+              <img src="assets/icon-192.png" width="44" height="44" alt="">
+              <span>RIGHT HERE.</span>
+            </div>
+            <div class="room-base"></div>
+          </div>
+          <span class="privacy-seal">DEVICE TO DEVICE. NEVER THE CLOUD.</span>
+        </div>
+      </div>
+
+      <div class="privacy-copy">
+        <p class="eyebrow">NOTHING TAKES A DETOUR THROUGH A SERVER.</p>
+        <h2 id="privacy-title">Private stays<br><span class="serene">private.</span></h2>
+        <p>Personal videos, family albums, and work files shouldn't be uploaded to someone else's server just to cross
+          a desk.</p>
+        <p>Daphq connects your devices straight to each other over local Wi-Fi. No accounts, no tracking, and the
+          receiving device always asks you before saving anything.</p>
+        <div class="privacy-points">
+          <span>✓ Zero internet or mobile data used</span>
+          <span>✓ Receiver always confirms before accepting files</span>
+          <span>✓ Verified device identity &amp; open-source code</span>
+        </div>
+        <a class="text-link" href="https://github.com/OmarAfifi-CSE/daphq" target="_blank"
+          rel="noopener noreferrer">Inspect the source on GitHub ↗</a>
+      </div>
+    </section>
+
+    <!-- Workflow -->
+    <section class="workflow-section section" id="how-it-works" aria-labelledby="workflow-title">
+      <div class="wrap">
+        <div class="section-intro">
+          <p class="eyebrow">THREE STEPS. NO SETUP WIZARDS.</p>
+          <h2 id="workflow-title">Open. Tap. <span class="serene">Done.</span></h2>
+        </div>
+
+        <ol class="steps">
+          <li>
+            <span class="step-number">01</span>
+            <h3>Open Daphq on both devices.</h3>
+            <p>Leave Receive active on the device getting the files, with Wi-Fi (and Bluetooth nearby) switched on.</p>
+          </li>
+          <li>
+            <span class="step-number">02</span>
+            <h3>Tap the device &amp; pick files.</h3>
+            <p>Select your target device on the Orbital Radar—or right-click directly from Windows Explorer or Android
+              Share.</p>
+          </li>
+          <li>
+            <span class="step-number">03</span>
+            <h3>Watch it cross at full speed.</h3>
+            <p>Accept once on the receiving screen and let 5GHz Direct Wi-Fi finish the rest—even if your phone screen
+              locks.</p>
+          </li>
+        </ol>
+
+        <div class="power-note">
+          <span class="power-symbol" aria-hidden="true">✳</span>
+          <p>
+            <strong>Simple on the surface. Built for speed underneath.</strong>
+            <br>Automatic 5GHz Direct Wi-Fi · Bidirectional Host Flip · Background Foreground Sync · Transfer History
+            &amp; Show in Folder
+          </p>
+          <span class="spec-tags">80–90+ MB/s Peak<br>Windows + Android</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section class="faq-section wrap section" id="questions" aria-labelledby="faq-title">
+      <div>
+        <p class="eyebrow">BEFORE YOUR FIRST SEND.</p>
+        <h2 id="faq-title">A few good<br><span class="serene">questions.</span></h2>
+        <a class="text-link" href="https://github.com/OmarAfifi-CSE/daphq/issues" target="_blank"
+          rel="noopener noreferrer">Need help with something else? ↗</a>
+      </div>
+
+      <div class="questions">
+        <details>
+          <summary>Do I need to turn on a hotspot or type IP addresses?<span aria-hidden="true">+</span></summary>
+          <p>Usually no. When both devices are nearby with Wi-Fi and Bluetooth on, Daphq finds them automatically and
+            negotiates a direct 5GHz link. Manual IP entry is always there if you ever need it on a locked-down network.</p>
+        </details>
+        <details>
+          <summary>Why did Android ask to confirm Wi-Fi on my very first transfer?<span aria-hidden="true">+</span></summary>
+          <p>Android shows a one-time system confirmation the very first time an app requests a direct local Wi-Fi link.
+            Daphq keeps your link credentials consistent so future transfers reconnect smoothly without manual
+            re-selection.</p>
+        </details>
+        <details>
+          <summary>What if I already turned on Windows Mobile Hotspot manually?<span aria-hidden="true">+</span></summary>
+          <p>Daphq respects it. If your Windows Mobile Hotspot is already running, Daphq won't change its name or
+            password and won't shut it down after the transfer completes.</p>
+        </details>
+        <details>
+          <summary>Does transferring files use my internet plan or mobile data?<span aria-hidden="true">+</span></summary>
+          <p>No. Every byte moves locally between your devices inside the room—never over mobile data and never through
+            any cloud server.</p>
+        </details>
+        <details>
+          <summary>Can I send huge 4K videos or whole folders safely?<span aria-hidden="true">+</span></summary>
+          <p>Yes. There are no file-size or item-count limits. Subfolders keep their structure, and if a file with the
+            same name already exists, Daphq renames the new copy cleanly (like <code>photo (1).jpg</code>) instead of
+            overwriting.</p>
+        </details>
+        <details>
+          <summary>Can anyone nearby drop files onto my device without asking?<span aria-hidden="true">+</span></summary>
+          <p>Never. When someone wants to send files, your receiving screen shows who is sending, how many items, and the
+            total size—and waits for you to tap Accept.</p>
+        </details>
+      </div>
+    </section>
+
+    <!-- Final CTA -->
+    <section class="final-cta" id="download" aria-labelledby="download-title">
+      <div class="wrap final-inner">
+        <div>
+          <p class="eyebrow">READY IN SECONDS.</p>
+          <h2 id="download-title">Skip the cable.<br>Send at <span class="serene-light">full speed.</span></h2>
+        </div>
+        <div>
+          <p>Grab the Windows desktop app and Android APK.<br>No sign-ups, no ads, completely open source.</p>
+          <div class="final-buttons">
+            <a class="button button-primary" id="download-windows"
+              href="https://github.com/OmarAfifi-CSE/daphq/releases/latest">
+              <svg class="os-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                <path fill="currentColor"
+                  d="M1 1.5h6.5v6H1zm7.5 0H15v6H8.5zM1 8.5h6.5v6H1zm7.5 0H15v6H8.5z" />
+              </svg>
+              <span>Download for Windows</span>
+              <span aria-hidden="true">↗</span>
+            </a>
+            <a class="button button-secondary" id="download-android"
+              href="https://github.com/OmarAfifi-CSE/daphq/releases/latest">
+              <svg class="os-icon" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+                <path fill="currentColor"
+                  d="M17.6 9.48l1.84-3.18c.16-.31.04-.69-.26-.85-.29-.15-.65-.06-.83.22l-1.88 3.24a11.43 11.43 0 0 0-8.94 0L5.65 5.67c-.19-.28-.54-.37-.83-.22-.3.16-.42.54-.26.85l1.84 3.18C4.81 10.67 3.55 12.66 3.15 15h17.7c-.4-2.34-1.66-4.33-3.25-5.52zM9 13a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm6 0a1 1 0 1 1 0-2 1 1 0 0 1 0 2z" />
+              </svg>
+              <span>Download APK for Android</span>
+              <span aria-hidden="true">↗</span>
+            </a>
+          </div>
+          <span class="cta-note" id="release-note">Latest builds hosted cleanly on GitHub Releases</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="wrap">
+    <a class="brand" href="#">
+      <img src="assets/icon-192.png" width="30" height="30" alt="">
+      <span>daphq.</span>
+    </a>
+    <span>No cables. No cloud. Just full-speed transfers.</span>
+    <div>
+      <button type="button" class="motion-toggle" id="motion-toggle">Pause background</button>
+      <a href="https://github.com/OmarAfifi-CSE/daphq" target="_blank" rel="noopener noreferrer">Source code ↗</a>
+      <a href="https://github.com/OmarAfifi-CSE/daphq/releases" target="_blank" rel="noopener noreferrer">Releases ↗</a>
+      <a href="https://github.com/OmarAfifi-CSE/daphq/issues" target="_blank" rel="noopener noreferrer">Issues ↗</a>
     </div>
-
-    <!-- Features Section -->
-    <section id="features" class="features">
-        <div class="container">
-            <div class="section-header fade-up">
-                <h2>Built for <span class="gradient-text">Performance</span></h2>
-                <p>Experience the ultimate file transfer utility designed for speed and reliability.</p>
-            </div>
-            <div class="features-grid">
-                <div class="feature-card glass-card fade-up">
-                    <div class="feature-icon-wrapper">
-                        <i class="fas fa-bolt"></i>
-                    </div>
-                    <h3>Extreme Throughput</h3>
-                    <p>Bypasses HTTP overhead using raw TCP sockets to push 100+ MB/s. Saturate your network hardware to
-                        its absolute limits.</p>
-                </div>
-                <div class="feature-card glass-card fade-up delay-1">
-                    <div class="feature-icon-wrapper">
-                        <i class="fas fa-wifi"></i>
-                    </div>
-                    <h3>Seamless Discovery</h3>
-                    <p>Devices on the same network find each other instantly. Includes manual IP entry as a fallback for
-                        complex environments.</p>
-                </div>
-                <div class="feature-card glass-card fade-up delay-2">
-                    <div class="feature-icon-wrapper">
-                        <i class="fas fa-share-nodes"></i>
-                    </div>
-                    <h3>System-Wide Sharing</h3>
-                    <p>Share files directly from any app via the native Android Share Menu and Windows "Send via Daphq"
-                        Context Menu.</p>
-                </div>
-                <div class="feature-card glass-card fade-up">
-                    <div class="feature-icon-wrapper">
-                        <i class="fas fa-folder-tree"></i>
-                    </div>
-                    <h3>Atomic Directory Sync</h3>
-                    <p>Recursively reconstruct exact directory trees with intelligent collision management and automatic
-                        file renaming.</p>
-                </div>
-                <div class="feature-card glass-card fade-up delay-1">
-                    <div class="feature-icon-wrapper">
-                        <i class="fas fa-layer-group"></i>
-                    </div>
-                    <h3>Batch Transfer Support</h3>
-                    <p>Select, stage, and transfer multiple files or entire directories simultaneously with a single,
-                        intuitive workflow.</p>
-                </div>
-                <div class="feature-card glass-card fade-up delay-2">
-                    <div class="feature-icon-wrapper">
-                        <i class="fas fa-gauge-high"></i>
-                    </div>
-                    <h3>Advanced Tracking</h3>
-                    <p>Real-time analytics featuring instantaneous transfer speeds (MB/s), total payload progress, and
-                        precise ETA metrics.</p>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- Showcase Section -->
-    <section id="interface" class="interface">
-        <div class="container">
-            <div class="section-header fade-up">
-                <h2>Designed for <span class="gradient-text">Every Screen</span></h2>
-                <p>Experience a unified, modern interface tailored for both high-resolution desktops and mobile devices.
-                </p>
-            </div>
-            <div class="showcase-grid">
-                <div class="showcase-item mobile-showcase fade-up">
-                    <div class="device-frame mobile">
-                        <img src="assets/android-interface.png" alt="Android Interface">
-                    </div>
-                    <div class="showcase-text">
-                        <h3>Mobile Excellence</h3>
-                        <p>A clean, focused Android experience with real-time transfer tracking in your pocket.</p>
-                    </div>
-                </div>
-                <div class="showcase-item desktop-showcase fade-up delay-1">
-                    <div class="device-frame desktop">
-                        <img src="assets/windows-interface.png" alt="Windows Interface">
-                    </div>
-                    <div class="showcase-text">
-                        <h3>Desktop Precision</h3>
-                        <p>Fully optimized for Windows 10/11 with a minimalist layout and responsive dark mode.</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- How It Works Section -->
-    <section id="how-it-works" class="how-it-works">
-        <div class="container">
-            <div class="section-header fade-up">
-                <h2>As Simple as <span class="gradient-text">1, 2, 3</span></h2>
-            </div>
-            <div class="steps-container">
-                <div class="step fade-up">
-                    <div class="step-number">01</div>
-                    <h3>Connect</h3>
-                    <p>Ensure both devices are on the same Wi-Fi or Hotspot.</p>
-                </div>
-                <div class="step fade-up delay-1">
-                    <div class="step-number">02</div>
-                    <h3>Discover</h3>
-                    <p>Devices appear automatically when "Start Receiver" is active.</p>
-                </div>
-                <div class="step fade-up delay-2">
-                    <div class="step-number">03</div>
-                    <h3>Send</h3>
-                    <p>Select a device, pick your files, and start the transfer.</p>
-                </div>
-            </div>
-            <div class="fade-up delay-2" style="text-align: center; margin-top: 32px;">
-                <span class="badge" style="border-color: #10B981; color: #10B981;">Pro Tip: Use 5GHz Wi-Fi or Hotspot
-                    for lightning-fast speeds.</span>
-            </div>
-        </div>
-    </section>
-
-    <!-- Comparison Section -->
-    <section class="comparison">
-        <div class="container">
-            <div class="section-header fade-up">
-                <h2>The New <span class="gradient-text">Standard</span></h2>
-                <p>How Daphq redefines the local transfer experience.</p>
-            </div>
-            <div class="comparison-grid fade-up">
-                <div class="comparison-card glass-card">
-                    <div class="comp-head">Metric</div>
-                    <div class="comp-row">Speed</div>
-                    <div class="comp-row">Privacy</div>
-                    <div class="comp-row">Limits</div>
-                    <div class="comp-row">Internet</div>
-                </div>
-                <div class="comparison-card glass-card featured">
-                    <div class="comp-head">Daphq</div>
-                    <div class="comp-row accent-text">100+ MB/s</div>
-                    <div class="comp-row accent-text">P2P (Private)</div>
-                    <div class="comp-row accent-text">Unlimited</div>
-                    <div class="comp-row accent-text">Not Needed</div>
-                </div>
-                <div class="comparison-card glass-card">
-                    <div class="comp-head">Cloud / Others</div>
-                    <div class="comp-row">Varies (Slow)</div>
-                    <div class="comp-row">Third-party</div>
-                    <div class="comp-row">Limited</div>
-                    <div class="comp-row">Required</div>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- Download Section -->
-    <section id="download" class="download-cta">
-        <div class="container">
-            <div class="cta-card glass-card fade-up">
-                <h2>Ready to upgrade your workflow?</h2>
-                <p>Download Daphq now and experience the fastest way to move data.</p>
-                <div class="download-buttons">
-                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-primary btn-large"
-                        id="download-windows">
-                        <i class="fab fa-windows"></i> Download for Windows
-                    </a>
-                    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest" class="btn btn-primary btn-large"
-                        id="download-android">
-                        <i class="fab fa-android"></i> Download for Android
-                    </a>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- Footer -->
-    <footer>
-        <div class="container footer-container">
-            <div class="footer-left">
-                <img src="assets/icon-192.png" alt="Daphq Logo" width="28" height="28" style="border-radius: 6px;">
-                <span class="logo-text" style="font-size: 1.2rem;">Daphq</span>
-            </div>
-            <div class="footer-center">
-                <p>&copy; 2026 Omar Afifi. All rights reserved.</p>
-            </div>
-            <div class="footer-right">
-                <a href="https://github.com/OmarAfifi-CSE/daphq" target="_blank"><i class="fab fa-github"></i></a>
-                <a href="https://github.com/OmarAfifi-CSE/daphq/issues" target="_blank">Issues</a>
-            </div>
-        </div>
-    </footer>
-
-    <script src="js/network-bg.js"></script>
-    <script src="js/main.js"></script>
+    <p>Made with care by Omar Afifi · MIT License.</p>
+  </footer>
 </body>
 
 </html>

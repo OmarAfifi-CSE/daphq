@@ -1,104 +1,148 @@
 <div align="center">
-    <img src="https://readme-typing-svg.herokuapp.com?font=Fira+Code&size=75&duration=1500&pause=1500&color=000000&center=true&vCenter=true&width=435&height=100&lines=DAPHQ" alt="DAPHQ" />
-<br>
   <a href="https://omarafifi-cse.github.io/daphq/">
-    <img src="assets/logo.png" alt="Daphq Logo" width="160"/>
+    <img src="assets/logo.png" alt="Daphq Logo" width="112" height="112">
   </a>
 
-  <p><b>Blazing Fast, Cross-Platform File Transfer Application over Local Wi-Fi & Hotspots.</b></p>
+  <h1>Daphq</h1>
+  <p><b>No cables. No cloud. Just full-speed transfers.</b></p>
+  <p><i>Move gigabytes of photos, 4K videos, and entire folders directly between Windows and Android at full 5GHz Wi-Fi speed.</i></p>
 
   <p>
-    <a href="https://github.com/omarafifi-cse/daphq/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/omarafifi-cse/daphq?style=for-the-badge&color=448AFF&logo=github&labelColor=0A0A1A"></a>
-    <a href="https://github.com/omarafifi-cse/daphq/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/omarafifi-cse/daphq/total?style=for-the-badge&color=448AFF&logo=github&labelColor=0A0A1A"></a>
-    <a href="https://github.com/omarafifi-cse/daphq/blob/master/LICENSE"><img alt="License" src="https://img.shields.io/github/license/omarafifi-cse/daphq?style=for-the-badge&color=448AFF&labelColor=0A0A1A"></a>
+    <a href="https://omarafifi-cse.github.io/daphq/"><img alt="Official Website" src="https://img.shields.io/badge/Website-omarafifi--cse.github.io%2Fdaphq-448AFF?style=for-the-badge&logo=google-chrome&logoColor=white&labelColor=0A0A1A"></a>
+    <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest"><img alt="Download Latest Release" src="https://img.shields.io/github/v/release/omarafifi-cse/daphq?style=for-the-badge&color=34D399&logo=github&label=Download&labelColor=0A0A1A"></a>
+    <a href="https://github.com/OmarAfifi-CSE/daphq/blob/master/LICENSE"><img alt="MIT License" src="https://img.shields.io/github/license/omarafifi-cse/daphq?style=for-the-badge&color=448AFF&labelColor=0A0A1A"></a>
   </p>
 
-  <img src="assets/Demo.gif" alt="Daphq Demo" width="750" />
+  <p>
+    <img alt="Direct 5GHz Wi-Fi" src="https://img.shields.io/badge/Direct_5GHz-80--90%2B_MB%2Fs-34D399?style=flat-square">
+    <img alt="Windows 10/11 + Android" src="https://img.shields.io/badge/Platforms-Windows_10%2F11_%2B_Android-448AFF?style=flat-square">
+    <img alt="Offline Transfers" src="https://img.shields.io/badge/100%25_Local-No_Internet_Needed-64B5F6?style=flat-square">
+    <img alt="Zero Telemetry" src="https://img.shields.io/badge/Telemetry-Zero-0A0A1A?style=flat-square">
+    <img alt="Automated Tests" src="https://img.shields.io/badge/Tests-118_Passing-2EA043?style=flat-square">
+  </p>
 
+  <br>
+  <img src="assets/Demo.gif" alt="Daphq file transfer demo between Windows and Android" width="760">
 </div>
 
 ---
 
-## 🚀 Introduction
+## 🧭 Why Daphq?
 
-**Daphq** is a robust, cross-platform file transfer utility engineered to deliver unparalleled speed and reliability over local area networks (LAN), Wi-Fi, and Mobile Hotspots. With the release of **v2.0.0**, Daphq introduces a completely rebuilt discovery engine and advanced sharing capabilities. Designed with performance and low-level network optimization in mind, Daphq bypasses the bloated overhead of conventional HTTP-based transfers, utilizing raw TCP streams to push network hardware to its absolute limits.
+Moving big videos or whole photo albums between your phone and PC shouldn't require hunting for a USB cable, uploading to cloud storage, waiting on slow 2.4GHz links, or breaking your laptop's hotspot setup.
 
-Whether you're syncing massive folders across your devices or sharing gigabytes of data on the fly, Daphq ensures a seamless, memory-efficient, and secure operation.
+**Daphq** connects your Windows PC and Android phone straight across the room—automatically choosing the fastest local path so multi-gigabyte transfers finish in seconds.
 
-## 🏗️ Core Architecture
+| Story | The Experience | What Daphq Does |
+| :--- | :--- | :--- |
+| **📦 Move the Big Stuff** | Less *"still uploading..."* More *"already there."* Send 4K videos or entire folder trees without cloud limits or file compression. | Sends full folders intact at **80–90+ MB/s** on 5GHz Wi-Fi |
+| **⚡ Zero-Touch 5GHz Link** | No typing IP addresses or fighting network settings. Open Daphq, pick a device, and transfer directly. | Automatic Bluetooth &amp; Wi-Fi pairing with bidirectional 5GHz host selection |
+| **📡 Safe With Manual Hotspots** | Already running Windows Mobile Hotspot for other devices? Daphq never resets your password or shuts your hotspot down. | Detects &amp; reuses your active Windows Mobile Hotspot cleanly |
+| **🖱️ Share From Anywhere** | Send straight from where your files already live instead of digging through pickers twice. | Right-click **Send via Daphq** in Windows Explorer or use Android's **Share** menu |
+| **🔒 Nothing Leaves the Room** | Family photos and personal work never touch the internet, never burn mobile data, and never transfer without permission. | Local device-to-device transfers with explicit receiver approval |
 
-Daphq is built with a modern, reactive, and highly scalable architecture:
+---
 
-- **Framework**: Developed using **Flutter (Dart)** for true cross-platform compatibility (Currently: Android, Windows).
-- **State Management**: Implements the **BLoC (Business Logic Component) / Cubit** pattern (`flutter_bloc`). This cleanly decouples the UI from complex network logic, ensuring the application remains highly responsive even under intense data loads.
-- **Background Execution**: Leverages `flutter_foreground_task` on Android to maintain uninterrupted background data synchronization, strictly adhering to modern Android 14/15 Foreground Service data-sync requirements.
-- **Network Discovery**: A custom-built UDP discovery service that actively monitors connectivity, caches IPs, and uses a watchdog mechanism for instant recovery during IP changes or network dropouts.
-- **Window Management**: Uses `window_manager` for native-feeling desktop experiences, providing flicker-free layouts and optimal UX on desktop environments.
+## 📸 See It On Both Screens
 
-## ⚡ Performance & Networking Efficiency
+Clean, calm, and consistent across desktop and mobile—featuring a live Orbital Radar with clear progress synced accurately on both ends.
 
-Daphq achieves its "Gold-Standard" speed through a meticulously crafted network layer. Instead of relying on heavy HTTP requests or third-party wrappers, Daphq communicates via bare-metal **TCP Sockets** (`Socket` & `ServerSocket`).
+<div align="center">
+  <table>
+    <tr>
+      <th width="36%">Android App</th>
+      <th width="64%">Windows Desktop</th>
+    </tr>
+    <tr>
+      <td align="center" valign="middle">
+        <img src="assets/Android-Interface.png" alt="Daphq Android Interface" width="235">
+      </td>
+      <td align="center" valign="middle">
+        <img src="assets/Windows-Interface.png" alt="Daphq Windows Desktop Interface" width="490">
+      </td>
+    </tr>
+    <tr>
+      <td align="center">
+        <i>Background Foreground Service keeps big transfers alive even when your screen turns off, with smooth system sharing.</i>
+      </td>
+      <td align="center">
+        <i>Native Windows desktop layout with Orbital Radar, Explorer context menu integration, history log, and instant "Show in Folder".</i>
+      </td>
+    </tr>
+  </table>
+</div>
 
-### 1. Zero HTTP Overhead & TCP Optimization
-Daphq uses pure TCP connections with `SocketOption.tcpNoDelay` enabled. This disables Nagle's algorithm, eliminating artificial latency and ensuring packets are dispatched the microsecond they are ready. 
+---
 
-### 2. Intelligent Memory & Buffer Management
-To prevent Out-Of-Memory (OOM) exceptions and GC (Garbage Collection) pauses during multi-gigabyte transfers:
-- **Chunked Data Streaming**: Files are read and transmitted in memory-safe chunks.
-- **Dynamic Buffer Flushing**: The sender controller implements a rigid flush threshold (`await socket.flush()`). It tracks `bytesBuffered` and periodically flushes the TCP socket, ensuring the device's RAM is never overwhelmed by asynchronous backpressure.
-- **Header Limits**: JSON metadata headers are strictly capped at 1MB to prevent malicious memory exhaustion attacks before the transfer even begins.
+## ⚡ Open. Tap. Done.
 
-### 3. Exact Boundary Precision Disk I/O
-When receiving continuous streams of multiple files, Daphq avoids allocating intermediate buffers. The receiver slices the incoming `Uint8List` using `sublistView` with exact mathematical boundary precision:
-```dart
-currentSink.add(Uint8List.sublistView(chunk, offset, offset + bytesNeeded));
+```text
+[01. Open Daphq]            ➔       [02. Tap a Device]          ➔       [03. Watch It Fly]
+Turn on Receive on the               Nearby phones & PCs appear          Accept once on the receiving
+device getting the files.            on your Orbital Radar.              device—5GHz Direct handles the rest.
 ```
-This guarantees zero-copy byte slicing and atomic file writes, drastically reducing CPU overhead during high-speed I/O.
 
-### 4. Real-World Benchmarks & Hardware Saturation
+> **Note on your very first Android direct transfer:** Android asks once to confirm connecting directly to your PC's Wi-Fi link. Because Daphq remembers and reuses consistent link credentials, future transfers reconnect smoothly without manual re-selection.
 
-Daphq's performance has been rigorously tested to ensure it pushes hardware to its physical limits:
+---
 
-- **Wi-Fi 5 (802.11ac) 5GHz Hotspot** *(Negotiated at 866 Mbps Link)*: 
-  Consistently saturates the maximum physical bandwidth, peaking at **80 - 90 MB/s**.
-  - **Efficiency**: Achieves an astounding **~93% effective throughput** of the raw physical link.
-  - **Zero Overhead**: Bypasses the heavy lifting of standard HTTP/REST implementations, utilizing raw TCP streaming for near-zero protocol overhead.
+## ✨ Designed for Everyday Reliability
 
-> **Got Wi-Fi 6/7?** Daphq's raw socket architecture is future-proof and will scale linearly with hardware.
+* **Real 5GHz Speed, Zero Bloat:** Streams directly over your local Wi-Fi hardware to saturate 802.11ac / Wi-Fi 6 speeds instead of throttling through slow web wrappers.
+* **Bidirectional Smart Fallback:** If one device's Wi-Fi chip can't host a 5GHz direct group, Daphq flips hosting to the capable device automatically—keeping speeds high.
+* **Whole Folder Reconstruction:** Drops nested folders onto your receiving device with the exact directory layout preserved. Duplicate filenames are renamed safely (`photo (1).jpg`) instead of overwriting existing files.
+* **Transfer History & Quick Access:** Review completed transfers anytime and jump straight to received files with **Show in Folder**.
+* **Clear Status, Not Cryptic Errors:** Friendly, human-readable status prompts and synced sender/receiver progress bars (`MB/s` and live ETA).
 
-## ✨ Key Features
+---
 
-- **Extreme Throughput (TCP)**: Bypasses HTTP/REST overhead using raw TCP sockets with `tcpNoDelay` for near-zero protocol latency (Speeds up to 100+ MB/s).
-- **Seamless Auto-Discovery**: Instant device pairing on the same network. I've included manual IP entry as a fallback to ensure connectivity even in complex network environments.
-- **Smart Discovery Engine**: Connectivity-aware engine with watchdog recovery and IP caching for near-instant device pairing.
-- **System-Wide File Sharing**: Direct file sharing from any app. Includes native **Android Share Menu** integration and a **Windows Context Menu** ("Send via Daphq") shell extension.
-- **Atomic Directory Sync**: Recursive traversal and reconstruction of exact directory trees with intelligent collision management and auto-renaming.
-- **Uninterruptible Background Sync**: (Android) Foreground Services keep transfers alive even when the app is closed or the screen is off.
-- **Unified Dashboard & Orbital Radar**: A seamless, unified dashboard centered around a premium, animated "Orbital Radar" to visually manage and discover device connections.
-- **Batch Transfer Support**: Ability to select, stage, and transfer multiple files or entire directories simultaneously with a single click.
-- **Persistent Transfer History**: Built-in transfer history system to track past sends and receives, check their success status, and instantly open file locations directly from the app.
-- **Advanced Transfer Tracking**: Precise real-time tracking of transfer speeds (MB/s), total payload progress, and estimated time remaining.
-- **Secure Authorization**: Full receiver control—view payload size and file count before explicitly authorizing any transfer.
-- **Smart Add Button**: Features a `UnifiedAddButton` that provides platform-specific smart menus (such as direct shortcuts to Photos and Videos) for an intuitive experience.
-- **Post-Transfer Quick Access**: A "Show in Folder" button appears automatically after successful transfers, allowing instant access to received files.
+## 📥 Download Daphq
 
-## 📸 Screenshots
+Get the latest ready-to-run builds for **Windows 10/11** and **Android** from the website or GitHub Releases:
 
-| Android UI | Windows Desktop UI |
-| :---: | :---: |
-| <img src="assets/Android-Interface.png" alt="Android Interface" width="250"/> | <img src="assets/Windows-Interface.png" alt="Windows Interface" width="450"/> |
-| *Clean, robust mobile layout with background service tracking.* | *Responsive desktop experience.* |
+<div align="center">
+  <a href="https://omarafifi-cse.github.io/daphq/#download">
+    <img src="https://img.shields.io/badge/Website-Get_Daphq-448AFF?style=for-the-badge&logo=google-chrome&logoColor=white&labelColor=0A0A1A" alt="Download from Daphq Website">
+  </a>
+  <a href="https://github.com/OmarAfifi-CSE/daphq/releases/latest">
+    <img src="https://img.shields.io/github/v/release/omarafifi-cse/daphq?style=for-the-badge&color=34D399&logo=github&label=GitHub_Releases&labelColor=0A0A1A" alt="Download from GitHub Releases">
+  </a>
+</div>
 
-## 🔬 Under the Hood (Technical Audit Highlights)
+---
 
-A deep dive into Daphq's source code reveals several advanced optimizations:
-- **Responsive Protocol**: The custom application-layer protocol consists of a lightweight JSON header (specifying file names, recursive paths, and byte sizes) followed instantaneously by raw binary data.
-- **Concurrency & Completers**: Utilizes `Completer` heavily to orchestrate asynchronous socket events (e.g., waiting for receiver authorization or ensuring background disk writes finalize before terminating connections).
-- **Graceful Error Handling & OS Mapping**: Platform-specific `SocketException` codes (e.g., OS Error 111, 10061, 104) are intercepted and translated into user-friendly diagnostics, eliminating cryptic crashes.
-- **Auto-Renaming Collision Handling**: Protects existing data. If a file collision occurs, Daphq automatically safely renames incoming data (e.g., `file (1).txt`) recursively.
+<details>
+  <summary><b>🛠️ For Developers: Architecture, Local Setup &amp; Tests</b></summary>
 
-## 📄 License
+### Split-Plane Architecture
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+* **Discovery & Trust Plane:** UDP broadcasts + BLE GATT beacons feed `PeerRegistry`. Device pairing and control actions (`startHostAndWait`, `joinHost`, transfer approval) run over **EC P-256 TLS** with SHA-256 certificate pinning (`lib/security/device_identity_service.dart`, `lib/security/trusted_devices_service.dart`).
+* **Bulk Data Plane:** Multi-stream raw TCP workers (`lib/controllers/sender_controller.dart`, `lib/controllers/receiver_controller.dart`, `lib/controllers/v2_protocol_framing.dart`) using `tcpNoDelay`, zero-copy `Uint8List.sublistView` slicing, an `8 MB` socket flush threshold, and strict `safeRelativePath` traversal sanitization.
+* **Native Radio Fabric:** Windows WinRT SoftAP & Wi-Fi Direct (`windows/direct/daphq_direct_win.cpp`) with deterministic PSK derivation (`DeriveStableDirectPsk`) and manual hotspot preservation; Android Kotlin BLE/P2P controller (`android/app/src/main/kotlin/com/omarafifi/daphq/DirectFabricHandler.kt`).
 
-Copyright (c) 2026 Omar Afifi
+### Build & Quality Gates
+
+```bash
+git clone https://github.com/omarafifi-cse/daphq.git
+cd daphq
+flutter pub get
+
+# Static analysis & automated test suite (118 passing tests)
+flutter analyze
+flutter test
+```
+
+Package Windows x64 Release and/or Android arm64 APK outputs cleanly using the unified build script:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build_and_export.ps1
+```
+
+</details>
+
+---
+
+<div align="center">
+  <i>Made with care by <a href="https://github.com/omarafifi-cse">Omar Afifi</a>.</i><br>
+  <sub>Licensed under the <a href="LICENSE">MIT License</a> · Report bugs or request features via <a href="https://github.com/OmarAfifi-CSE/daphq/issues">GitHub Issues</a>.</sub>
+</div>
