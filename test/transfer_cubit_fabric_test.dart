@@ -1456,7 +1456,7 @@ void main() {
     expect(controlActions, ['startHostAndWait', 'teardown']);
     expect(fakeSender.callCount, 1);
     expect(fakeSender.lastTargetIp, '192.168.1.91');
-    expect(cubit.state.model.routeLabel, 'Router LAN • Direct 5GHz fallback');
+    expect(cubit.state.model.routeLabel, 'Wi-Fi Network');
 
     // Now verify MITM / HandshakeException from Direct control (even when Windows hosts) does NOT fall back to LAN!
     fakeSender.callCount = 0;
@@ -1659,7 +1659,7 @@ void main() {
       expect(fakeSender.callCount, 2);
       expect(fakeSender.lastTargetIp, '192.168.1.99');
       expect(cubit.state.model.phase, TransferPhase.done);
-      expect(cubit.state.model.routeLabel, 'Router LAN • Direct 5GHz fallback');
+      expect(cubit.state.model.routeLabel, 'Wi-Fi Network');
 
       // Now verify error='fingerprintMismatch' from Direct control aborts without
       // Router LAN fallback.

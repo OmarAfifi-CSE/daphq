@@ -153,6 +153,17 @@ class LinkPlan {
 class SmartLinkEvaluator {
   const SmartLinkEvaluator();
 
+  /// Returns true when [ip] belongs to a dedicated Hotspot subnet
+  /// (`192.168.137.*` Windows Mobile Hotspot, `192.168.43.*` / `172.20.10.*`
+  /// Personal Hotspot). When the peer is already on a direct Hotspot subnet,
+  /// we transfer immediately over that Hotspot without tearing it down.
+  static bool isDirectHotspotOrP2pSubnetIp(String? ip) {
+    if (ip == null || ip.isEmpty) return false;
+    return ip.startsWith('192.168.137.') ||
+        ip.startsWith('192.168.43.') ||
+        ip.startsWith('172.20.10.');
+  }
+
   LinkPlan planTransfer({
     required UnifiedPeer peer,
     required LocalRadioCapabilities localCaps,
@@ -172,6 +183,22 @@ class SmartLinkEvaluator {
 
     final int streams = peer.caps.multiStreamSupported ? 4 : 1;
     final bool tls = peer.caps.tlsSupported;
+
+    // 0. If the user ALREADY connected the devices over a direct Hotspot
+    // (Windows Mobile Hotspot 192.168.137.x or Phone Hotspot 192.168.43.x / 192.168.49.x),
+    // use that Hotspot directly at full speed — NEVER tear it down or start a new AP!
+    if (peer.hasLan &&
+        lanProbeHealthy &&
+        isDirectHotspotOrP2pSubnetIp(peer.lanIp)) {
+      return LinkPlan(
+        strategy: LinkExecutionStrategy.lanTlsDirect,
+        useTls: tls,
+        parallelStreams: streams,
+        useReverseConnect: false,
+        shouldLocalHostDirectGroup: false,
+        reason: 'Direct Hotspot',
+      );
+    }
     final bool localCanHostGroup = localCaps.canHostDirect5g ||
         (localCaps.localPlatform == PeerPlatform.android &&
             localCaps.canUseDirectWifi);

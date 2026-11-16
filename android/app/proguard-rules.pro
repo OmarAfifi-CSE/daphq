@@ -10,7 +10,7 @@
 -keep class dart.** { *; }
 
 # Protect WindowManager / UI components if necessary
--keep class com.omarafifi.daphq.** { *; }
+-keep class com.omarafifi.daphq.** { public *; }
 
 # Flutter Play Store Split Compatibility
 -dontwarn com.google.android.play.core.**

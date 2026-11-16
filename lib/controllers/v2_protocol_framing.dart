@@ -781,8 +781,10 @@ Future<void> consumeV2WorkerFrames({
           }
           // Fast path: full frame payload is already contiguous in `chunk`
           if (chunk.length - pos >= payloadLen) {
-            final completedPayload = Uint8List.fromList(
-              Uint8List.sublistView(chunk, pos, pos + payloadLen),
+            final completedPayload = Uint8List.sublistView(
+              chunk,
+              pos,
+              pos + payloadLen,
             );
             pos += payloadLen;
             final res = onChunk(currentFileIndex, currentOffset, completedPayload);

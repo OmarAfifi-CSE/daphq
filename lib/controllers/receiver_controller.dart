@@ -1245,7 +1245,7 @@ class ReceiverController {
                   speed: speed,
                   transferred: received / 1024 / 1024,
                   fileName: name,
-                  status: "Turbo Receiving ($acceptedStreams streams)...",
+                  status: "Receiving files...",
                   totalSize: totalSizeMB,
                   progress: totalExpectedBytes > 0
                       ? received / totalExpectedBytes
@@ -1444,7 +1444,7 @@ class ReceiverController {
         currentPhase = TransferPhase.finalizing;
         onUpdate(
           TransferModel(
-            status: "Finalizing... Saving to disk",
+            status: "Finishing up...",
             transferred: received / 1024 / 1024,
             totalSize: totalSizeMB,
             progress: 1.0,
@@ -1729,7 +1729,7 @@ class ReceiverController {
           currentPhase = TransferPhase.finalizing;
           onUpdate(
             TransferModel(
-              status: "Finalizing... Saving to disk",
+              status: "Finishing up...",
               transferred: received / 1024 / 1024,
               totalSize: totalSizeMB,
               progress: 1.0,
@@ -1837,7 +1837,7 @@ class ReceiverController {
         onUpdate(
           TransferModel(
             status:
-                "Transfer cancelled by ${_currentSenderDeviceName ?? 'sender'} (Connection Timeout).",
+                "Transfer cancelled by ${_currentSenderDeviceName ?? 'the other device'}.",
             transferred: received / 1024 / 1024,
             totalSize: totalExpectedBytes / 1024 / 1024,
             progress:
@@ -1942,7 +1942,7 @@ class ReceiverController {
       } else {
         onUpdate(
           TransferModel(
-            status: "Network Error: Please check network or Hotspot connection.",
+            status: "Connection lost. Please check your Wi-Fi or Hotspot connection.",
             phase: TransferPhase.failed,
           ),
         );
@@ -1951,7 +1951,7 @@ class ReceiverController {
       onUpdate(
         TransferModel(
           status:
-              "Transfer cancelled by ${_currentSenderDeviceName ?? 'sender'} (Connection Timeout).",
+              "Transfer cancelled by ${_currentSenderDeviceName ?? 'the other device'}.",
           phase: TransferPhase.cancelled,
         ),
       );
@@ -2246,9 +2246,9 @@ class ReceiverController {
         osError == 10054 ||
         osError == 32 ||
         msg.contains("connection reset by peer")) {
-      return "Transfer cancelled by ${_currentSenderDeviceName ?? 'sender'}. Ready & Waiting...";
+      return "Transfer cancelled by ${_currentSenderDeviceName ?? 'the other device'}.";
     } else {
-      return "Network lost. Ready & Waiting...";
+      return "Connection lost. Please check your Wi-Fi or Hotspot connection.";
     }
   }
 

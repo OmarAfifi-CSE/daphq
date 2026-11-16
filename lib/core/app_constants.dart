@@ -39,10 +39,10 @@ class AppConstants {
   /// Default target IP address for the sender.
   static const String defaultTargetIp = '192.168.137.1';
 
-  /// Flush threshold for pipelined 5GHz socket writes (16 MB).
+  /// Flush threshold for pipelined 5GHz socket writes (8 MB per stream).
   /// Large coalesced socket flushes fill high-bandwidth 5GHz/Wi-Fi 6 TCP windows
-  /// without draining the OS send buffer to zero every few megabytes.
-  static const int socketFlushThresholdBytes = 16 * 1024 * 1024;
+  /// without stalling real-time progress updates across parallel workers.
+  static const int socketFlushThresholdBytes = 8 * 1024 * 1024;
 
   /// UI update interval during transfers (milliseconds).
   static const int speedUpdateIntervalMs = 500;
@@ -110,16 +110,16 @@ class AppConstants {
   static const double cardPadding = 12.0;
 
   // --- Discovery Status ---
-  static const String discoveryConflictTitle = 'LAN discovery port blocked';
+  static const String discoveryConflictTitle = 'Network discovery is blocked';
   static const String discoveryConflictHowTo = 'How to fix this?';
   static const String discoveryConflictDesc =
-      'Windows Firewall, Hyper-V/WSL NAT exclusions, or Mobile Hotspot blocked Daphq\'s LAN discovery ports.';
+      'Windows Firewall or another app is blocking device discovery on your network.';
   static const String discoveryConflictStep1 =
       '1. Allow Daphq on Private & Public networks in Windows Firewall.';
   static const String discoveryConflictStep2 =
       '2. If Windows Mobile Hotspot was just toggled, turn it OFF, wait 5 seconds, then turn it ON again.';
   static const String discoveryConflictStep3 =
-      '3. Tap "Try Again Now" (Bluetooth fallback still works if enabled).';
+      '3. Tap "Try Again Now" (Bluetooth discovery still works if enabled).';
   static const String discoveryConflictGotIt = 'Got it';
   static const String discoveryConflictTryAgain = 'Try Again Now';
   static const String discoveryStatusConnected = 'Connected';

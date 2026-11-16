@@ -82,26 +82,6 @@ class _OrbitalRadarState extends State<OrbitalRadar>
     return null;
   }
 
-  ({String label, Color color})? _resolveTransportBadge(
-    UnifiedPeer? peer,
-    DiscoveryModel device,
-  ) {
-    if (peer != null) {
-      switch (peer.transportKind) {
-        case PeerTransportKind.dualLanAndBle:
-          return (label: '5G+LAN', color: AppColors.success);
-        case PeerTransportKind.bleDirectOnly:
-          return (label: 'BLE', color: AppColors.primaryLight);
-        case PeerTransportKind.lanOnly:
-          return (label: 'LAN', color: AppColors.primaryLight);
-      }
-    }
-    if (device.ip.startsWith('ble:')) {
-      return (label: 'BLE', color: AppColors.primaryLight);
-    }
-    return null;
-  }
-
   @override
   Widget build(BuildContext context) {
     final isDesktop = widget.isDesktop;
@@ -230,10 +210,6 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                     final device = sorted[index];
                     final unifiedPeer = _findUnifiedPeer(
                       state.unifiedPeers,
-                      device,
-                    );
-                    final transportBadge = _resolveTransportBadge(
-                      unifiedPeer,
                       device,
                     );
                     final bool isTrustedPeer = unifiedPeer?.isTrusted ?? false;
@@ -417,69 +393,6 @@ class _OrbitalRadarState extends State<OrbitalRadar>
                                                 desktopScale: scale,
                                               ),
                                               color: Colors.white,
-                                            ),
-                                          ),
-                                        ),
-                                      if (transportBadge != null)
-                                        Positioned(
-                                          bottom: -3.rx(
-                                            isDesktop,
-                                            desktopScale: scale,
-                                          ),
-                                          left: -6.rx(
-                                            isDesktop,
-                                            desktopScale: scale,
-                                          ),
-                                          right: -6.rx(
-                                            isDesktop,
-                                            desktopScale: scale,
-                                          ),
-                                          child: Center(
-                                            child: Container(
-                                              padding: EdgeInsets.symmetric(
-                                                horizontal: 5.rw(
-                                                  isDesktop,
-                                                  desktopScale: scale,
-                                                ),
-                                                vertical: 1.5.rh(
-                                                  isDesktop,
-                                                  desktopScale: scale,
-                                                ),
-                                              ),
-                                              decoration: BoxDecoration(
-                                                color: AppColors.background
-                                                    .withAlpha(240),
-                                                borderRadius:
-                                                    BorderRadius.circular(
-                                                      6.rr(
-                                                        isDesktop,
-                                                        desktopScale: scale,
-                                                      ),
-                                                    ),
-                                                border: Border.all(
-                                                  color: transportBadge.color
-                                                      .withAlpha(150),
-                                                  width: 0.8,
-                                                ),
-                                              ),
-                                              child: FittedBox(
-                                                fit: BoxFit.scaleDown,
-                                                child: Text(
-                                                  transportBadge.label,
-                                                  maxLines: 1,
-                                                  softWrap: false,
-                                                  style: TextStyle(
-                                                    color: transportBadge.color,
-                                                    fontSize: 7.5.rx(
-                                                      isDesktop,
-                                                      desktopScale: scale,
-                                                    ),
-                                                    fontWeight: FontWeight.w800,
-                                                    letterSpacing: 0.3,
-                                                    height: 1.0,
-                                                  ),
-                                                ),
-                                              ),
                                             ),
                                           ),
                                         ),

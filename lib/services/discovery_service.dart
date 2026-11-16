@@ -308,6 +308,34 @@ class DiscoveryService {
     return RegExp(r'(^|[^a-z0-9])wg\d*($|[^a-z0-9])').hasMatch(name);
   }
 
+  static bool isHotspotOrDirectIp(String? ip) {
+    if (ip == null || ip.isEmpty) return false;
+    return ip.startsWith('192.168.137.') ||
+        ip.startsWith('192.168.49.') ||
+        ip.startsWith('192.168.43.');
+  }
+
+  static bool isHotspotOrDirectAddress(InternetAddress addr) {
+    return isHotspotOrDirectIp(addr.address);
+  }
+
+  static Future<String?> findActiveLocalHotspotIp() async {
+    try {
+      final interfaces = await NetworkInterface.list(
+        includeLoopback: false,
+        type: InternetAddressType.IPv4,
+      );
+      for (final iface in interfaces) {
+        for (final addr in iface.addresses) {
+          if (isHotspotOrDirectAddress(addr)) {
+            return addr.address;
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
   static bool isUsableAddress(InternetAddress addr) {
     final ip = addr.address;
     return !addr.isLoopback &&
@@ -318,23 +346,42 @@ class DiscoveryService {
 
   static bool hasUsableInterface(Iterable<NetworkInterface> interfaces) {
     return interfaces.any((iface) {
-      if (isVirtualInterfaceName(iface.name)) return false;
+      if (isVirtualInterfaceName(iface.name) &&
+          !iface.addresses.any(isHotspotOrDirectAddress)) {
+        return false;
+      }
       return iface.addresses.any(isUsableAddress);
     });
   }
 
-  static Future<String?> findBestLocalLanIp() async {
+  static Future<String?> findBestLocalLanIp({String? preferSameSubnetAs}) async {
     try {
       final interfaces = await NetworkInterface.list(
         includeLoopback: false,
         type: InternetAddressType.IPv4,
       );
-      for (final iface in interfaces) {
-        if (isVirtualInterfaceName(iface.name)) continue;
-        for (final addr in iface.addresses) {
-          if (isUsableAddress(addr)) return addr.address;
+      String? targetPrefix;
+      if (preferSameSubnetAs != null && preferSameSubnetAs.isNotEmpty) {
+        final parts = preferSameSubnetAs.split('.');
+        if (parts.length == 4) {
+          targetPrefix = '${parts[0]}.${parts[1]}.${parts[2]}.';
         }
       }
+      String? firstUsable;
+      for (final iface in interfaces) {
+        if (isVirtualInterfaceName(iface.name) &&
+            !iface.addresses.any(isHotspotOrDirectAddress)) {
+          continue;
+        }
+        for (final addr in iface.addresses) {
+          if (!isUsableAddress(addr)) continue;
+          if (targetPrefix != null && addr.address.startsWith(targetPrefix)) {
+            return addr.address;
+          }
+          firstUsable ??= addr.address;
+        }
+      }
+      return firstUsable;
     } catch (_) {}
     return null;
   }
@@ -604,7 +651,8 @@ class DiscoveryService {
       if (!_running || _sockets.isEmpty) return;
 
       for (final interface in interfaces) {
-        if (isVirtualInterfaceName(interface.name)) {
+        if (isVirtualInterfaceName(interface.name) &&
+            !interface.addresses.any(isHotspotOrDirectAddress)) {
           continue;
         }
 

@@ -233,7 +233,8 @@ class _TransferProgressViewState extends State<TransferProgressView> {
                   ),
                   SizedBox(height: 10.0.rh(isDesktop, desktopScale: scale)),
 
-                  if (model.routeLabel != null &&
+                  if (!isFailed &&
+                      model.routeLabel != null &&
                       model.routeLabel!.trim().isNotEmpty) ...[
                     Builder(
                       builder: (context) {

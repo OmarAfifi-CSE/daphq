@@ -607,8 +607,11 @@ void main() {
         );
         await tester.pump(const Duration(milliseconds: 50));
 
-        expect(find.text('BLE'), findsOneWidget);
-        expect(find.text('5G+LAN'), findsOneWidget);
+        expect(find.text('Phone BLE'), findsOneWidget);
+        expect(find.text('Workstation'), findsOneWidget);
+        expect(find.text('LAN'), findsNothing);
+        expect(find.text('BLE'), findsNothing);
+        expect(find.text('5G+LAN'), findsNothing);
         expect(find.byIcon(Icons.verified_user_rounded), findsOneWidget);
         expect(tester.takeException(), isNull);
       },

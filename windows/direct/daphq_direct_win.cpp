@@ -1438,6 +1438,33 @@ void daphq_direct_stop_ble_discovery(void* handle) {
   } catch (...) {}
 }
 
+static std::string DeriveStableDirectPsk(const std::string& clean_tag) {
+  static constexpr char kAlphabet[] =
+      "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  static constexpr size_t kAlphabetLen = sizeof(kAlphabet) - 1;
+  uint64_t h1 = 14695981039346656037ULL;
+  uint64_t h2 = 0x9e3779b97f4a7c15ULL;
+  const std::string seed = "DaphqDirectPskV1:" + clean_tag;
+  for (unsigned char c : seed) {
+    h1 ^= c;
+    h1 *= 1099511628211ULL;
+    h2 = (h2 ^ c) * 0xff51afd7ed558ccdULL;
+    h2 ^= h2 >> 33;
+  }
+  std::string out;
+  out.reserve(12);
+  uint64_t state = h1 ^ (h2 << 1);
+  for (int i = 0; i < 12; ++i) {
+    state += 0x9e3779b97f4a7c15ULL;
+    uint64_t z = state;
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+    z ^= z >> 31;
+    out.push_back(kAlphabet[z % kAlphabetLen]);
+  }
+  return out;
+}
+
 DaphqDirectHostInfo daphq_direct_start_host(
     void* handle, int prefer_5ghz, const char* stable_tag) {
   DaphqDirectHostInfo info{};
@@ -1453,8 +1480,9 @@ DaphqDirectHostInfo daphq_direct_start_host(
   const std::string suffix = clean_tag.size() >= 2
       ? clean_tag
       : RandomString("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 4);
-  const std::string psk =
-      RandomString("abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789", 12);
+  const std::string psk = clean_tag.size() >= 2
+      ? DeriveStableDirectPsk(clean_tag)
+      : RandomString("abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789", 12);
   const std::string ssid = "DIRECT-DQ-" + suffix;
 
   // 1. Primary strategy when PC has an active ConnectionProfile: Mobile Hotspot (ICS + DHCP)
@@ -1469,10 +1497,43 @@ DaphqDirectHostInfo daphq_direct_start_host(
         NetworkOperatorTetheringManager::GetTetheringCapabilityFromConnectionProfile(profile) ==
             TetheringCapability::Enabled) {
       auto tethering = NetworkOperatorTetheringManager::CreateFromConnectionProfile(profile);
+      for (int i = 0;
+           i < 16 &&
+           !ctx->aborted.load() &&
+           tethering.TetheringOperationalState() ==
+               TetheringOperationalState::InTransition;
+           ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+      }
+      if (ctx->aborted.load()) return info;
+
       auto prev_cfg = tethering.GetCurrentAccessPointConfiguration();
       const auto orig_ssid = prev_cfg.Ssid();
       const auto orig_psk = prev_cfg.Passphrase();
       const auto orig_band = prev_cfg.Band();
+      const std::string orig_ssid_str = winrt::to_string(orig_ssid);
+
+      // If the user already has Windows Mobile Hotspot turned ON manually,
+      // never overwrite their SSID/Passphrase and never stop it on teardown!
+      if (tethering.TetheringOperationalState() == TetheringOperationalState::On &&
+          orig_ssid_str != ssid) {
+        const std::string existing_ssid = orig_ssid_str;
+        const std::string existing_psk = winrt::to_string(orig_psk);
+        if (!existing_ssid.empty() && existing_psk.size() >= 8) {
+          std::string host_ip = FindSoftApHostIp();
+          info.success = 1;
+          std::snprintf(info.ssid, sizeof(info.ssid), "%s", existing_ssid.c_str());
+          std::snprintf(info.psk, sizeof(info.psk), "%s", existing_psk.c_str());
+          std::snprintf(
+              info.host_ip,
+              sizeof(info.host_ip),
+              "%s",
+              host_ip.empty() ? "192.168.137.1" : host_ip.c_str());
+          info.frequency_mhz =
+              (orig_band == TetheringWiFiBand::TwoPointFourGigahertz) ? 2437 : 0;
+          return info;
+        }
+      }
 
       NetworkOperatorTetheringAccessPointConfiguration cfg;
       cfg.Ssid(winrt::to_hstring(ssid));
@@ -1483,14 +1544,27 @@ DaphqDirectHostInfo daphq_direct_start_host(
         using_5g = true;
       }
 
-      tethering_for_restore = tethering;
-      restore_orig_ssid = orig_ssid;
-      restore_orig_psk = orig_psk;
-      restore_orig_band = orig_band;
-      ap_modified = true;
+      const bool config_matches =
+          orig_ssid_str == ssid &&
+          winrt::to_string(orig_psk) == psk &&
+          (!using_5g || orig_band == TetheringWiFiBand::FiveGigahertz);
+      if (!config_matches) {
+        tethering_for_restore = tethering;
+        restore_orig_ssid = orig_ssid;
+        restore_orig_psk = orig_psk;
+        restore_orig_band = orig_band;
+        ap_modified = true;
 
-      tethering.ConfigureAccessPointAsync(cfg).get();
+        tethering.ConfigureAccessPointAsync(cfg).get();
+      }
       auto start_res = tethering.StartTetheringAsync().get();
+      if (start_res.Status() != TetheringOperationStatus::Success &&
+          !ctx->aborted.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(600));
+        if (!ctx->aborted.load()) {
+          start_res = tethering.StartTetheringAsync().get();
+        }
+      }
       if (start_res.Status() == TetheringOperationStatus::Success) {
         {
           std::lock_guard<std::mutex> lock(ctx->handle_mu);
@@ -2158,11 +2232,15 @@ void daphq_direct_stop_session(void* handle) {
     if (tethering) {
       tethering.StopTetheringAsync().get();
       if (restore_cfg) {
-        NetworkOperatorTetheringAccessPointConfiguration cfg;
-        cfg.Ssid(orig_ssid);
-        cfg.Passphrase(orig_psk);
-        cfg.Band(orig_band);
-        tethering.ConfigureAccessPointAsync(cfg).get();
+        const std::string orig_ssid_str = winrt::to_string(orig_ssid);
+        if (!orig_ssid_str.empty() &&
+            orig_ssid_str.rfind("DIRECT-DQ-", 0) != 0) {
+          NetworkOperatorTetheringAccessPointConfiguration cfg;
+          cfg.Ssid(orig_ssid);
+          cfg.Passphrase(orig_psk);
+          cfg.Band(orig_band);
+          tethering.ConfigureAccessPointAsync(cfg).get();
+        }
       }
     }
   } catch (...) {}

@@ -354,6 +354,18 @@ void main() {
       // connects as STA client and dials TCP outbound.
       expect(plan.shouldLocalHostDirectGroup, isTrue);
       expect(plan.useReverseConnect, isTrue);
+
+      // When the peer is already on a manual Windows Mobile Hotspot subnet (192.168.137.x),
+      // use that Hotspot directly (lanTlsDirect) without tearing down or creating a second AP.
+      final hotspotPeer = peer.copyWith(lanIp: () => '192.168.137.42');
+      final hotspotPlan = evaluator.planTransfer(
+        peer: hotspotPeer,
+        localCaps: localCaps,
+        localPeerId: 'bbbb111122223333',
+      );
+      expect(hotspotPlan.strategy, LinkExecutionStrategy.lanTlsDirect);
+      expect(hotspotPlan.parallelStreams, 4);
+      expect(hotspotPlan.reason, 'Direct Hotspot');
     });
 
     test('escalates to BLE Direct P2P with Android GO host + Windows Reverse-Connect and falls back to Windows host if Android lacks Direct', () {

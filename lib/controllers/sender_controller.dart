@@ -601,9 +601,7 @@ class SenderController {
       stopwatch.start();
       onUpdate(
         TransferModel(
-          status: acceptedStreams > 1
-              ? "Turbo Pumping ($acceptedStreams streams)..."
-              : "Pumping Data...",
+          status: "Sending files...",
           fileName: originalName,
           totalSize: totalSizeBytes / 1024 / 1024,
           progress: 0.0,
@@ -621,9 +619,7 @@ class SenderController {
               speed: speed,
               transferred: sentBytes / 1024 / 1024,
               fileName: fileName,
-              status: acceptedStreams > 1
-                  ? "Turbo Pumping ($acceptedStreams streams)..."
-                  : "Pumping Data...",
+              status: "Sending files...",
               totalSize: totalSizeBytes / 1024 / 1024,
               progress: totalSizeBytes > 0 ? sentBytes / totalSizeBytes : 0.0,
               phase: TransferPhase.sending,
@@ -706,11 +702,8 @@ class SenderController {
               int? cachedFileIdx;
               int? cachedRafCursor;
               int buffered = 0;
-              int stagedPayloadBytes = 0;
               String lastFileName = '';
               Future<void>? pendingFlush;
-              int pendingFlushPayloadBytes = 0;
-              String pendingFlushFileName = '';
               Object? flushError;
 
               Future<void> awaitPendingFlush() async {
@@ -720,13 +713,6 @@ class SenderController {
                 await inflight;
                 if (flushError != null) {
                   throw flushError!;
-                }
-                if (pendingFlushPayloadBytes > 0) {
-                  reportBytesSent(
-                    pendingFlushPayloadBytes,
-                    pendingFlushFileName,
-                  );
-                  pendingFlushPayloadBytes = 0;
                 }
               }
 
@@ -777,13 +763,10 @@ class SenderController {
                   payloadLength: task.length,
                 );
                 workerSocket.add(frameBuf);
-                stagedPayloadBytes += task.length;
+                reportBytesSent(task.length, lastFileName);
                 buffered += frameLen;
 
                 if (buffered >= AppConstants.socketFlushThresholdBytes) {
-                  pendingFlushPayloadBytes = stagedPayloadBytes;
-                  pendingFlushFileName = lastFileName;
-                  stagedPayloadBytes = 0;
                   buffered = 0;
                   pendingFlush = workerSocket.flush().catchError((Object err) {
                     flushError ??= err;
@@ -792,9 +775,8 @@ class SenderController {
               }
 
               await awaitPendingFlush();
-              if (stagedPayloadBytes > 0 && !isWorkerAborted()) {
+              if (buffered > 0 && !isWorkerAborted()) {
                 await workerSocket.flush();
-                reportBytesSent(stagedPayloadBytes, lastFileName);
               }
 
               if (isWorkerAborted()) {
@@ -902,7 +884,7 @@ class SenderController {
 
       onUpdate(
         TransferModel(
-          status: "Finalizing... Saving to disk",
+          status: "Finishing up...",
           fileName: originalName,
           speed: 0,
           transferred: finalMB,
@@ -991,10 +973,11 @@ class SenderController {
             : TransferPhase.failed;
       } else if (e is TimeoutException) {
         terminalStatus =
-            "Device not found. Please double-check the IP address and ensure both devices are on the exact same Wi-Fi/Hotspot.";
+            "Couldn't reach ${_currentTargetDeviceName ?? 'the other device'}. Make sure both devices are connected to the same Wi-Fi or Hotspot.";
         terminalPhase = TransferPhase.failed;
       } else {
-        terminalStatus = "Error: $e";
+        final raw = e.toString();
+        terminalStatus = raw.startsWith('Error: ') ? raw.substring(7) : raw;
         terminalPhase = TransferPhase.failed;
       }
 
@@ -1272,30 +1255,31 @@ class SenderController {
   String _mapSocketError(SocketException e) {
     final msg = e.message.toLowerCase();
     final osError = e.osError?.errorCode;
+    final peerLabel = _currentTargetDeviceName ?? 'the other device';
 
     if (osError == 111 ||
         osError == 10061 ||
         msg.contains("connection refused")) {
-      return "Connection refused. Did the receiver click 'Start Receiving'?";
+      return "$peerLabel isn't ready to receive yet. Make sure Daphq is open and discoverable on $peerLabel.";
     } else if (osError == 113 ||
         osError == 112 ||
         osError == 10060 ||
         osError == 10065) {
-      return "Device not found. Please double-check the IP address and ensure both devices are on the exact same Wi-Fi/Hotspot.";
+      return "Couldn't reach $peerLabel. Make sure both devices are connected to the same Wi-Fi or Hotspot.";
     } else if (osError == 101 ||
         osError == 10051 ||
         osError == 10053 ||
         osError == 10050 ||
         msg.contains("network is unreachable") ||
         msg.contains("software caused connection abort")) {
-      return "No network connection. Please turn on Wi-Fi/Hotspot.";
+      return "Wi-Fi connection was interrupted. Please reconnect and try again.";
     } else if (osError == 104 ||
         osError == 10054 ||
         osError == 32 ||
         msg.contains("connection reset by peer")) {
-      return "Transfer cancelled by ${_currentTargetDeviceName ?? 'the other device'}.";
+      return "Transfer cancelled by $peerLabel.";
     } else {
-      return "Network Error: Please ensure network/Hotspot is connected.";
+      return "Connection lost with $peerLabel. Please check your Wi-Fi or Hotspot and try again.";
     }
   }
 }

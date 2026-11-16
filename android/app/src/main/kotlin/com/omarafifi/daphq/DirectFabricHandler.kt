@@ -1511,7 +1511,10 @@ class DirectFabricHandler(
                     mode = 0,
                     attempt = 0,
                     reject24Ghz = true,
-                    onRejectOrFail = { tryP2pFreqIndex(0) },
+                    onRejectOrFail = {
+                        if (!allow24GhzFallback) nextStepAfterChannels()
+                        else tryP2pFreqIndex(0)
+                    },
                 )
             }
 

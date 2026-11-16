@@ -3,6 +3,7 @@ import 'dart:async';
 import '../models/discovery_model.dart';
 import 'ble_beacon_codec.dart';
 import 'peer_models.dart';
+import 'smart_link_evaluator.dart';
 
 /// Deduplicating multi-plane registry that merges LAN UDP and BLE peers into [UnifiedPeer]s.
 class PeerRegistry {
@@ -150,11 +151,17 @@ class PeerRegistry {
       fingerprintPrefix: fpPrefix,
     );
 
+    final bool keepExistingHotspotIp = existing != null &&
+        SmartLinkEvaluator.isDirectHotspotOrP2pSubnetIp(existing.lanIp) &&
+        !SmartLinkEvaluator.isDirectHotspotOrP2pSubnetIp(discovery.ip) &&
+        existing.lastSeenLan != null &&
+        timestamp.difference(existing.lastSeenLan!).inSeconds < 5;
+
     final updated = UnifiedPeer(
       peerId: key,
       name: discovery.name,
       platform: platform,
-      lanIp: discovery.ip,
+      lanIp: keepExistingHotspotIp ? existing.lanIp : discovery.ip,
       port: discovery.port,
       certFingerprint: certFp,
       fingerprintPrefix: fpPrefix,
